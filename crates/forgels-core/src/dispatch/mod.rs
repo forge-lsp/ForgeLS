@@ -10,7 +10,7 @@ mod sync;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use publish::{drain_due, flush_all, immediate_notifications};
+pub use publish::{drain_due, flush_all, immediate_notifications};
 pub(crate) use requests::{completion_response, definition_response, hover_response};
 pub(crate) use sync::{
     apply_did_change, apply_did_close, apply_did_open, apply_folder_change, apply_initialize_roots,
