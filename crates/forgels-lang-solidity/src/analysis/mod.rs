@@ -3,16 +3,37 @@ use forgels_syntax::{AstNode, Span};
 use crate::{ContractDef, FunctionDef, SolidityFile};
 
 mod completion;
+mod goto;
 mod hover;
 
 #[cfg(test)]
 mod tests;
 
 pub use completion::{CompletionItem, CompletionKind, complete_at};
+pub use goto::goto_definition;
 pub use hover::{Hover, hover_at};
 
 fn is_word_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'$'
+}
+
+/// Word under the cursor: longest ident-char run containing `offset`.
+fn word_at(text: &str, offset: u32) -> Option<(String, Span)> {
+    let bytes = text.as_bytes();
+    let index = offset as usize;
+    if index >= bytes.len() || !is_word_byte(bytes[index]) {
+        return None;
+    }
+    let mut start = index;
+    while start > 0 && is_word_byte(bytes[start - 1]) {
+        start -= 1;
+    }
+    let mut end = index;
+    while end < bytes.len() && is_word_byte(bytes[end]) {
+        end += 1;
+    }
+    text.get(start..end)
+        .map(|word| (word.to_string(), Span::new(start as u32, end as u32)))
 }
 
 /// Declaration kind for hover, completion, and goto-definition.

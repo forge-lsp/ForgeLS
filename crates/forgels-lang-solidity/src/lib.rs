@@ -10,7 +10,7 @@ pub mod parser;
 
 pub use analysis::{
     CompletionItem, CompletionKind, Hover, Scope, Symbol, SymbolKind, collect_symbols, complete_at,
-    hover_at,
+    goto_definition, hover_at,
 };
 
 pub use ast::{

@@ -1,6 +1,8 @@
-use super::{CompletionItem, Scope, SymbolKind, collect_symbols, complete_at, hover_at};
+use super::{
+    CompletionItem, Scope, SymbolKind, collect_symbols, complete_at, goto_definition, hover_at,
+};
 use crate::{SolidityLexer, SolidityParser};
-use forgels_syntax::Lexer;
+use forgels_syntax::{Lexer, Span};
 
 fn collect(text: &str) -> (String, Scope) {
     let tokens = SolidityLexer.tokenize(text);
@@ -175,4 +177,39 @@ fn completion_hides_other_function_locals() {
     assert!(!labels.contains(&"hidden".to_string()));
     assert!(labels.contains(&"f".to_string()));
     assert!(labels.contains(&"g".to_string()));
+}
+
+fn goto_target(text: &str, offset: u32) -> Span {
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    goto_definition(&file, text, offset).expect("jump target")
+}
+
+#[test]
+fn goto_jumps_usage_to_state_var() {
+    let text = "contract C {\nuint256 total;\nfunction f() public {\ntotal;\n}\n}";
+    let at_use = text.rfind("total").expect("use") as u32;
+    let at_decl = text.find("total").expect("decl") as u32;
+    let target = goto_target(text, at_use);
+    assert!(target.start <= at_decl && at_decl < target.end);
+}
+
+#[test]
+fn goto_prefers_shadowing_local() {
+    let text = "contract C {\nuint x;\nfunction f() public {\nuint x = 1;\nx;\n}\n}";
+    let at_use = text.rfind("\nx;\n").expect("use") as u32 + 1;
+    let at_local = text.find("x = 1").expect("local") as u32;
+    let target = goto_target(text, at_use);
+    assert!(target.start <= at_local && at_local < target.end);
+}
+
+#[test]
+fn goto_on_empty_returns_none() {
+    let text = "contract C {\nuint256 total;\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty());
+    let at_newline = text.find('\n').expect("newline") as u32;
+    assert!(goto_definition(&file, text, at_newline).is_none());
 }
