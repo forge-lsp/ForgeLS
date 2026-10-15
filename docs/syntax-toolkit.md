@@ -21,3 +21,14 @@ Scope: `forgels-syntax` crate. Shared AST and parser base for all languages.
 4. Wrap results with `AstNode`.
 
 Do not add language grammar here. Keep this crate agnostic.
+
+## Recovery
+
+- Parsers must continue past the first error. Collect every error with its
+  own span, then hand over the full list.
+- Each language defines its own sync points (for example `;`, `}`, or
+  newline): token kinds where parsing resumes after a failure.
+- Sync points live in the language crate, never here. This crate stays
+  grammar free.
+- Core maps the list one to one via `parse_errors_to_diagnostics`: two
+  errors in means two diagnostics out. No merging, no dropping.
