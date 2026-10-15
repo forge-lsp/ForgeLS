@@ -24,3 +24,4 @@ forgels-syntax = { path = "crates/forgels-syntax" }
 forgels-common = { path = "crates/forgels-common" }
 forgels-lang-solidity = { path = "crates/forgels-lang-solidity" }
 forgels-lang-noir = { path = "crates/forgels-lang-noir" }
+serde_json = "1"
