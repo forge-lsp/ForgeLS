@@ -28,6 +28,17 @@ Use when writing, editing, or reviewing Rust in `crates/*`. Load me before any R
 - Names carry meaning: role nouns for variables, verb plus object for functions. No `data`, `thing`, `tmp`, `handle`, `process_data`.
 - `cargo fmt --all` before finish. Keep `cargo clippy --workspace -- -D warnings` green.
 
+## Edit tooling (STRICTLY FORBIDDEN otherwise)
+
+- Edit files ONLY with the dedicated file tools (`edit`, `write`).
+- STRICTLY FORBIDDEN: editing file content through any program or
+  workaround, including `python3 -c`, `python` scripts, `sed`, `awk`,
+  `perl`, `echo` redirection, or heredocs.
+- Shell (`bash`) is for read-only inspection and project commands only:
+  `cargo`, `git`, `ls`, `grep`, `wc`. Never for writing file content.
+- Reason: programmatic edits corrupt text silently (escaping, unicode,
+  off-by-one ranges) and bypass tool safety checks.
+
 ## References (read before you change that area)
 
 | File | Use when |
@@ -89,7 +100,8 @@ pub fn handle(d: String) -> ParseResult<SolidityFile> {
 1. Relevant `references/` file read and applied.
 2. Guard clause first. No `unwrap`, no `== true`, no dead code.
 3. Names state roles and actions. Comments are short ASCII why-notes.
-4. `cargo check --workspace` passes. Clippy and fmt clean.
+4. Edited only with file tools. No programmatic edit of any kind.
+5. `cargo check --workspace` passes. Clippy and fmt clean.
 
 ## Sources
 
