@@ -4,7 +4,11 @@
 //! language specific grammar. It dispatches to `forgels-lang-*` crates.
 
 pub mod config;
+pub mod diagnostics;
+pub mod dispatch;
+pub mod routing;
 pub mod server;
+pub mod transport;
 pub mod workspace;
 
 pub use config::Config;
