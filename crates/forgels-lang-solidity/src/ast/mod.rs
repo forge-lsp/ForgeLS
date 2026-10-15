@@ -7,7 +7,7 @@ mod types;
 
 pub use contract::ContractDef;
 pub use file::{ImportDirective, PragmaDirective, SolidityFile};
-pub use members::{FunctionDef, LocalVar, Param, StateVar};
+pub use members::{FunctionDef, LocalVar, Param, Returns, StateVar};
 pub use types::{BlockNode, TypeNode};
 
 /// Node kinds for the Solidity skeleton. Start at 1000 so token kinds

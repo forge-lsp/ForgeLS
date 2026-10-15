@@ -31,18 +31,17 @@ impl FunctionDef {
     }
 
     pub fn return_types(&self) -> Vec<TypeNode> {
-        let mut types = Vec::new();
-        for element in &self.syntax.children {
-            let SyntaxElement::Node(node) = element else {
-                continue;
-            };
-            if node.kind == SolidityNode::Type.as_u16() {
-                types.extend(TypeNode::cast(node.clone()));
-            } else if node.kind == SolidityNode::Returns.as_u16() {
-                types.extend(returns_types(node));
-            }
-        }
-        types
+        self.syntax
+            .children
+            .iter()
+            .filter_map(|element| match element {
+                SyntaxElement::Node(node) if node.kind == SolidityNode::Returns.as_u16() => {
+                    Returns::cast(node.clone())
+                }
+                _ => None,
+            })
+            .flat_map(|returns| returns.types())
+            .collect()
     }
 
     pub fn body(&self) -> Option<BlockNode> {
@@ -129,22 +128,40 @@ fn var_name_and_type(node: &SyntaxNode) -> (Option<TypeNode>, Option<String>) {
     (type_node, name)
 }
 
-fn returns_types(node: &SyntaxNode) -> Vec<TypeNode> {
-    let mut types = Vec::new();
-    for element in &node.children {
-        let SyntaxElement::Node(child) = element else {
-            continue;
-        };
-        if child.kind == SolidityNode::Type.as_u16() {
-            types.extend(TypeNode::cast(child.clone()));
-        } else if child.kind == SolidityNode::Param.as_u16()
-            && let Some(param) = Param::cast(child.clone())
-            && let Some(type_node) = param.type_node()
-        {
-            types.push(type_node);
+/// Returns clause: the parenthesized type list after `returns`.
+/// Children hold `Param` nodes; bare types never appear here directly.
+#[derive(Debug, Clone)]
+pub struct Returns {
+    syntax: SyntaxNode,
+}
+
+impl Returns {
+    pub fn types(&self) -> Vec<TypeNode> {
+        self.syntax
+            .children
+            .iter()
+            .filter_map(|element| match element {
+                SyntaxElement::Node(child) if child.kind == SolidityNode::Param.as_u16() => {
+                    Param::cast(child.clone()).and_then(|param| param.type_node())
+                }
+                _ => None,
+            })
+            .collect()
+    }
+}
+
+impl AstNode for Returns {
+    fn cast(node: SyntaxNode) -> Option<Self> {
+        if cast_node(&node, SolidityNode::Returns) {
+            Some(Self { syntax: node })
+        } else {
+            None
         }
     }
-    types
+
+    fn syntax(&self) -> &SyntaxNode {
+        &self.syntax
+    }
 }
 
 /// State variable: type plus name. The node span covers any initializer.

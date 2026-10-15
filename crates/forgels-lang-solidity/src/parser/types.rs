@@ -17,6 +17,8 @@ pub(crate) fn is_type_start(kind: u16) -> bool {
         SolidityKind::UintSized,
         SolidityKind::IntSized,
         SolidityKind::BytesSized,
+        SolidityKind::Fixed,
+        SolidityKind::Ufixed,
     ];
     TYPES.iter().any(|type_kind| type_kind.as_u16() == kind)
 }

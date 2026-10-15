@@ -9,7 +9,7 @@ pub mod parser;
 
 pub use ast::{
     BlockNode, ContractDef, FunctionDef, ImportDirective, LocalVar, Param, PragmaDirective,
-    SolidityFile, SolidityNode, StateVar, TypeNode,
+    Returns, SolidityFile, SolidityNode, StateVar, TypeNode,
 };
 pub use lexer::{SolidityKind, SolidityLexer, keyword_kind, symbol_kind};
 pub use parser::SolidityParser;
