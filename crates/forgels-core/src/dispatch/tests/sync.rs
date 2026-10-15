@@ -1,3 +1,4 @@
+use super::super::sync::uri_to_path;
 use super::super::{Session, handle_message};
 use super::stub::init;
 use crate::workspace::Workspace;
@@ -216,4 +217,42 @@ fn sync_on_untracked_file_stays_silent() {
             .get(&std::path::PathBuf::from("/repo/ghost.sol"))
             .is_none()
     );
+}
+
+#[test]
+fn percent_escapes_decode_to_path_chars() {
+    assert_eq!(
+        uri_to_path("file:///repo/my%20proj/A.sol"),
+        std::path::PathBuf::from("/repo/my proj/A.sol")
+    );
+    let check = char::from_u32(0x2713).expect("check mark");
+    assert_eq!(
+        uri_to_path("file:///repo/%E2%9C%93.sol"),
+        std::path::PathBuf::from(format!("/repo/{check}.sol"))
+    );
+    assert_eq!(
+        uri_to_path("file:///repo/plain.sol"),
+        std::path::PathBuf::from("/repo/plain.sol")
+    );
+    assert_eq!(
+        uri_to_path("file:///repo/bad%2G.sol"),
+        std::path::PathBuf::from("/repo/bad%2G.sol")
+    );
+    assert_eq!(
+        uri_to_path("file:///repo/tail%.sol"),
+        std::path::PathBuf::from("/repo/tail%.sol")
+    );
+}
+
+#[test]
+fn encoded_uri_tracks_decoded_path() {
+    let mut session = Session::new();
+    let mut workspace = Workspace::new();
+    init(&mut session, &mut workspace);
+    let open = r#"{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///repo/my%20proj/A.sol","languageId":"solidity","version":1,"text":"contract A {}"}}}"#;
+    assert!(handle_message(&mut session, &mut workspace, open).is_none());
+    let tracked = workspace
+        .get(&std::path::PathBuf::from("/repo/my proj/A.sol"))
+        .expect("tracked");
+    assert_eq!(tracked.text, "contract A {}");
 }

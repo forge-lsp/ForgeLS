@@ -4,10 +4,39 @@ use super::Workspace;
 use crate::routing::route_file;
 
 /// Turn a `file://` URI into a path. Plain paths pass through.
-/// Percent escapes stay encoded; see the uri-decoding follow-up item.
+/// Percent escapes decode (`%20` becomes a space); malformed escapes
+/// stay literal so a weird URI never becomes an empty path.
 pub(crate) fn uri_to_path(uri: &str) -> std::path::PathBuf {
     let stripped = uri.strip_prefix("file://").unwrap_or(uri);
-    std::path::PathBuf::from(stripped)
+    std::path::PathBuf::from(decode_percent(stripped))
+}
+
+fn decode_percent(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%'
+            && let Some(high) = bytes.get(index + 1).and_then(|byte| hex_value(*byte))
+            && let Some(low) = bytes.get(index + 2).and_then(|byte| hex_value(*byte))
+        {
+            out.push(high * 16 + low);
+            index += 3;
+        } else {
+            out.push(bytes[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
 }
 
 /// Register roots from initialize params: folders, then rootUri, then rootPath.
