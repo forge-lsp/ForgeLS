@@ -1,0 +1,371 @@
+use super::cursor::{Cursor, token_element};
+use super::types::{is_type_start, parse_type};
+use crate::SolidityNode;
+use crate::lexer::SolidityKind;
+use forgels_syntax::{ParseError, Span, SyntaxElement, SyntaxNode};
+
+/// Parse `Type name [= init] ;` at contract level.
+pub(crate) fn parse_state_var(cursor: &mut Cursor) -> Result<SyntaxNode, ParseError> {
+    parse_var(cursor, SolidityNode::StateVar)
+}
+
+/// Parse `Type name [= init] ;` inside a block.
+pub(crate) fn parse_local_var(cursor: &mut Cursor) -> Result<SyntaxNode, ParseError> {
+    parse_var(cursor, SolidityNode::LocalVar)
+}
+
+pub(crate) fn parse_var(cursor: &mut Cursor, kind: SolidityNode) -> Result<SyntaxNode, ParseError> {
+    let var_type = parse_type(cursor)?;
+    let type_end = var_type.span.end;
+    // Data location sits between type and name: `string memory label`.
+    if matches!(
+        cursor.peek_kind(),
+        Some(kind)
+            if kind == SolidityKind::Memory.as_u16()
+                || kind == SolidityKind::Storage.as_u16()
+                || kind == SolidityKind::Calldata.as_u16()
+    ) {
+        cursor.bump();
+    }
+    let name = cursor.expect(SolidityKind::Ident, "variable name")?;
+    let mut end = name.span.end.max(type_end);
+    if cursor.peek_kind() == Some(SolidityKind::Assign.as_u16()) {
+        cursor.bump();
+        // Initializer expressions belong to a later leaf. Skip one level.
+        while let Some(kind) = cursor.peek_kind() {
+            if kind == SolidityKind::Semicolon.as_u16() || kind == SolidityKind::RBrace.as_u16() {
+                break;
+            }
+            if kind == SolidityKind::LBrace.as_u16() {
+                skip_balanced(cursor);
+            } else {
+                cursor.bump();
+            }
+        }
+        end = cursor
+            .tokens
+            .get(cursor.pos().saturating_sub(1))
+            .map(|token| token.span.end)
+            .unwrap_or(end);
+    }
+    let semi = cursor.expect(SolidityKind::Semicolon, "`;`")?;
+    end = end.max(semi.span.end);
+    Ok(SyntaxNode::with_children(
+        kind.as_u16(),
+        Span::new(var_type.span.start, end),
+        vec![SyntaxElement::Node(var_type), token_element(name)],
+    ))
+}
+
+/// Parse function name(params) modifiers returns (types) body.
+/// Constructor follows the same shape with an implied name.
+/// Structural failures push one error and return None. Body local
+/// errors go to errors while valid locals stay in the block.
+pub(crate) fn parse_function(
+    cursor: &mut Cursor,
+    errors: &mut Vec<ParseError>,
+) -> Option<SyntaxNode> {
+    let head = cursor.bump().expect("function keyword exists");
+    let start = head.span;
+    let name = if head.kind == SolidityKind::Constructor.as_u16() {
+        head.clone()
+    } else {
+        match cursor.expect(SolidityKind::Ident, "function name") {
+            Ok(name) => name,
+            Err(error) => {
+                errors.push(error);
+                return None;
+            }
+        }
+    };
+    let mut children = vec![token_element(name)];
+    if cursor.expect(SolidityKind::LParen, "`(`").is_err() {
+        errors.push(ParseError::new(cursor.peek_span(), "expected `(`"));
+        return None;
+    }
+    if cursor.peek_kind() != Some(SolidityKind::RParen.as_u16()) {
+        loop {
+            match parse_param(cursor) {
+                Ok(param) => children.push(SyntaxElement::Node(param)),
+                Err(error) => {
+                    errors.push(error);
+                    return None;
+                }
+            }
+            if cursor.peek_kind() == Some(SolidityKind::Comma.as_u16()) {
+                cursor.bump();
+            } else {
+                break;
+            }
+        }
+    }
+    if cursor.expect(SolidityKind::RParen, "`)`").is_err() {
+        errors.push(ParseError::new(cursor.peek_span(), "expected `)`"));
+        return None;
+    }
+    // Modifiers and visibility are consumed, not stored.
+    loop {
+        match cursor.peek_kind() {
+            Some(kind)
+                if kind == SolidityKind::Public.as_u16()
+                    || kind == SolidityKind::Private.as_u16()
+                    || kind == SolidityKind::Internal.as_u16()
+                    || kind == SolidityKind::External.as_u16()
+                    || kind == SolidityKind::Pure.as_u16()
+                    || kind == SolidityKind::View.as_u16()
+                    || kind == SolidityKind::Payable.as_u16()
+                    || kind == SolidityKind::Constant.as_u16()
+                    || kind == SolidityKind::Virtual.as_u16()
+                    || kind == SolidityKind::Override.as_u16() =>
+            {
+                cursor.bump();
+            }
+            Some(kind) if kind == SolidityKind::Returns.as_u16() => {
+                cursor.bump();
+                if cursor.expect(SolidityKind::LParen, "`(`").is_err() {
+                    errors.push(ParseError::new(cursor.peek_span(), "expected `(`"));
+                    return None;
+                }
+                let returns_start = cursor
+                    .tokens
+                    .get(cursor.pos().saturating_sub(1))
+                    .map(|token| token.span.start)
+                    .unwrap_or(start.start);
+                let mut returns_children = Vec::new();
+                if cursor.peek_kind() != Some(SolidityKind::RParen.as_u16()) {
+                    loop {
+                        match parse_param(cursor) {
+                            Ok(param) => returns_children.push(SyntaxElement::Node(param)),
+                            Err(error) => {
+                                errors.push(error);
+                                return None;
+                            }
+                        }
+                        if cursor.peek_kind() == Some(SolidityKind::Comma.as_u16()) {
+                            cursor.bump();
+                        } else {
+                            break;
+                        }
+                    }
+                }
+                match cursor.expect(SolidityKind::RParen, "`)`") {
+                    Ok(close) => {
+                        children.push(SyntaxElement::Node(SyntaxNode::with_children(
+                            SolidityNode::Returns.as_u16(),
+                            Span::new(returns_start, close.span.end),
+                            returns_children,
+                        )));
+                    }
+                    Err(_) => {
+                        errors.push(ParseError::new(cursor.peek_span(), "expected `)`"));
+                        return None;
+                    }
+                }
+            }
+            _ => break,
+        }
+    }
+    match parse_block(cursor, errors) {
+        Some(body) => {
+            let end = body.span.end;
+            children.push(SyntaxElement::Node(body));
+            Some(SyntaxNode::with_children(
+                SolidityNode::Function.as_u16(),
+                Span::new(start.start, end),
+                children,
+            ))
+        }
+        None => None,
+    }
+}
+
+/// Parse `Type name?` inside parameter lists.
+pub(crate) fn parse_param(cursor: &mut Cursor) -> Result<SyntaxNode, ParseError> {
+    let param_type = parse_type(cursor)?;
+    let start = param_type.span.start;
+    let mut children = vec![SyntaxElement::Node(param_type)];
+    // Data location sits between type and name: `string memory label`.
+    if matches!(
+        cursor.peek_kind(),
+        Some(kind)
+            if kind == SolidityKind::Memory.as_u16()
+                || kind == SolidityKind::Storage.as_u16()
+                || kind == SolidityKind::Calldata.as_u16()
+    ) {
+        cursor.bump();
+    }
+    let mut end = children
+        .first()
+        .and_then(|element| match element {
+            SyntaxElement::Node(node) => Some(node.span.end),
+            _ => None,
+        })
+        .unwrap_or(start);
+    if cursor.peek_kind() == Some(SolidityKind::Ident.as_u16()) {
+        let name = cursor.bump().expect("param name exists");
+        end = name.span.end;
+        children.push(token_element(name));
+    }
+    Ok(SyntaxNode::with_children(
+        SolidityNode::Param.as_u16(),
+        Span::new(start, end),
+        children,
+    ))
+}
+
+/// Parse `{ ... }`, keeping local variable declarations and the full span.
+/// Local errors go to `errors` while valid locals stay. `None` means the
+/// block never closed.
+pub(crate) fn parse_block(cursor: &mut Cursor, errors: &mut Vec<ParseError>) -> Option<SyntaxNode> {
+    let open = match cursor.expect(SolidityKind::LBrace, "`{`") {
+        Ok(open) => open,
+        Err(error) => {
+            errors.push(error);
+            return None;
+        }
+    };
+    let mut locals: Vec<SyntaxElement> = Vec::new();
+    loop {
+        match cursor.peek_kind() {
+            None => {
+                errors.push(ParseError::new(cursor.peek_span(), "unclosed `{`"));
+                return None;
+            }
+            Some(kind) if kind == SolidityKind::RBrace.as_u16() => break,
+            Some(kind)
+                if (is_type_start(kind) || kind == SolidityKind::Ident.as_u16())
+                    && is_local_decl_ahead(cursor) =>
+            {
+                match parse_local_var(cursor) {
+                    Ok(node) => locals.push(SyntaxElement::Node(node)),
+                    Err(error) => {
+                        errors.push(error);
+                        recover_statement(cursor);
+                    }
+                }
+            }
+            Some(kind) if is_type_start(kind) || kind == SolidityKind::Ident.as_u16() => {
+                // Type-like token without a following name: an expression
+                // statement, skipped like any other.
+                recover_statement(cursor);
+            }
+            _ => {
+                recover_statement(cursor);
+            }
+        }
+    }
+    let close = cursor.bump().expect("closing brace exists");
+    Some(SyntaxNode::with_children(
+        SolidityNode::Block.as_u16(),
+        Span::new(open.span.start, close.span.end),
+        locals,
+    ))
+}
+
+/// True when the upcoming tokens look like `Type name [= ;]`.
+pub(crate) fn is_local_decl_ahead(cursor: &mut Cursor) -> bool {
+    let tokens = &cursor.tokens[cursor.pos()..];
+    let mut index = 0;
+    // Skip the type: mapping(...) or one word, plus array suffixes.
+    if tokens.first().is_some_and(|token| {
+        token.kind == SolidityKind::Mapping.as_u16()
+            && tokens
+                .get(1)
+                .is_some_and(|next| next.kind == SolidityKind::LParen.as_u16())
+    }) {
+        let mut depth = 0;
+        while let Some(token) = tokens.get(index) {
+            if token.kind == SolidityKind::LParen.as_u16() {
+                depth += 1;
+            } else if token.kind == SolidityKind::RParen.as_u16() {
+                depth -= 1;
+                if depth == 0 {
+                    index += 1;
+                    break;
+                }
+            }
+            index += 1;
+        }
+    } else {
+        index = 1;
+    }
+    // Step over array suffixes `[N]` and `[]` in the lookahead.
+    while tokens
+        .get(index)
+        .is_some_and(|token| token.kind == SolidityKind::LBracket.as_u16())
+    {
+        index += 1;
+        while let Some(token) = tokens.get(index) {
+            index += 1;
+            if token.kind == SolidityKind::RBracket.as_u16() {
+                break;
+            }
+        }
+    }
+    // Data location sits between type and name: skip one if present.
+    if tokens.get(index).is_some_and(|token| {
+        token.kind == SolidityKind::Memory.as_u16()
+            || token.kind == SolidityKind::Storage.as_u16()
+            || token.kind == SolidityKind::Calldata.as_u16()
+    }) {
+        index += 1;
+    }
+    matches!(
+        tokens.get(index).map(|token| token.kind),
+        Some(kind) if kind == SolidityKind::Ident.as_u16()
+    )
+}
+
+/// Skip one statement: to `;`, over a balanced block, or stop at `}`.
+pub(crate) fn recover_statement(cursor: &mut Cursor) {
+    while let Some(kind) = cursor.peek_kind() {
+        if kind == SolidityKind::Semicolon.as_u16() {
+            cursor.bump();
+            return;
+        }
+        if kind == SolidityKind::RBrace.as_u16() {
+            return;
+        }
+        if kind == SolidityKind::LBrace.as_u16() {
+            skip_balanced(cursor);
+            return;
+        }
+        cursor.bump();
+    }
+}
+
+/// Skip a balanced `( ... )` starting at the opening paren.
+pub(crate) fn skip_parens(cursor: &mut Cursor) {
+    let mut depth = 0u32;
+    while let Some(kind) = cursor.peek_kind() {
+        if kind == SolidityKind::LParen.as_u16() {
+            depth += 1;
+        } else if kind == SolidityKind::RParen.as_u16() {
+            depth -= 1;
+            cursor.bump();
+            if depth == 0 {
+                return;
+            }
+            continue;
+        }
+        cursor.bump();
+    }
+}
+
+/// Skip a balanced `{ ... }` starting at the opening brace.
+pub(crate) fn skip_balanced(cursor: &mut Cursor) {
+    let mut depth = 0u32;
+    while let Some(kind) = cursor.peek_kind() {
+        if kind == SolidityKind::LBrace.as_u16() {
+            depth += 1;
+        } else if kind == SolidityKind::RBrace.as_u16() {
+            depth -= 1;
+            cursor.bump();
+            if depth == 0 {
+                return;
+            }
+            continue;
+        }
+        cursor.bump();
+    }
+}
