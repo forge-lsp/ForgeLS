@@ -1,6 +1,6 @@
 ---
 name: forgels-rust
-description: Rust best practices for ForgeLS. Readable code, guard clauses first, no redundancy, ASCII comments only.
+description: Rust best practices for ForgeLS with Apollo references. Readable code, guard clauses first, no redundancy, ASCII comments only.
 license: MIT
 compatibility: opencode
 metadata:
@@ -12,65 +12,72 @@ metadata:
 
 # forgels-rust
 
-Focus: best practices, readability, and consistent Rust for ForgeLS.
+Focus: readable, fast, and consistent Rust for ForgeLS. All code and comments are objective English, to the point.
 
 ## When to use me
 
-Use when writing, editing, or reviewing Rust in `crates/*`. Load me before any Rust change. `forgels-qa` uses me to review.
+Use when writing, editing, or reviewing Rust in `crates/*`. Load me before any Rust change. `forgels-qa` uses me to review. Read the matching file under `references/` before touching that area. Do not guess when a reference exists.
 
-## Style rules
+## Core rules
 
-- Keep code consistent with surrounding module. Match naming, error shape, and layout.
-- Comments must be to the point:
-  - One line (`//`) for brief notes only. Max one clear idea per line.
-  - Multi line (`///` or `//!`) only for relevant public API docs. Still to the point.
-  - ASCII keyboard only. No unicode symbols, no emoji, no em dash. Use hyphen `-` or colon `:`.
-- No redundant code:
-  - Remove dead code, unused imports, unused vars, duplicate logic.
-  - Do not wrap simple code in extra layers, extra clones, or extra allocations.
-  - Prefer existing helpers in `forgels-syntax`, `forgels-common`, `forgels-protocol`.
-- Conditions must eliminate the false case first (guard clause):
-  - Return early on error or empty input. Keep the happy path last and flat.
-  - Never use `== true` or `== false`. Use the bool directly or with `!`.
-  - Prefer `let ... else` and `?` over nested `if let` pyramids.
+- English only in code, comments, and docs. Objective and to the point. One idea per line.
+- ASCII only. No emoji. No em dash. Use hyphen `-` or colon `:`.
+- Guard clause first. Happy path last. Flat over nested.
+- Borrow by default. Clone only for a real owned snapshot. Small `Copy` by value.
+- Fallible code returns `Result`. No `unwrap` or `expect` in server paths. Map parser errors to `Diagnostic`.
+- Names carry meaning: role nouns for variables, verb plus object for functions. No `data`, `thing`, `tmp`, `handle`, `process_data`.
+- `cargo fmt --all` before finish. Keep `cargo clippy --workspace -- -D warnings` green.
 
-## ForgeLS specifics
+## References (read before you change that area)
 
-- Reuse traits from `forgels-syntax`: `Lexer`, `Parser`, `AstNode`, `Visitor`, `Span`, `ParseError`.
-- Every public AST type must carry `Span`.
-- Return `ParseResult<T>`. No `unwrap` or `expect` in server paths. Map errors to `forgels-protocol::Diagnostic`.
-- Language crates stay independent. Never add `forgels-lang-*` to another `forgels-lang-*`.
-- Run `cargo fmt --all` before finish. Keep `cargo clippy --workspace -- -D warnings` clean.
+| File | Use when |
+| ---- | -------- |
+| `references/borrowing-cloning-copy.md` | Picking `&T` vs `T`, `Copy` types, `Span` by value |
+| `references/option-result-flow.md` | `Option`, `Result`, `let else`, `?`, early return |
+| `references/lazy-allocation.md` | `unwrap_or_else`, `ok_or_else`, `inspect_err`, `map_err` |
+| `references/iterators-loops.md` | `for` vs iterators, `sum` vs `fold`, no throwaway `collect` |
+| `references/comments-docs.md` | `//` vs `///` vs `//!`, `SAFETY`, `TODO` as issues |
+| `references/imports.md` | `use` order, workspace vs crate imports |
+| `references/functions.md` | Split helpers, Rule of Three, no flag params |
+| `references/clippy-lints.md` | Clippy gate, `expect` with reason, workspace lints |
+| `references/performance.md` | Measure first, release bench, stack vs heap, iter pipelines |
+| `references/errors.md` | `thiserror` in crates, `anyhow` in binary, `?` flow |
+| `references/testing.md` | Sentence test names, one behavior, `rstest`, `insta` |
+| `references/generics-dispatch.md` | `impl Trait` vs `dyn Trait`, object safety |
+| `references/type-state.md` | Builders, connect before send, `PhantomData` states |
+| `references/pointers.md` | `&T`, `Box`, `Rc`, `Arc`, `Cell`, `Mutex`, `OnceLock` |
+| `references/naming.md` | Variable, function, and type names |
+| `references/forgels-mapping.md` | ForgeLS crate split, `Span` duty, no cross-language import |
 
-## Good vs bad
+## ForgeLS musts
 
-Good (guard clause first, flat):
+- Reuse `forgels-syntax`: `Lexer`, `Parser`, `AstNode`, `Span`, `ParseError`, `ParseResult`.
+- Every public AST type carries `Span`.
+- Language crates stay independent. Never add one `forgels-lang-*` to another.
+- New shared code goes to `forgels-syntax`, `forgels-protocol`, `forgels-common`, or `forgels-core`.
+- Binary `forgels` stays thin: args, config, route by extension.
+
+## Good vs bad (naming and flow)
+
+Good (clear names, guard first):
 
 ```rust
-pub fn parse(&self, tokens: &[Token]) -> ParseResult<SolidityFile> {
-    let Some(first) = tokens.first() else {
+pub fn parse_text(input: &str) -> ParseResult<SolidityFile> {
+    let Some(first) = lex_text(input).first() else {
         return Err(ParseError::new(Span::new(0, 0), "empty input"));
     };
-    if first.text.is_empty() {
-        return Err(ParseError::new(first.span, "empty token"));
-    }
     // Build file node from tokens.
-    Ok(SolidityFile::new(SyntaxNode::new(0, first.span)))
+    SolidityFile::from_tokens(input, first.span)
 }
 ```
 
-Bad (nested, redundant, verbose):
+Bad (vague names, nested, bool compare):
 
 ```rust
-pub fn parse(&self, tokens: &[Token]) -> ParseResult<SolidityFile> {
+pub fn handle(d: String) -> ParseResult<SolidityFile> {
     // Initialize the result variable for the file
-    if tokens.len() > 0 {
-        if tokens[0].text.is_empty() == false {
-            // Create and return the file node
-            return Ok(SolidityFile::new(SyntaxNode::new(0, tokens[0].span)));
-        } else {
-            return Err(ParseError::new(tokens[0].span, "empty token"));
-        }
+    if d.is_empty() == false {
+        return parse_text(d.clone());
     } else {
         return Err(ParseError::new(Span::new(0, 0), "empty input"));
     }
@@ -79,7 +86,13 @@ pub fn parse(&self, tokens: &[Token]) -> ParseResult<SolidityFile> {
 
 ## Checklist
 
-1. Guard clause first. Happy path last.
-2. No `unwrap`, no `== true`, no dead code.
-3. Short ASCII comments only where needed.
-4. `cargo check --workspace` passes.
+1. Relevant `references/` file read and applied.
+2. Guard clause first. No `unwrap`, no `== true`, no dead code.
+3. Names state roles and actions. Comments are short ASCII why-notes.
+4. `cargo check --workspace` passes. Clippy and fmt clean.
+
+## Sources
+
+- Apollo Rust Best Practices, `book/` chapters 1-9: https://github.com/apollographql/rust-best-practices/tree/main/book
+- Rust API Guidelines, naming: https://rust-lang.github.io/api-guidelines/naming.html
+- Rust Atomics and Locks (pointer background): https://marabos.nl/atomics/
