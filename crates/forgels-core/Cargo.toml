@@ -1,0 +1,10 @@
+[package]
+name = "forgels-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+forgels-protocol.workspace = true
+forgels-syntax.workspace = true
+forgels-common.workspace = true

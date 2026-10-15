@@ -1,0 +1,11 @@
+[package]
+name = "forgels-lang-noir"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+forgels-core.workspace = true
+forgels-protocol.workspace = true
+forgels-syntax.workspace = true
+forgels-common.workspace = true

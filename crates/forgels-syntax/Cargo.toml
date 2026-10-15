@@ -1,0 +1,8 @@
+[package]
+name = "forgels-syntax"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Shared AST, lexer, parser toolkit reused by all language crates"
+
+[dependencies]
