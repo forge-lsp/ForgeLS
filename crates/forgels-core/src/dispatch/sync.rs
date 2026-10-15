@@ -43,7 +43,11 @@ pub(crate) fn apply_did_open(workspace: &mut Workspace, params: &Value) {
         return;
     }
     if let Some(language) = route_file(&path, Some(language_id)) {
-        let _ = workspace.open(path, language, text.to_string());
+        let version = doc
+            .and_then(|doc| doc.get("version"))
+            .and_then(Value::as_i64)
+            .unwrap_or(0) as i32;
+        let _ = workspace.open(path, language, text.to_string(), version);
     }
 }
 
@@ -57,18 +61,22 @@ pub(crate) fn apply_did_change(workspace: &mut Workspace, params: &Value) {
     ) else {
         return;
     };
+    let version = doc
+        .and_then(|doc| doc.get("version"))
+        .and_then(Value::as_i64)
+        .map(|version| version as i32);
+    let path = uri_to_path(uri);
+    let current = workspace.get(&path).map(|doc| doc.version).unwrap_or(0);
     if let Some(last) = changes
         .last()
         .and_then(|change| change.get("text"))
         .and_then(Value::as_str)
         && workspace
-            .change(&uri_to_path(uri), last.to_string())
+            .change(&path, last.to_string(), version.unwrap_or(current))
             .is_ok()
-        && let Some(version) = doc
-            .and_then(|doc| doc.get("version"))
-            .and_then(Value::as_u64)
+        && let Some(version) = version
     {
-        workspace.mark_dirty(uri, version, std::time::Instant::now());
+        workspace.mark_dirty(uri, version as u64, std::time::Instant::now());
     }
 }
 

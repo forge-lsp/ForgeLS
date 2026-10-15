@@ -7,11 +7,13 @@ use crate::diagnostics::{DEFAULT_PUBLISH_DELAY, PublishGate};
 use crate::routing::Language;
 use forgels_protocol::Diagnostic;
 
-/// One tracked document: routed language plus latest full text.
+/// One tracked document: routed language, latest full text, and the
+/// editor version from the last open or change notification.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Document {
     pub language: Language,
     pub text: String,
+    pub version: i32,
 }
 
 /// Sync failure for open, change, or close.
@@ -65,20 +67,29 @@ impl Workspace {
         path: PathBuf,
         language: Language,
         text: String,
+        version: i32,
     ) -> Result<(), SyncError> {
         if self.files.contains_key(&path) {
             return Err(SyncError::AlreadyOpen(path));
         }
-        self.files.insert(path, Document { language, text });
+        self.files.insert(
+            path,
+            Document {
+                language,
+                text,
+                version,
+            },
+        );
         Ok(())
     }
 
-    /// Apply `didChange` with full text. Fails when the path is unknown.
-    pub fn change(&mut self, path: &Path, text: String) -> Result<(), SyncError> {
+    /// Apply `didChange` with full text and version. Fails when unknown.
+    pub fn change(&mut self, path: &Path, text: String, version: i32) -> Result<(), SyncError> {
         let Some(doc) = self.files.get_mut(path) else {
             return Err(SyncError::UnknownDocument(path.to_path_buf()));
         };
         doc.text = text;
+        doc.version = version;
         Ok(())
     }
 
@@ -187,7 +198,12 @@ mod tests {
     fn open_tracks_text_and_language() {
         let mut workspace = Workspace::new();
         workspace
-            .open(sol_path(), Language::Solidity, "contract C {}".to_string())
+            .open(
+                sol_path(),
+                Language::Solidity,
+                "contract C {}".to_string(),
+                1,
+            )
             .expect("open works");
         let doc = workspace.get(&sol_path()).expect("tracked");
         assert_eq!(doc.language, Language::Solidity);
@@ -198,10 +214,10 @@ mod tests {
     fn open_twice_keeps_first_text() {
         let mut workspace = Workspace::new();
         workspace
-            .open(sol_path(), Language::Solidity, "first".to_string())
+            .open(sol_path(), Language::Solidity, "first".to_string(), 1)
             .expect("open works");
         let err = workspace
-            .open(sol_path(), Language::Solidity, "second".to_string())
+            .open(sol_path(), Language::Solidity, "second".to_string(), 2)
             .expect_err("second open fails");
         assert_eq!(err, SyncError::AlreadyOpen(sol_path()));
         assert_eq!(workspace.get(&sol_path()).expect("tracked").text, "first");
@@ -211,10 +227,10 @@ mod tests {
     fn change_replaces_full_text() {
         let mut workspace = Workspace::new();
         workspace
-            .open(sol_path(), Language::Solidity, "v1".to_string())
+            .open(sol_path(), Language::Solidity, "v1".to_string(), 1)
             .expect("open works");
         workspace
-            .change(&sol_path(), "v2".to_string())
+            .change(&sol_path(), "v2".to_string(), 2)
             .expect("change works");
         assert_eq!(workspace.get(&sol_path()).expect("tracked").text, "v2");
     }
@@ -223,7 +239,7 @@ mod tests {
     fn change_unknown_fails() {
         let mut workspace = Workspace::new();
         let err = workspace
-            .change(&sol_path(), "v1".to_string())
+            .change(&sol_path(), "v1".to_string(), 1)
             .expect_err("change fails");
         assert_eq!(err, SyncError::UnknownDocument(sol_path()));
     }
@@ -232,7 +248,7 @@ mod tests {
     fn close_removes_and_second_close_fails() {
         let mut workspace = Workspace::new();
         workspace
-            .open(sol_path(), Language::Solidity, "v1".to_string())
+            .open(sol_path(), Language::Solidity, "v1".to_string(), 1)
             .expect("open works");
         workspace.close(&sol_path()).expect("close works");
         assert!(workspace.get(&sol_path()).is_none());
@@ -247,19 +263,31 @@ mod tests {
         let mut workspace = Workspace::new();
         let edits = ["contract A {}", "contract A { uint x; }", "contract B {}"];
         workspace
-            .open(sol_path(), Language::Solidity, edits[0].to_string())
+            .open(sol_path(), Language::Solidity, edits[0].to_string(), 1)
             .expect("open works");
-        for edit in &edits[1..] {
+        for (index, edit) in edits[1..].iter().enumerate() {
             workspace
-                .change(&sol_path(), (*edit).to_string())
+                .change(&sol_path(), (*edit).to_string(), index as i32 + 2)
                 .expect("change works");
         }
-        assert_eq!(
-            workspace.get(&sol_path()).expect("tracked").text,
-            "contract B {}"
-        );
+        let tracked = workspace.get(&sol_path()).expect("tracked");
+        assert_eq!(tracked.text, "contract B {}");
+        assert_eq!(tracked.version, 3);
         workspace.close(&sol_path()).expect("close works");
         assert!(workspace.get(&sol_path()).is_none());
+    }
+
+    #[test]
+    fn version_tracks_open_and_change() {
+        let mut workspace = Workspace::new();
+        workspace
+            .open(sol_path(), Language::Solidity, "v1".to_string(), 4)
+            .expect("open works");
+        assert_eq!(workspace.get(&sol_path()).expect("tracked").version, 4);
+        workspace
+            .change(&sol_path(), "v2".to_string(), 9)
+            .expect("change works");
+        assert_eq!(workspace.get(&sol_path()).expect("tracked").version, 9);
     }
 
     #[test]
@@ -311,7 +339,12 @@ mod tests {
     fn diagnostics_roundtrip_per_document() {
         let mut workspace = Workspace::new();
         workspace
-            .open(sol_path(), Language::Solidity, "contract A {}".to_string())
+            .open(
+                sol_path(),
+                Language::Solidity,
+                "contract A {}".to_string(),
+                1,
+            )
             .expect("open works");
         assert!(workspace.diagnostics_for(&sol_path()).is_empty());
         workspace.set_diagnostics(
@@ -327,7 +360,12 @@ mod tests {
     fn fixed_file_clears_its_diagnostics() {
         let mut workspace = Workspace::new();
         workspace
-            .open(sol_path(), Language::Solidity, "contract A {}".to_string())
+            .open(
+                sol_path(),
+                Language::Solidity,
+                "contract A {}".to_string(),
+                1,
+            )
             .expect("open works");
         workspace.set_diagnostics(sol_path(), vec![sample_diagnostic("oops")]);
         workspace.set_diagnostics(sol_path(), Vec::new());
@@ -338,7 +376,12 @@ mod tests {
     fn close_drops_all_document_diagnostics() {
         let mut workspace = Workspace::new();
         workspace
-            .open(sol_path(), Language::Solidity, "contract A {}".to_string())
+            .open(
+                sol_path(),
+                Language::Solidity,
+                "contract A {}".to_string(),
+                1,
+            )
             .expect("open works");
         workspace.set_diagnostics(sol_path(), vec![sample_diagnostic("oops")]);
         workspace.close(&sol_path()).expect("close works");
