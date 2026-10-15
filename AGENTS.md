@@ -168,6 +168,7 @@ Project uses OpenCode with local config in `opencode.json` and `.opencode/`.
 
 - `opencode.json`: project instructions (`AGENTS.md`, `docs/architecture.md`, `docs/syntax-toolkit.md`), formatter on, skills allowed for all agents.
 - Global MCP (inherited, do not duplicate): `context7` at `https://mcp.context7.com/mcp` for current library docs, `firecrawl` at `https://mcp.firecrawl.dev/v2/mcp` for web search, scrape, research, and developer index.
+- Project MCP (`opencode.json`): `plane` at `https://mcp.plane.so/http/mcp` via OAuth for Plane Cloud work items, cycles, and projects. One connection binds one workspace. Auth once in browser, then use natural language prompts.
 - Global skills (reuse, do not copy): `context7-mcp` for library docs via resolve then query, plus `firecrawl-search`, `firecrawl-scrape`, `firecrawl-developer-index`, `firecrawl-research-papers`, and other `firecrawl-*` for crawl, map, monitor, QA.
 
 ### 7.1 Agents (`mode: subagent`)
