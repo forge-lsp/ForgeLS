@@ -1,0 +1,42 @@
+name: Bug report
+description: Report wrong diagnostics, positions, or server crashes.
+title: "fix: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Fill what you can; logs and versions help most.
+  - type: input
+    id: version
+    attributes:
+      label: ForgeLS version
+      description: Output of `forgels --version`, or the release tag.
+      placeholder: v0.1.0
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you saw versus what you expected.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction
+      description: Smallest contract plus the request sequence, if known.
+      render: solidity
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Stderr with `--log-level debug`, if available.
+      render: text
+  - type: input
+    id: editor
+    attributes:
+      label: Editor and client
+      description: Editor plus which generic LSP client config you use.
+      placeholder: Neovim with built-in LSP
