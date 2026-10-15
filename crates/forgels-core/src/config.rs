@@ -11,6 +11,8 @@ pub struct Config {
     pub publish_delay_ms: u64,
     /// Default workspace root when the editor sends none.
     pub root: Option<PathBuf>,
+    /// Log level name such as `warn`. Validated where logging starts.
+    pub log_level: String,
 }
 
 impl Default for Config {
@@ -18,6 +20,7 @@ impl Default for Config {
         Self {
             publish_delay_ms: DEFAULT_PUBLISH_DELAY_MS,
             root: None,
+            log_level: String::from("warn"),
         }
     }
 }
@@ -70,6 +73,17 @@ impl Config {
                 }
                 None => warnings.push(format!(
                     "config {}: root must be a string path",
+                    path.display()
+                )),
+            }
+        }
+        if let Some(value) = table.get("log_level") {
+            match value.as_str() {
+                Some(level) => {
+                    config.log_level = level.to_string();
+                }
+                None => warnings.push(format!(
+                    "config {}: log_level must be a string",
                     path.display()
                 )),
             }

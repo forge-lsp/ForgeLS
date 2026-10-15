@@ -2,6 +2,7 @@
 
 pub mod fs;
 pub mod http;
+pub mod log;
 pub mod paths;
 
 pub use fs::{read_to_string, write_string};

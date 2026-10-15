@@ -26,3 +26,5 @@ forgels-lang-solidity = { path = "crates/forgels-lang-solidity" }
 forgels-lang-noir = { path = "crates/forgels-lang-noir" }
 serde_json = "1"
 toml = "1"
+tracing = "0.1"
+tracing-subscriber = "0.3"
