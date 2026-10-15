@@ -9,8 +9,8 @@ pub mod lexer;
 pub mod parser;
 
 pub use analysis::{
-    CompletionItem, CompletionKind, Hover, Scope, Symbol, SymbolKind, collect_symbols, complete_at,
-    goto_definition, hover_at,
+    CompletionItem, CompletionKind, Hover, Scope, SolidityAnalyzer, Symbol, SymbolKind,
+    collect_symbols, complete_at, goto_definition, hover_at,
 };
 
 pub use ast::{

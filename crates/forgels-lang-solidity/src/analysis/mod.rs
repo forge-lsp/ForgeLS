@@ -1,6 +1,7 @@
-use forgels_syntax::{AstNode, Span};
+use forgels_core::{Analyzer, CompletionData, DiagnosticData, HoverData};
+use forgels_syntax::{AstNode, Lexer, Span};
 
-use crate::{ContractDef, FunctionDef, SolidityFile};
+use crate::{ContractDef, FunctionDef, SolidityFile, SolidityLexer, SolidityParser};
 
 mod completion;
 mod goto;
@@ -225,4 +226,62 @@ fn function_scope(function: &FunctionDef) -> Scope {
         }
     }
     scope
+}
+
+/// Solidity analyzer for the core registry.
+///
+/// Parses on each call: simple and correct for beta, no incremental cache.
+#[derive(Debug, Default)]
+pub struct SolidityAnalyzer;
+
+impl SolidityAnalyzer {
+    pub fn new() -> Self {
+        Self
+    }
+
+    fn parse_file(text: &str) -> Option<SolidityFile> {
+        let tokens = SolidityLexer.tokenize(text);
+        let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+        if errors.is_empty() { Some(file) } else { None }
+    }
+}
+
+impl Analyzer for SolidityAnalyzer {
+    fn hover(&self, text: &str, offset: u32) -> Option<HoverData> {
+        let file = Self::parse_file(text)?;
+        hover::hover_at(&file, text, offset).map(|found| HoverData {
+            contents: found.contents,
+            span: found.span,
+        })
+    }
+
+    fn complete(&self, text: &str, offset: u32) -> Vec<CompletionData> {
+        let Some(file) = Self::parse_file(text) else {
+            return Vec::new();
+        };
+        completion::complete_at(&file, text, offset)
+            .iter()
+            .map(|item| CompletionData {
+                label: item.label.clone(),
+                detail: item.detail.clone(),
+            })
+            .collect()
+    }
+
+    fn goto(&self, text: &str, offset: u32) -> Option<Span> {
+        let file = Self::parse_file(text)?;
+        goto::goto_definition(&file, text, offset)
+    }
+
+    fn diagnostics(&self, text: &str) -> Vec<DiagnosticData> {
+        let tokens = SolidityLexer.tokenize(text);
+        let (_, errors) = SolidityParser.parse_with_errors(&tokens);
+        errors
+            .iter()
+            .map(|error| DiagnosticData {
+                span: error.span,
+                message: error.message.clone(),
+            })
+            .collect()
+    }
 }
