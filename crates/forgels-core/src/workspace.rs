@@ -3,6 +3,8 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+use forgels_common::log::debug;
+
 use crate::diagnostics::{DEFAULT_PUBLISH_DELAY, PublishGate};
 use crate::routing::Language;
 use forgels_protocol::Diagnostic;
@@ -82,6 +84,7 @@ impl Workspace {
         if self.files.contains_key(&path) {
             return Err(SyncError::AlreadyOpen(path));
         }
+        debug!("open {}", path.display());
         self.files.insert(
             path,
             Document {
@@ -100,6 +103,7 @@ impl Workspace {
         };
         doc.text = text;
         doc.version = version;
+        debug!("change {} to version {version}", path.display());
         Ok(())
     }
 
@@ -109,6 +113,7 @@ impl Workspace {
         if self.files.remove(path).is_none() {
             return Err(SyncError::UnknownDocument(path.to_path_buf()));
         }
+        debug!("close {}", path.display());
         self.diagnostics.remove(path);
         Ok(())
     }

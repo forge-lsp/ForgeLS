@@ -1,3 +1,5 @@
+use forgels_common::log::{info, warn};
+
 use crate::analyzer::Analyzer;
 use crate::routing::Language;
 use crate::{Config, Workspace, dispatch};
@@ -24,8 +26,8 @@ impl Server {
     }
 
     pub fn run(&mut self) {
-        // Session owns initialize, shutdown, and exit. Unknown methods
-        // stay silent until the unknown-method leaf lands.
+        // Session drives initialize, shutdown, and exit; dispatch answers.
+        info!("accepting lsp frames on stdio");
         let stdin = std::io::stdin();
         let stdout = std::io::stdout();
         let mut input = std::io::BufReader::new(stdin.lock());
@@ -39,6 +41,11 @@ impl Server {
         .unwrap_or(1);
         let _ = &self.config;
         let _ = &self.workspace;
+        if code == 0 {
+            info!("server exiting cleanly");
+        } else {
+            warn!("server exiting with code {code}");
+        }
         std::process::exit(code);
     }
 }

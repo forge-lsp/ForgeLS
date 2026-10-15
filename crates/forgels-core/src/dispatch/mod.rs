@@ -1,5 +1,7 @@
 use serde_json::Value;
 
+use forgels_common::log::{info, warn};
+
 use crate::analyzer::AnalyzerMap;
 use crate::workspace::Workspace;
 
@@ -114,6 +116,7 @@ pub fn handle_message(
     // notifications are dropped.
     if !session.initialized && method != "initialize" {
         let id = value.get("id")?.clone();
+        warn!("rejecting {method} before initialize");
         let response = serde_json::json!({
             "jsonrpc": "2.0",
             "id": id,
@@ -123,6 +126,7 @@ pub fn handle_message(
     }
     if method == "shutdown" {
         session.shutdown_received = true;
+        info!("shutdown received");
         let id = value.get("id")?.clone();
         let response = serde_json::json!({
             "jsonrpc": "2.0",
@@ -135,6 +139,7 @@ pub fn handle_message(
     // other notifications are dropped.
     if session.shutdown_received {
         let id = value.get("id")?.clone();
+        warn!("rejecting {method} after shutdown");
         let response = serde_json::json!({
             "jsonrpc": "2.0",
             "id": id,
@@ -173,6 +178,7 @@ pub fn handle_message(
     if method != "initialize" {
         // Unknown request gets a polite error. Unknown notification
         // without id stays silent. The server keeps running either way.
+        warn!("unknown method {method}");
         let id = value.get("id")?.clone();
         let response = serde_json::json!({
             "jsonrpc": "2.0",
@@ -186,6 +192,7 @@ pub fn handle_message(
         session.client_capabilities = Some(caps.clone());
     }
     session.initialized = true;
+    info!("initialized");
     apply_initialize_roots(workspace, &params);
     let response = serde_json::json!({
         "jsonrpc": "2.0",

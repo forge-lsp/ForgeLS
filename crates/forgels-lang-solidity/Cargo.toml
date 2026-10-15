@@ -9,3 +9,4 @@ forgels-core.workspace = true
 forgels-protocol.workspace = true
 forgels-syntax.workspace = true
 forgels-common.workspace = true
+tracing.workspace = true

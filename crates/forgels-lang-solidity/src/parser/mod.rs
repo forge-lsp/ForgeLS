@@ -1,6 +1,7 @@
 use crate::SolidityLexer;
 use crate::lexer::SolidityKind;
 use crate::{SolidityFile, SolidityNode};
+use forgels_common::log::{debug, instrument};
 use forgels_syntax::{
     Lexer, ParseError, ParseResult, Parser, Span, SyntaxElement, SyntaxNode, Token,
 };
@@ -44,6 +45,7 @@ impl SolidityParser {
     ///
     /// Always returns a file, even when empty. Callers map the error list
     /// one to one into diagnostics.
+    #[instrument(skip(self, tokens), fields(tokens = tokens.len()))]
     pub fn parse_with_errors(&self, tokens: &[Token]) -> (SolidityFile, Vec<ParseError>) {
         let file_end = tokens.last().map(|token| token.span.end).unwrap_or(0);
         let mut cursor = Cursor::new(tokens, file_end);
@@ -104,6 +106,7 @@ impl SolidityParser {
             Span::new(0, file_end),
             items,
         ));
+        debug!(errors = errors.len(), "solidity parse done");
         (file, errors)
     }
 }

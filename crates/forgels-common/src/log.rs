@@ -100,4 +100,17 @@ mod tests {
         assert_eq!(level, Level::INFO);
         assert!(warning.is_none());
     }
+
+    #[test]
+    fn events_above_threshold_are_disabled() {
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(Level::ERROR)
+            .with_writer(std::io::sink)
+            .finish();
+        tracing::dispatcher::with_default(&tracing::Dispatch::new(subscriber), || {
+            assert!(!tracing::enabled!(tracing::Level::INFO));
+            assert!(!tracing::enabled!(tracing::Level::DEBUG));
+            assert!(tracing::enabled!(tracing::Level::ERROR));
+        });
+    }
 }
