@@ -44,6 +44,34 @@ fn every_subset_keyword_maps_to_its_kind() {
         ("false", SolidityKind::False),
         ("is", SolidityKind::Is),
         ("abstract", SolidityKind::Abstract),
+        ("anonymous", SolidityKind::Anonymous),
+        ("assembly", SolidityKind::Assembly),
+        ("break", SolidityKind::Break),
+        ("catch", SolidityKind::Catch),
+        ("continue", SolidityKind::Continue),
+        ("delete", SolidityKind::Delete),
+        ("do", SolidityKind::Do),
+        ("enum", SolidityKind::Enum),
+        ("error", SolidityKind::ErrorKw),
+        ("fallback", SolidityKind::Fallback),
+        ("fixed", SolidityKind::Fixed),
+        ("global", SolidityKind::Global),
+        ("hex", SolidityKind::Hex),
+        ("immutable", SolidityKind::Immutable),
+        ("indexed", SolidityKind::Indexed),
+        ("interface", SolidityKind::Interface),
+        ("library", SolidityKind::Library),
+        ("new", SolidityKind::New),
+        ("receive", SolidityKind::Receive),
+        ("revert", SolidityKind::Revert),
+        ("struct", SolidityKind::Struct),
+        ("transient", SolidityKind::Transient),
+        ("try", SolidityKind::Try),
+        ("type", SolidityKind::Type),
+        ("ufixed", SolidityKind::Ufixed),
+        ("unchecked", SolidityKind::Unchecked),
+        ("unicode", SolidityKind::Unicode),
+        ("using", SolidityKind::Using),
     ];
     for (word, kind) in cases {
         assert_eq!(keyword_kind(word), Some(kind), "word {word}");
@@ -82,8 +110,33 @@ fn sized_types_cover_valid_ranges_only() {
 
 #[test]
 fn plain_identifiers_stay_identifiers() {
-    for word in ["Token", "totalSupply", "struct", "myVar", "contract2"] {
+    for word in ["Token", "totalSupply", "myVar", "contract2", "fix"] {
         assert_eq!(keyword_kind(word), None, "word {word}");
+    }
+}
+
+#[test]
+fn fixed_types_cover_bare_and_sized_forms() {
+    for word in ["fixed", "ufixed", "fixed128x18", "ufixed8x1", "fixed256x80"] {
+        assert!(keyword_kind(word).is_some(), "word {word}");
+    }
+    assert_eq!(keyword_kind("fixed128x18"), Some(SolidityKind::Fixed));
+    assert_eq!(keyword_kind("ufixed8x1"), Some(SolidityKind::Ufixed));
+    for word in ["fixedx18", "fixed128x", "fixed01x18", "fixed128x8x8", "fix"] {
+        assert_eq!(keyword_kind(word), None, "word {word}");
+    }
+}
+
+#[test]
+fn denominations_and_reserved_group_correctly() {
+    for word in ["wei", "gwei", "ether", "seconds", "days"] {
+        assert_eq!(keyword_kind(word), Some(SolidityKind::SubDenomination));
+    }
+    for word in ["after", "let", "var", "in", "switch", "byte"] {
+        assert_eq!(keyword_kind(word), Some(SolidityKind::Reserved));
+    }
+    for kind in [SolidityKind::SubDenomination, SolidityKind::Reserved] {
+        assert!(kind.is_keyword());
     }
 }
 
@@ -131,8 +184,12 @@ fn every_subset_symbol_maps() {
         ("~", SolidityKind::Tilde),
         ("<<", SolidityKind::Shl),
         ("<<=", SolidityKind::ShlAssign),
-        (">>", SolidityKind::Shr),
-        (">>=", SolidityKind::ShrAssign),
+        (">>", SolidityKind::Sar),
+        (">>=", SolidityKind::AssignSar),
+        (">>>", SolidityKind::Shr),
+        (">>>=", SolidityKind::AssignShr),
+        ("!", SolidityKind::Not),
+        ("->", SolidityKind::RightArrow),
         ("?", SolidityKind::Question),
         ("=>", SolidityKind::FatArrow),
     ];
@@ -140,8 +197,8 @@ fn every_subset_symbol_maps() {
         assert_eq!(symbol_kind(op), Some(kind), "op {op}");
         assert!(!kind.is_keyword(), "flag {op}");
     }
-    assert_eq!(symbol_kind(">>>"), None);
     assert_eq!(symbol_kind("@"), None);
+    assert_eq!(symbol_kind(">>>>"), None);
 }
 
 #[test]
@@ -254,4 +311,59 @@ fn hex_and_exponent_numbers_lex() {
             SolidityKind::Number.as_u16(),
         ]
     );
+}
+
+#[test]
+fn prefixed_strings_stay_single_tokens() {
+    let tokens = SolidityLexer.tokenize("hex\"ff\" unicode'hi'");
+    assert_eq!(tokens.len(), 2);
+    assert_eq!(tokens[0].kind, SolidityKind::HexString.as_u16());
+    assert_eq!(tokens[0].text, "hex\"ff\"");
+    assert_eq!(tokens[1].kind, SolidityKind::UnicodeString.as_u16());
+    assert_eq!(tokens[1].text, "unicode'hi'");
+}
+
+#[test]
+fn longest_match_wins_for_shifts_and_arrows() {
+    let kinds = kinds_of(">> >>= >>> >>>= -> - ! != => ==");
+    assert_eq!(
+        kinds,
+        vec![
+            SolidityKind::Sar.as_u16(),
+            SolidityKind::AssignSar.as_u16(),
+            SolidityKind::Shr.as_u16(),
+            SolidityKind::AssignShr.as_u16(),
+            SolidityKind::RightArrow.as_u16(),
+            SolidityKind::Minus.as_u16(),
+            SolidityKind::Not.as_u16(),
+            SolidityKind::NotEq.as_u16(),
+            SolidityKind::FatArrow.as_u16(),
+            SolidityKind::Eq.as_u16(),
+        ]
+    );
+}
+
+#[test]
+fn bare_hex_and_unicode_are_keywords() {
+    let tokens = SolidityLexer.tokenize("hex unicode");
+    assert_eq!(tokens[0].kind, SolidityKind::Hex.as_u16());
+    assert_eq!(tokens[1].kind, SolidityKind::Unicode.as_u16());
+}
+
+#[test]
+fn leading_zero_decimals_are_octal() {
+    let kinds = kinds_of("0 0.5 0xFF 0123 00");
+    assert_eq!(
+        kinds,
+        vec![
+            SolidityKind::Number.as_u16(),
+            SolidityKind::Number.as_u16(),
+            SolidityKind::Number.as_u16(),
+            SolidityKind::OctalNumber.as_u16(),
+            SolidityKind::OctalNumber.as_u16(),
+        ]
+    );
+    assert!(!SolidityKind::OctalNumber.is_keyword());
+    assert!(!SolidityKind::HexString.is_keyword());
+    assert!(!SolidityKind::UnicodeString.is_keyword());
 }

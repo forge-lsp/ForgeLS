@@ -232,6 +232,9 @@ pub(crate) fn parse_block(cursor: &mut Cursor, errors: &mut Vec<ParseError>) -> 
                 return None;
             }
             Some(kind) if kind == SolidityKind::RBrace.as_u16() => break,
+            Some(kind) if kind == SolidityKind::Assembly.as_u16() => {
+                skip_assembly(cursor);
+            }
             Some(kind)
                 if (is_type_start(kind) || kind == SolidityKind::Ident.as_u16())
                     && is_local_decl_ahead(cursor) =>
@@ -260,6 +263,23 @@ pub(crate) fn parse_block(cursor: &mut Cursor, errors: &mut Vec<ParseError>) -> 
         Span::new(open.span.start, close.span.end),
         locals,
     ))
+}
+
+/// Skip an inline assembly block without errors.
+///
+/// Full Yul parsing is deferred: the optional dialect string and the
+/// balanced brace body are consumed so surrounding locals keep parsing.
+pub(crate) fn skip_assembly(cursor: &mut Cursor) {
+    cursor.bump();
+    if cursor.peek_kind() == Some(SolidityKind::StringLit.as_u16()) {
+        cursor.bump();
+    }
+    if cursor.peek_kind() == Some(SolidityKind::LParen.as_u16()) {
+        skip_parens(cursor);
+    }
+    if cursor.peek_kind() == Some(SolidityKind::LBrace.as_u16()) {
+        skip_balanced(cursor);
+    }
 }
 
 /// True when the upcoming tokens look like `Type name [= ;]`.

@@ -1,4 +1,4 @@
-/// Token kinds for the Solidity beta subset.
+/// Token kinds for Solidity, following the ANTLR grammar main mode.
 ///
 /// Discriminants travel as `u16` inside [`Token`]. Keywords, literals,
 /// symbols, and comments each own a variant so the parser can match on
@@ -11,6 +11,9 @@ pub enum SolidityKind {
     Ident,
     Number,
     StringLit,
+    HexString,
+    UnicodeString,
+    OctalNumber,
     // Directives.
     Pragma,
     Import,
@@ -101,13 +104,49 @@ pub enum SolidityKind {
     Tilde,
     Shl,
     ShlAssign,
+    Sar,
+    AssignSar,
     Shr,
-    ShrAssign,
+    AssignShr,
+    Not,
+    RightArrow,
     Question,
     FatArrow,
     // Contract heritage.
     Is,
     Abstract,
+    // Full grammar words.
+    Anonymous,
+    Assembly,
+    Break,
+    Catch,
+    Continue,
+    Delete,
+    Do,
+    Enum,
+    ErrorKw,
+    Fallback,
+    Fixed,
+    Global,
+    Hex,
+    Immutable,
+    Indexed,
+    Interface,
+    Library,
+    New,
+    Receive,
+    Revert,
+    Struct,
+    Transient,
+    Try,
+    Type,
+    Ufixed,
+    Unchecked,
+    Unicode,
+    Using,
+    // Grouped words: units and future-reserved words.
+    SubDenomination,
+    Reserved,
 }
 
 impl SolidityKind {
@@ -163,6 +202,36 @@ impl SolidityKind {
                 | SolidityKind::False
                 | SolidityKind::Is
                 | SolidityKind::Abstract
+                | SolidityKind::Anonymous
+                | SolidityKind::Assembly
+                | SolidityKind::Break
+                | SolidityKind::Catch
+                | SolidityKind::Continue
+                | SolidityKind::Delete
+                | SolidityKind::Do
+                | SolidityKind::Enum
+                | SolidityKind::ErrorKw
+                | SolidityKind::Fallback
+                | SolidityKind::Fixed
+                | SolidityKind::Global
+                | SolidityKind::Hex
+                | SolidityKind::Immutable
+                | SolidityKind::Indexed
+                | SolidityKind::Interface
+                | SolidityKind::Library
+                | SolidityKind::New
+                | SolidityKind::Receive
+                | SolidityKind::Revert
+                | SolidityKind::Struct
+                | SolidityKind::Transient
+                | SolidityKind::Try
+                | SolidityKind::Type
+                | SolidityKind::Ufixed
+                | SolidityKind::Unchecked
+                | SolidityKind::Unicode
+                | SolidityKind::Using
+                | SolidityKind::SubDenomination
+                | SolidityKind::Reserved
         )
     }
 }
@@ -211,7 +280,39 @@ pub fn keyword_kind(word: &str) -> Option<SolidityKind> {
         "false" => SolidityKind::False,
         "is" => SolidityKind::Is,
         "abstract" => SolidityKind::Abstract,
-        _ => return sized_type_kind(word),
+        "anonymous" => SolidityKind::Anonymous,
+        "assembly" => SolidityKind::Assembly,
+        "break" => SolidityKind::Break,
+        "catch" => SolidityKind::Catch,
+        "continue" => SolidityKind::Continue,
+        "delete" => SolidityKind::Delete,
+        "do" => SolidityKind::Do,
+        "enum" => SolidityKind::Enum,
+        "error" => SolidityKind::ErrorKw,
+        "fallback" => SolidityKind::Fallback,
+        "fixed" => SolidityKind::Fixed,
+        "global" => SolidityKind::Global,
+        "hex" => SolidityKind::Hex,
+        "immutable" => SolidityKind::Immutable,
+        "indexed" => SolidityKind::Indexed,
+        "interface" => SolidityKind::Interface,
+        "library" => SolidityKind::Library,
+        "new" => SolidityKind::New,
+        "receive" => SolidityKind::Receive,
+        "revert" => SolidityKind::Revert,
+        "struct" => SolidityKind::Struct,
+        "transient" => SolidityKind::Transient,
+        "try" => SolidityKind::Try,
+        "type" => SolidityKind::Type,
+        "ufixed" => SolidityKind::Ufixed,
+        "unchecked" => SolidityKind::Unchecked,
+        "unicode" => SolidityKind::Unicode,
+        "using" => SolidityKind::Using,
+        _ => {
+            return fixed_type_kind(word)
+                .or_else(|| sized_type_kind(word))
+                .or_else(|| grouped_kind(word));
+        }
     };
     Some(kind)
 }
@@ -240,6 +341,86 @@ fn sized_type_kind(word: &str) -> Option<SolidityKind> {
         return Some(SolidityKind::BytesSized);
     }
     None
+}
+
+/// Map fixed-point types: bare `fixed` and `ufixed`, plus `MxN` forms
+/// where both parts are non-zero leading digits without a leading zero.
+fn fixed_type_kind(word: &str) -> Option<SolidityKind> {
+    for (prefix, kind) in [
+        ("fixed", SolidityKind::Fixed),
+        ("ufixed", SolidityKind::Ufixed),
+    ] {
+        if let Some(rest) = word.strip_prefix(prefix) {
+            if rest.is_empty() {
+                return Some(kind);
+            }
+            let mut halves = rest.split('x');
+            match (halves.next(), halves.next(), halves.next()) {
+                (Some(mantissa), Some(exponent), None)
+                    if is_nonzero_digits(mantissa) && is_nonzero_digits(exponent) =>
+                {
+                    return Some(kind);
+                }
+                _ => {}
+            }
+        }
+    }
+    None
+}
+
+fn is_nonzero_digits(text: &str) -> bool {
+    let mut chars = text.bytes();
+    if !matches!(chars.next(), Some(b'1'..=b'9')) {
+        return false;
+    }
+    chars.all(|byte| byte.is_ascii_digit())
+}
+
+/// Map unit denominations and future-reserved words to their group kinds.
+fn grouped_kind(word: &str) -> Option<SolidityKind> {
+    const DENOMINATIONS: &[&str] = &[
+        "wei", "gwei", "ether", "seconds", "minutes", "hours", "days", "weeks", "years",
+    ];
+    const RESERVED: &[&str] = &[
+        "after",
+        "alias",
+        "apply",
+        "auto",
+        "byte",
+        "case",
+        "copyof",
+        "default",
+        "define",
+        "final",
+        "implements",
+        "in",
+        "inline",
+        "let",
+        "macro",
+        "match",
+        "mutable",
+        "null",
+        "of",
+        "partial",
+        "promise",
+        "reference",
+        "relocatable",
+        "sealed",
+        "sizeof",
+        "static",
+        "supports",
+        "switch",
+        "typedef",
+        "typeof",
+        "var",
+    ];
+    if DENOMINATIONS.contains(&word) {
+        Some(SolidityKind::SubDenomination)
+    } else if RESERVED.contains(&word) {
+        Some(SolidityKind::Reserved)
+    } else {
+        None
+    }
 }
 
 /// Map an operator to its symbol kind. The lexer tries the longest match
@@ -287,8 +468,12 @@ pub fn symbol_kind(op: &str) -> Option<SolidityKind> {
         "~" => SolidityKind::Tilde,
         "<<" => SolidityKind::Shl,
         "<<=" => SolidityKind::ShlAssign,
-        ">>" => SolidityKind::Shr,
-        ">>=" => SolidityKind::ShrAssign,
+        ">>" => SolidityKind::Sar,
+        ">>=" => SolidityKind::AssignSar,
+        ">>>" => SolidityKind::Shr,
+        ">>>=" => SolidityKind::AssignShr,
+        "!" => SolidityKind::Not,
+        "->" => SolidityKind::RightArrow,
         "?" => SolidityKind::Question,
         "=>" => SolidityKind::FatArrow,
         _ => return None,

@@ -225,3 +225,36 @@ fn heritage_without_base_name_errors() {
     assert_eq!(errors[0].message, "expected base name");
     assert!(file.contracts().is_empty());
 }
+
+#[test]
+fn assembly_block_skips_balanced_without_error() {
+    let text = "contract C {\nfunction f() public {\nuint x = 1;\nassembly {\nlet y := add(x, 1)\n}\nuint z = 2;\n}\n}";
+    let lexer = SolidityLexer;
+    let tokens = lexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let body = file.contracts()[0].functions()[0].body().expect("body");
+    let names: Vec<String> = body
+        .locals()
+        .iter()
+        .filter_map(|local| local.name())
+        .collect();
+    assert_eq!(names, vec!["x", "z"]);
+}
+
+#[test]
+fn assembly_with_dialect_string_skips() {
+    let text = "contract C {\nfunction f() public {\nassembly \"evmasm\" {\nlet y := 1\n}\n}\n}";
+    let lexer = SolidityLexer;
+    let tokens = lexer.tokenize(text);
+    let (_, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+}
+
+#[test]
+fn experimental_pragma_parses_to_semicolon() {
+    let text = "pragma experimental ABIEncoderV2;\ncontract C {\n}";
+    let file = parse_ok(text);
+    assert_eq!(file.pragmas().len(), 1);
+    assert_eq!(file.pragmas()[0].name().as_deref(), Some("experimental"));
+}

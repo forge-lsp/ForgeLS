@@ -46,7 +46,7 @@ impl<'a> Scanner<'a> {
             } else if byte.is_ascii_digit() {
                 self.number();
             } else if byte == b'\'' || byte == b'"' {
-                self.string(byte);
+                self.string(byte, SolidityKind::StringLit);
             } else {
                 self.symbol_or_error();
             }
@@ -98,18 +98,58 @@ impl<'a> Scanner<'a> {
             self.pos += 1;
         }
         let text = self.input.get(start..self.pos).unwrap_or("");
+        // Prefixed strings stay one token: `hex"ff"`, `unicode"hi"`.
+        // Bare `hex` and `unicode` fall through to keywords below.
+        if text == "hex"
+            && let Some(quote) = self.at(0)
+            && (quote == b'\'' || quote == b'"')
+        {
+            self.string_from(start, quote, SolidityKind::HexString);
+            return;
+        }
+        if text == "unicode"
+            && let Some(quote) = self.at(0)
+            && (quote == b'\'' || quote == b'"')
+        {
+            self.string_from(start, quote, SolidityKind::UnicodeString);
+            return;
+        }
         let kind = keyword_kind(text).unwrap_or(SolidityKind::Ident);
         self.push(kind, start, self.pos);
     }
 
     fn number(&mut self) {
         let start = self.pos;
+        let mut kind = SolidityKind::Number;
         if self.at(0) == Some(b'0') && matches!(self.at(1), Some(b'x') | Some(b'X')) {
             self.pos += 2;
             while let Some(byte) = self.at(0)
                 && (byte.is_ascii_hexdigit() || byte == b'_')
             {
                 self.pos += 1;
+            }
+        } else if self.at(0) == Some(b'0')
+            && let Some(next) = self.at(1)
+            && next.is_ascii_digit()
+        {
+            // Leading-zero decimals are octal per the grammar. Disallowed
+            // downstream, but scanned as their own kind for clear errors.
+            kind = SolidityKind::OctalNumber;
+            while let Some(byte) = self.at(0)
+                && (byte.is_ascii_digit() || byte == b'_')
+            {
+                self.pos += 1;
+            }
+            if self.at(0) == Some(b'.')
+                && let Some(next) = self.at(1)
+                && next.is_ascii_digit()
+            {
+                self.pos += 1;
+                while let Some(byte) = self.at(0)
+                    && (byte.is_ascii_digit() || byte == b'_')
+                {
+                    self.pos += 1;
+                }
             }
         } else {
             while let Some(byte) = self.at(0)
@@ -145,11 +185,17 @@ impl<'a> Scanner<'a> {
                 }
             }
         }
-        self.push(SolidityKind::Number, start, self.pos);
+        self.push(kind, start, self.pos);
     }
 
-    fn string(&mut self, quote: u8) {
+    fn string(&mut self, quote: u8, kind: SolidityKind) {
         let start = self.pos;
+        self.string_from(start, quote, kind);
+    }
+
+    /// Scan from the quote at `pos`, keeping `[start..pos]` as prefix.
+    /// Used for `hex"..."` and `unicode"..."` single tokens.
+    fn string_from(&mut self, start: usize, quote: u8, kind: SolidityKind) {
         self.pos += 1;
         while self.pos < self.bytes.len() {
             let byte = self.bytes[self.pos];
@@ -163,12 +209,12 @@ impl<'a> Scanner<'a> {
             }
         }
         // Unterminated strings run to EOF on purpose, same as block comments.
-        self.push(SolidityKind::StringLit, start, self.pos);
+        self.push(kind, start, self.pos);
     }
 
     fn symbol_or_error(&mut self) {
         let start = self.pos;
-        for len in [3, 2, 1] {
+        for len in [4, 3, 2, 1] {
             if let Some(text) = self.input.get(start..start + len)
                 && let Some(kind) = symbol_kind(text)
             {
