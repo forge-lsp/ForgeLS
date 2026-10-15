@@ -491,17 +491,24 @@ impl AstNode for TypeNode {
 }
 
 fn join_type_text(parts: &[&str]) -> String {
-    let joined = parts.join(" ");
-    joined
-        .replace("( ", "(")
-        .replace(" (", "(")
-        .replace(" )", ")")
-        .replace(" ,", ",")
-        .replace(" ;", ";")
-        .replace(" .", ".")
-        .replace(" [", "[")
-        .replace("[ ", "[")
-        .replace(" ]", "]")
+    // Explicit spacing: no guesswork, no chained replaces.
+    // A token takes no leading space when it clings to the previous one
+    // (`(`, `[`, `)`, `]`, `,`, `;`, `.`), or when the previous token
+    // opens a group (`(`, `[`, `.`). Everything else separates with one
+    // space, which gives `=>` its surrounding spaces for free.
+    const NO_SPACE_BEFORE: &[&str] = &["(", "[", ")", "]", ",", ";", "."];
+    const NO_SPACE_AFTER: &[&str] = &["(", "[", "."];
+    let mut out = String::new();
+    for (index, part) in parts.iter().enumerate() {
+        if index > 0
+            && !NO_SPACE_BEFORE.contains(part)
+            && !NO_SPACE_AFTER.contains(&parts[index - 1])
+        {
+            out.push(' ');
+        }
+        out.push_str(part);
+    }
+    out
 }
 
 /// Function or lone block body. Children hold LocalVar nodes only;

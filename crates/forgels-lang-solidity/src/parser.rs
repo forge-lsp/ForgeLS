@@ -962,4 +962,21 @@ mod tests {
             .collect();
         assert_eq!(names, vec!["good", "fine"]);
     }
+
+    #[test]
+    fn nested_mapping_text_has_no_stray_spaces() {
+        use crate::TypeNode;
+        let text =
+            "contract C {\nmapping(address => mapping(uint => bool)) nested;\nuint[] scores;\n}";
+        let file = parse_ok(text);
+        let types: Vec<String> = file.contracts()[0]
+            .state_vars()
+            .iter()
+            .filter_map(|var| var.type_node().map(|type_node| TypeNode::text(&type_node)))
+            .collect();
+        assert_eq!(
+            types,
+            vec!["mapping(address => mapping(uint => bool))", "uint[]",]
+        );
+    }
 }
