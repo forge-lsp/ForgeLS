@@ -17,4 +17,4 @@ pub use error::{ParseError, ParseResult};
 pub use lexer::{Lexer, Token};
 pub use parser::Parser;
 pub use span::Span;
-pub use syntax::{SyntaxKind, SyntaxNode, SyntaxToken};
+pub use syntax::{SyntaxElement, SyntaxKind, SyntaxNode, SyntaxToken};
