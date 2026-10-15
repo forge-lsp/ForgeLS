@@ -102,6 +102,11 @@ impl Workspace {
         self.publish.take_due(now)
     }
 
+    /// Drain every pending URI, due or not.
+    pub fn take_all_pending(&mut self) -> Vec<(String, u64)> {
+        self.publish.take_all()
+    }
+
     /// Replace the diagnostics for a document. An empty set removes the
     /// entry, which is how a fixed file clears its squiggles.
     pub fn set_diagnostics(&mut self, path: PathBuf, diagnostics: Vec<Diagnostic>) {
@@ -295,7 +300,6 @@ mod tests {
     }
 
     fn sample_diagnostic(message: &str) -> Diagnostic {
-        use forgels_protocol::{Position, Range};
         use forgels_syntax::Span;
         Diagnostic::error(
             crate::diagnostics::span_to_range("contract A {}", Span::new(0, 8)),

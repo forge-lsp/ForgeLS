@@ -24,6 +24,43 @@ pub fn offset_to_position(text: &str, offset: u32) -> Position {
     Position { line, character }
 }
 
+/// Map an LSP position back to a byte offset.
+///
+/// Character units are UTF-16 code units. Lines and characters clamp:
+/// a line past the end lands at the text end, a character past the line
+/// lands at the line end, and a mid-character stop lands at the boundary
+/// start, so offsets never split a character.
+pub fn position_to_offset(text: &str, position: Position) -> u32 {
+    let mut line_start = 0;
+    let mut line_index = 0;
+    while line_index < position.line {
+        match text[line_start..].find('\n') {
+            Some(relative) => {
+                line_start += relative + 1;
+                line_index += 1;
+            }
+            None => return text.len() as u32,
+        }
+    }
+    let line_end = text[line_start..]
+        .find('\n')
+        .map(|relative| line_start + relative)
+        .unwrap_or(text.len());
+    let line_text = &text[line_start..line_end];
+    let mut units = 0u32;
+    for (byte_index, ch) in line_text.char_indices() {
+        if units == position.character {
+            return (line_start + byte_index) as u32;
+        }
+        units += ch.len_utf16() as u32;
+        if units > position.character {
+            // Mid-character stop: fall back to this char start.
+            return (line_start + byte_index) as u32;
+        }
+    }
+    (line_start + line_text.len()) as u32
+}
+
 /// Map a span to an LSP range.
 pub fn span_to_range(text: &str, span: Span) -> Range {
     Range {
@@ -95,6 +132,18 @@ impl PublishGate {
         });
         due.sort();
         due
+    }
+
+    /// Drain every pending URI, due or not, sorted for determinism.
+    pub fn take_all(&mut self) -> Vec<(String, u64)> {
+        let mut all: Vec<(String, u64)> = self
+            .pending
+            .iter()
+            .map(|(uri, (version, _))| (uri.clone(), *version))
+            .collect();
+        self.pending.clear();
+        all.sort();
+        all
     }
 }
 
@@ -241,6 +290,52 @@ mod tests {
                 },
             }
         );
+    }
+
+    #[test]
+    fn position_maps_to_byte_offset() {
+        let text = "ab\ncde";
+        let at = |line: u32, character: u32| position_to_offset(text, Position { line, character });
+        assert_eq!(at(0, 0), 0);
+        assert_eq!(at(0, 2), 2);
+        assert_eq!(at(1, 0), 3);
+        assert_eq!(at(1, 2), 5);
+    }
+
+    #[test]
+    fn position_clamps_past_the_end() {
+        let text = "ab\ncde";
+        let at = |line: u32, character: u32| position_to_offset(text, Position { line, character });
+        assert_eq!(at(0, 99), 2);
+        assert_eq!(at(9, 0), text.len() as u32);
+    }
+
+    #[test]
+    fn position_counts_utf16_units() {
+        let text = "a\u{E9}x";
+        let at = |character: u32| position_to_offset(text, Position { line: 0, character });
+        assert_eq!(at(0), 0);
+        assert_eq!(at(1), 1);
+        assert_eq!(at(2), 3);
+        assert_eq!(at(3), 4);
+    }
+
+    #[test]
+    fn position_mid_character_falls_back() {
+        let text = "a\u{1F600}b";
+        let at = |character: u32| position_to_offset(text, Position { line: 0, character });
+        assert_eq!(at(1), 1);
+        assert_eq!(at(2), 1);
+        assert_eq!(at(3), 5);
+    }
+
+    #[test]
+    fn offset_roundtrips_through_position() {
+        let text = "ab\n\u{E9}x \u{1F600}\nend";
+        for offset in [0, 1, 2, 3, 5, 6, 7, 11, 12, 13, 14, 15] {
+            let back = position_to_offset(text, offset_to_position(text, offset));
+            assert_eq!(back, offset, "offset {offset}");
+        }
     }
 
     #[test]

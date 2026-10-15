@@ -3,6 +3,7 @@
 //! This crate owns cross language orchestration. It must not contain
 //! language specific grammar. It dispatches to `forgels-lang-*` crates.
 
+pub mod analyzer;
 pub mod config;
 pub mod diagnostics;
 pub mod dispatch;
@@ -11,6 +12,7 @@ pub mod server;
 pub mod transport;
 pub mod workspace;
 
+pub use analyzer::{Analyzer, AnalyzerMap, CompletionData, DiagnosticData, HoverData};
 pub use config::Config;
 pub use server::Server;
 pub use workspace::Workspace;

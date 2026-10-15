@@ -1,7 +1,10 @@
 use serde_json::Value;
 
+use crate::analyzer::AnalyzerMap;
+use crate::diagnostics::{position_to_offset, span_to_range};
 use crate::routing::route_file;
 use crate::workspace::Workspace;
+use forgels_protocol::Position;
 
 /// Capabilities the beta server advertises.
 ///
@@ -24,6 +27,8 @@ pub struct Session {
     pub shutdown_received: bool,
     /// True once an `exit` notification arrived.
     pub exit_requested: bool,
+    /// Registered language analyzers, wired by the binary.
+    pub analyzers: AnalyzerMap,
 }
 
 impl Session {
@@ -41,12 +46,16 @@ impl Session {
 }
 
 /// Drive the session until `exit` or EOF. Returns the process code.
+///
+/// After every message, due debounced publishes flush. After shutdown,
+/// all pending publishes flush so the client sees final diagnostics.
 pub fn serve_session(
     reader: &mut impl std::io::BufRead,
     writer: &mut impl std::io::Write,
     session: &mut Session,
     workspace: &mut Workspace,
 ) -> std::io::Result<i32> {
+    let mut shutdown_flushed = false;
     while session.exit_code().is_none() {
         let Some(body) = crate::transport::read_message(reader)? else {
             break;
@@ -54,8 +63,145 @@ pub fn serve_session(
         if let Some(reply) = handle_message(session, workspace, &body) {
             crate::transport::write_message(writer, &reply)?;
         }
+        for note in immediate_notifications(session, workspace, &body) {
+            crate::transport::write_message(writer, &note)?;
+        }
+        let now = std::time::Instant::now();
+        for note in drain_due(session, workspace, now) {
+            crate::transport::write_message(writer, &note)?;
+        }
+        if session.shutdown_received && !shutdown_flushed {
+            shutdown_flushed = true;
+            for note in flush_all(session, workspace) {
+                crate::transport::write_message(writer, &note)?;
+            }
+        }
     }
     Ok(session.exit_code().unwrap_or(0))
+}
+
+/// Immediate notifications for one message body: open publishes current
+/// diagnostics at once, close pushes an empty array.
+pub fn immediate_notifications(
+    session: &Session,
+    workspace: &mut Workspace,
+    body: &str,
+) -> Vec<String> {
+    let Ok(value) = serde_json::from_str::<Value>(body) else {
+        return Vec::new();
+    };
+    let Some(method) = value.get("method").and_then(Value::as_str) else {
+        return Vec::new();
+    };
+    let params = value.get("params").cloned().unwrap_or(Value::Null);
+    match method {
+        "textDocument/didOpen" => {
+            let Some(uri) = params
+                .get("textDocument")
+                .and_then(|doc| doc.get("uri"))
+                .and_then(Value::as_str)
+            else {
+                return Vec::new();
+            };
+            publish_for_uri(session, workspace, uri, None)
+                .into_iter()
+                .collect()
+        }
+        "textDocument/didClose" => {
+            let Some(uri) = params
+                .get("textDocument")
+                .and_then(|doc| doc.get("uri"))
+                .and_then(Value::as_str)
+            else {
+                return Vec::new();
+            };
+            vec![clear_frame(uri)]
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// Publish frames for debounced URIs due at `now`.
+pub fn drain_due(
+    session: &Session,
+    workspace: &mut Workspace,
+    now: std::time::Instant,
+) -> Vec<String> {
+    workspace
+        .take_due_publish(now)
+        .iter()
+        .filter_map(|(uri, version)| publish_for_uri(session, workspace, uri, Some(*version)))
+        .collect()
+}
+
+/// Publish frames for every pending URI, due or not.
+pub fn flush_all(session: &Session, workspace: &mut Workspace) -> Vec<String> {
+    workspace
+        .take_all_pending()
+        .iter()
+        .filter_map(|(uri, version)| publish_for_uri(session, workspace, uri, Some(*version)))
+        .collect()
+}
+
+/// Build one `publishDiagnostics` frame for `uri`, storing the result.
+/// Returns `None` for untracked files and languages without analyzers.
+fn publish_for_uri(
+    session: &Session,
+    workspace: &mut Workspace,
+    uri: &str,
+    version: Option<u64>,
+) -> Option<String> {
+    let path = uri_to_path(uri);
+    let doc = workspace.get(&path)?;
+    let analyzer = session.analyzers.get(&doc.language)?;
+    let found = analyzer.diagnostics(&doc.text);
+    let diagnostics: Vec<forgels_protocol::Diagnostic> = found
+        .iter()
+        .map(|item| {
+            let range = crate::diagnostics::span_to_range(&doc.text, item.span);
+            forgels_protocol::Diagnostic {
+                range,
+                severity: Some(forgels_protocol::DiagnosticSeverity::Error),
+                message: item.message.clone(),
+            }
+        })
+        .collect();
+    workspace.set_diagnostics(path, diagnostics.clone());
+    let items: Vec<Value> = diagnostics
+        .iter()
+        .map(|diagnostic| {
+            serde_json::json!({
+                "range": {
+                    "start": { "line": diagnostic.range.start.line, "character": diagnostic.range.start.character },
+                    "end": { "line": diagnostic.range.end.line, "character": diagnostic.range.end.character },
+                },
+                "severity": 1,
+                "message": diagnostic.message,
+            })
+        })
+        .collect();
+    let mut params = serde_json::Map::new();
+    params.insert("uri".to_string(), Value::String(uri.to_string()));
+    if let Some(version) = version {
+        params.insert("version".to_string(), Value::Number(version.into()));
+    }
+    params.insert("diagnostics".to_string(), Value::Array(items));
+    let frame = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "textDocument/publishDiagnostics",
+        "params": Value::Object(params),
+    });
+    Some(frame.to_string())
+}
+
+/// Empty `publishDiagnostics` frame that clears one document.
+fn clear_frame(uri: &str) -> String {
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "textDocument/publishDiagnostics",
+        "params": { "uri": uri, "diagnostics": [] },
+    })
+    .to_string()
 }
 
 /// Turn a `file://` URI into a path. Plain paths pass through.
@@ -160,6 +306,43 @@ fn apply_folder_change(workspace: &mut Workspace, params: &Value) {
     workspace.evict_outside_roots();
 }
 
+/// Answer `textDocument/hover`. Notifications without id stay silent.
+/// Unknown files and words without declarations get a null result.
+fn hover_response(
+    session: &Session,
+    workspace: &Workspace,
+    params: &Value,
+    id: Option<&Value>,
+) -> Option<String> {
+    let id = id?.clone();
+    let result = hover_result(session, workspace, params).unwrap_or(Value::Null);
+    let response = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "result": result
+    });
+    Some(response.to_string())
+}
+
+fn hover_result(session: &Session, workspace: &Workspace, params: &Value) -> Option<Value> {
+    let uri = params.get("textDocument")?.get("uri")?.as_str()?;
+    let position = params.get("position")?;
+    let line = position.get("line")?.as_u64()? as u32;
+    let character = position.get("character")?.as_u64()? as u32;
+    let doc = workspace.get(&uri_to_path(uri))?;
+    let analyzer = session.analyzers.get(&doc.language)?;
+    let offset = position_to_offset(&doc.text, Position { line, character });
+    let found = analyzer.hover(&doc.text, offset)?;
+    let range = span_to_range(&doc.text, found.span);
+    Some(serde_json::json!({
+        "contents": { "kind": "plaintext", "value": found.contents },
+        "range": {
+            "start": { "line": range.start.line, "character": range.start.character },
+            "end": { "line": range.end.line, "character": range.end.character },
+        }
+    }))
+}
+
 /// Handle one raw JSON-RPC body.
 ///
 /// Returns `Some(response_body)` for `initialize` and `shutdown` requests.
@@ -201,6 +384,9 @@ pub fn handle_message(
         "textDocument/didClose" => {
             apply_did_close(workspace, &params);
             return None;
+        }
+        "textDocument/hover" => {
+            return hover_response(session, workspace, &params, value.get("id"));
         }
         "workspace/didChangeWorkspaceFolders" => {
             apply_folder_change(workspace, &params);
@@ -283,7 +469,7 @@ mod tests {
     fn replies_method_not_found_and_keeps_running() {
         let mut session = Session::new();
         let mut workspace = Workspace::new();
-        let body = r#"{"jsonrpc":"2.0","id":2,"method":"textDocument/hover","params":{}}"#;
+        let body = r#"{"jsonrpc":"2.0","id":2,"method":"textDocument/signatureHelp","params":{}}"#;
         let reply = handle_message(&mut session, &mut workspace, body).expect("must reply");
         let value: Value = serde_json::from_str(&reply).expect("reply is json");
         assert_eq!(
@@ -589,5 +775,220 @@ mod tests {
                 .get(&std::path::PathBuf::from("/repo/ghost.sol"))
                 .is_none()
         );
+    }
+
+    #[derive(Debug)]
+    struct StubAnalyzer {
+        found: bool,
+    }
+
+    impl crate::analyzer::Analyzer for StubAnalyzer {
+        fn hover(&self, _text: &str, _offset: u32) -> Option<crate::analyzer::HoverData> {
+            if self.found {
+                Some(crate::analyzer::HoverData {
+                    contents: "stub detail".to_string(),
+                    span: forgels_syntax::Span::new(13, 18),
+                })
+            } else {
+                None
+            }
+        }
+
+        fn complete(&self, _text: &str, _offset: u32) -> Vec<crate::analyzer::CompletionData> {
+            Vec::new()
+        }
+
+        fn goto(&self, _text: &str, _offset: u32) -> Option<forgels_syntax::Span> {
+            None
+        }
+
+        fn diagnostics(&self, text: &str) -> Vec<crate::analyzer::DiagnosticData> {
+            if text.contains("broken") {
+                vec![crate::analyzer::DiagnosticData {
+                    span: forgels_syntax::Span::new(0, 6),
+                    message: "stub broken".to_string(),
+                }]
+            } else {
+                Vec::new()
+            }
+        }
+    }
+
+    fn session_with_stub(found: bool) -> Session {
+        let mut session = Session::new();
+        session.analyzers.insert(
+            crate::routing::Language::Solidity,
+            Box::new(StubAnalyzer { found }),
+        );
+        session
+    }
+
+    fn open_sol(workspace: &mut Workspace) {
+        let open = r#"{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///repo/A.sol","languageId":"solidity","version":1,"text":"contract A {}"}}}"#;
+        let mut session = Session::new();
+        assert!(handle_message(&mut session, workspace, open).is_none());
+    }
+
+    fn hover_body(id: u32, uri: &str, line: u32, character: u32) -> String {
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "textDocument/hover",
+            "params": {
+                "textDocument": { "uri": uri },
+                "position": { "line": line, "character": character },
+            }
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn hover_returns_contents_and_range() {
+        let mut session = session_with_stub(true);
+        let mut workspace = Workspace::new();
+        open_sol(&mut workspace);
+        let reply = handle_message(
+            &mut session,
+            &mut workspace,
+            &hover_body(5, "file:///repo/A.sol", 0, 10),
+        )
+        .expect("must reply");
+        let value: Value = serde_json::from_str(&reply).expect("reply is json");
+        let result = value.get("result").expect("has result");
+        assert_eq!(
+            result.pointer("/contents/value").expect("has value"),
+            &serde_json::json!("stub detail")
+        );
+        assert_eq!(
+            result.pointer("/range/start").expect("has start"),
+            &serde_json::json!({"line": 0, "character": 13})
+        );
+        assert_eq!(
+            result.pointer("/range/end").expect("has end"),
+            &serde_json::json!({"line": 0, "character": 13})
+        );
+    }
+
+    #[test]
+    fn hover_without_declaration_returns_null() {
+        let mut session = session_with_stub(false);
+        let mut workspace = Workspace::new();
+        open_sol(&mut workspace);
+        let reply = handle_message(
+            &mut session,
+            &mut workspace,
+            &hover_body(5, "file:///repo/A.sol", 0, 10),
+        )
+        .expect("must reply");
+        let value: Value = serde_json::from_str(&reply).expect("reply is json");
+        assert!(value.get("result").expect("has result").is_null());
+    }
+
+    #[test]
+    fn hover_on_unknown_file_returns_null() {
+        let mut session = session_with_stub(true);
+        let mut workspace = Workspace::new();
+        let reply = handle_message(
+            &mut session,
+            &mut workspace,
+            &hover_body(5, "file:///repo/ghost.sol", 0, 1),
+        )
+        .expect("must reply");
+        let value: Value = serde_json::from_str(&reply).expect("reply is json");
+        assert!(value.get("result").expect("has result").is_null());
+    }
+
+    #[test]
+    fn hover_without_id_stays_silent() {
+        let mut session = session_with_stub(true);
+        let mut workspace = Workspace::new();
+        open_sol(&mut workspace);
+        let body = r#"{"jsonrpc":"2.0","method":"textDocument/hover","params":{"textDocument":{"uri":"file:///repo/A.sol"},"position":{"line":0,"character":10}}}"#;
+        assert!(handle_message(&mut session, &mut workspace, body).is_none());
+    }
+
+    fn open_broken(workspace: &mut Workspace) {
+        let open = r#"{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///repo/B.sol","languageId":"solidity","version":1,"text":"broken"}}}"#;
+        let mut session = Session::new();
+        assert!(handle_message(&mut session, workspace, open).is_none());
+    }
+
+    #[test]
+    fn open_publishes_current_diagnostics() {
+        let session = session_with_stub(true);
+        let mut workspace = Workspace::new();
+        open_broken(&mut workspace);
+        let open = r#"{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///repo/B.sol","languageId":"solidity","version":1,"text":"broken"}}}"#;
+        let notes = immediate_notifications(&session, &mut workspace, open);
+        assert_eq!(notes.len(), 1);
+        let value: Value = serde_json::from_str(&notes[0]).expect("frame is json");
+        assert_eq!(
+            value.pointer("/method").expect("has method"),
+            &serde_json::json!("textDocument/publishDiagnostics")
+        );
+        let diagnostics = value
+            .pointer("/params/diagnostics")
+            .expect("has diagnostics")
+            .as_array()
+            .expect("array");
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(
+            diagnostics[0].pointer("/message").expect("has message"),
+            &serde_json::json!("stub broken")
+        );
+    }
+
+    #[test]
+    fn close_publishes_empty_and_clears_store() {
+        let session = session_with_stub(true);
+        let mut workspace = Workspace::new();
+        open_broken(&mut workspace);
+        let open = r#"{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///repo/B.sol","languageId":"solidity","version":1,"text":"broken"}}}"#;
+        assert_eq!(
+            immediate_notifications(&session, &mut workspace, open).len(),
+            1
+        );
+        let close = r#"{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"file:///repo/B.sol"}}}"#;
+        let mut session = Session::new();
+        assert!(handle_message(&mut session, &mut workspace, close).is_none());
+        let notes = immediate_notifications(&session, &mut workspace, close);
+        assert_eq!(notes.len(), 1);
+        let value: Value = serde_json::from_str(&notes[0]).expect("frame is json");
+        assert!(
+            value
+                .pointer("/params/diagnostics")
+                .expect("has diagnostics")
+                .as_array()
+                .expect("array")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn change_publishes_only_when_due() {
+        let session = session_with_stub(true);
+        let mut workspace = Workspace::new();
+        open_broken(&mut workspace);
+        let change = r#"{"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"file:///repo/B.sol","version":2},"contentChanges":[{"text":"broken!"}]}}"#;
+        let mut plain = Session::new();
+        assert!(handle_message(&mut plain, &mut workspace, change).is_none());
+        let now = std::time::Instant::now();
+        assert!(drain_due(&session, &mut workspace, now).is_empty());
+        let later = now + std::time::Duration::from_secs(60);
+        let notes = drain_due(&session, &mut workspace, later);
+        assert_eq!(notes.len(), 1);
+    }
+
+    #[test]
+    fn shutdown_flushes_pending() {
+        let session = session_with_stub(true);
+        let mut workspace = Workspace::new();
+        open_broken(&mut workspace);
+        let change = r#"{"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"file:///repo/B.sol","version":2},"contentChanges":[{"text":"broken!"}]}}"#;
+        let mut plain = Session::new();
+        assert!(handle_message(&mut plain, &mut workspace, change).is_none());
+        let notes = flush_all(&session, &mut workspace);
+        assert_eq!(notes.len(), 1);
+        assert!(flush_all(&session, &mut workspace).is_empty());
     }
 }

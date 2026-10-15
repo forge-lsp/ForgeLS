@@ -1,3 +1,5 @@
+use crate::analyzer::Analyzer;
+use crate::routing::Language;
 use crate::{Config, Workspace, dispatch};
 
 #[derive(Debug, Default)]
@@ -14,6 +16,10 @@ impl Server {
             workspace: Workspace::new(),
             session: dispatch::Session::new(),
         }
+    }
+
+    pub fn set_analyzer(&mut self, language: Language, analyzer: Box<dyn Analyzer>) {
+        self.session.analyzers.insert(language, analyzer);
     }
 
     pub fn run(&mut self) {

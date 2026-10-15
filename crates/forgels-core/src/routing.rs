@@ -6,7 +6,7 @@ use std::path::Path;
 /// on them. Shared crates must never import language crates, so this table
 /// is the single routing entry point: one new language means one new arm
 /// in [`route_by_extension`] plus one in [`route_by_language_id`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Language {
     Solidity,
     Noir,
