@@ -61,6 +61,16 @@ impl Workspace {
         }
     }
 
+    /// Workspace with a custom publish debounce delay.
+    pub fn with_delay(delay: std::time::Duration) -> Self {
+        Self {
+            files: HashMap::new(),
+            roots: Vec::new(),
+            publish: PublishGate::new(delay),
+            diagnostics: HashMap::new(),
+        }
+    }
+
     /// Apply `didOpen`. Fails when the path is already tracked.
     pub fn open(
         &mut self,

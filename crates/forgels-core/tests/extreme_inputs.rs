@@ -26,7 +26,7 @@ fn empty_document_tracks_empty_text() {
     let mut workspace = Workspace::new();
     let path = PathBuf::from("empty.sol");
     workspace
-        .open(path.clone(), Language::Solidity, String::new())
+        .open(path.clone(), Language::Solidity, String::new(), 1)
         .expect("open works");
     assert_eq!(workspace.get(&path).expect("tracked").text, "");
 }
@@ -95,11 +95,11 @@ fn huge_document_syncs() {
     let mut workspace = Workspace::new();
     let path = PathBuf::from("big.sol");
     workspace
-        .open(path.clone(), Language::Solidity, text.clone())
+        .open(path.clone(), Language::Solidity, text.clone(), 1)
         .expect("open works");
     let changed = format!("{text}// tail");
     workspace
-        .change(&path, changed.clone())
+        .change(&path, changed.clone(), 2)
         .expect("change works");
     assert_eq!(workspace.get(&path).expect("tracked").text, changed);
     workspace.close(&path).expect("close works");

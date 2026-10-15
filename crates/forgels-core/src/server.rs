@@ -11,10 +11,11 @@ pub struct Server {
 
 impl Server {
     pub fn new(config: Config) -> Self {
+        let delay = config.publish_delay();
         Self {
-            config,
-            workspace: Workspace::new(),
+            workspace: Workspace::with_delay(delay),
             session: dispatch::Session::new(),
+            config,
         }
     }
 
