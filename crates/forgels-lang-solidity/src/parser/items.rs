@@ -4,7 +4,7 @@ use crate::lexer::SolidityKind;
 use forgels_syntax::{ParseError, Span, SyntaxElement, SyntaxNode, Token};
 
 pub(crate) fn parse_pragma(cursor: &mut Cursor) -> Result<SyntaxNode, ParseError> {
-    let start = cursor.bump().expect("pragma keyword exists").span;
+    let start = cursor.bump_or_error("pragma keyword")?.span;
     let name = cursor.expect(SolidityKind::Ident, "pragma name")?;
     let mut children = vec![token_element(name)];
     let mut saw_version = false;
@@ -17,7 +17,7 @@ pub(crate) fn parse_pragma(cursor: &mut Cursor) -> Result<SyntaxNode, ParseError
         {
             break;
         }
-        let token = cursor.bump().expect("peeked token exists");
+        let token = cursor.bump_or_error("pragma token")?;
         children.push(token_element(token));
         saw_version = true;
     }
@@ -36,7 +36,7 @@ pub(crate) fn parse_pragma(cursor: &mut Cursor) -> Result<SyntaxNode, ParseError
 }
 
 pub(crate) fn parse_import(cursor: &mut Cursor) -> Result<SyntaxNode, ParseError> {
-    let start = cursor.bump().expect("import keyword exists").span;
+    let start = cursor.bump_or_error("import keyword")?.span;
     let mut names: Vec<SyntaxElement> = Vec::new();
     let path: Option<Token>;
     match cursor.peek_kind() {

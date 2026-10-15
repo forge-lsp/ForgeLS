@@ -9,7 +9,10 @@ pub(crate) fn parse_contract(
     cursor: &mut Cursor,
     errors: &mut Vec<ParseError>,
 ) -> Option<SyntaxNode> {
-    let head = cursor.bump().expect("contract head exists");
+    let Some(head) = cursor.bump() else {
+        errors.push(ParseError::new(cursor.peek_span(), "expected contract"));
+        return None;
+    };
     let start = head.span;
     // Optional `abstract`, then the `contract` keyword itself.
     // Keywords are stored except `contract`; the name stays the first
@@ -36,14 +39,20 @@ pub(crate) fn parse_contract(
     // Base constructor args like `A(1)` are skipped; only names are stored.
     prefix.push(token_element(name));
     if cursor.peek_kind() == Some(SolidityKind::Abstract.as_u16()) {
-        let abstract_token = cursor.bump().expect("abstract keyword exists");
+        let Some(abstract_token) = cursor.bump() else {
+            errors.push(ParseError::new(cursor.peek_span(), "expected `abstract`"));
+            return None;
+        };
         prefix.push(token_element(abstract_token));
     }
     if cursor.peek_kind() == Some(SolidityKind::Is.as_u16()) {
         cursor.bump();
         loop {
             if cursor.peek_kind() == Some(SolidityKind::Ident.as_u16()) {
-                let base = cursor.bump().expect("base name exists");
+                let Some(base) = cursor.bump() else {
+                    errors.push(ParseError::new(cursor.peek_span(), "expected base name"));
+                    return None;
+                };
                 prefix.push(token_element(base));
                 if cursor.peek_kind() == Some(SolidityKind::LParen.as_u16()) {
                     skip_parens(cursor);
@@ -114,7 +123,10 @@ pub(crate) fn parse_contract(
             }
         }
     }
-    let close = cursor.bump().expect("closing brace exists");
+    let Some(close) = cursor.bump() else {
+        errors.push(ParseError::new(cursor.peek_span(), "expected `}`"));
+        return None;
+    };
     Some(SyntaxNode::with_children(
         SolidityNode::Contract.as_u16(),
         Span::new(start.start, close.span.end),

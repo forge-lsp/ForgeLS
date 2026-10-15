@@ -65,7 +65,10 @@ pub(crate) fn parse_function(
     cursor: &mut Cursor,
     errors: &mut Vec<ParseError>,
 ) -> Option<SyntaxNode> {
-    let head = cursor.bump().expect("function keyword exists");
+    let Some(head) = cursor.bump() else {
+        errors.push(ParseError::new(cursor.peek_span(), "expected function"));
+        return None;
+    };
     let start = head.span;
     let name = if head.kind == SolidityKind::Constructor.as_u16() {
         head.clone()
@@ -202,7 +205,7 @@ pub(crate) fn parse_param(cursor: &mut Cursor) -> Result<SyntaxNode, ParseError>
         })
         .unwrap_or(start);
     if cursor.peek_kind() == Some(SolidityKind::Ident.as_u16()) {
-        let name = cursor.bump().expect("param name exists");
+        let name = cursor.bump_or_error("param name")?;
         end = name.span.end;
         children.push(token_element(name));
     }
@@ -257,7 +260,10 @@ pub(crate) fn parse_block(cursor: &mut Cursor, errors: &mut Vec<ParseError>) -> 
             }
         }
     }
-    let close = cursor.bump().expect("closing brace exists");
+    let Some(close) = cursor.bump() else {
+        errors.push(ParseError::new(cursor.peek_span(), "expected `}`"));
+        return None;
+    };
     Some(SyntaxNode::with_children(
         SolidityNode::Block.as_u16(),
         Span::new(open.span.start, close.span.end),

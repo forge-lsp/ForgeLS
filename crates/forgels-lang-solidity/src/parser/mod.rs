@@ -80,8 +80,9 @@ impl SolidityParser {
                     }
                 }
                 Some(kind) if kind == SolidityKind::Error.as_u16() => {
-                    let token = cursor.bump().expect("peeked token exists");
-                    errors.push(ParseError::new(token.span, "unexpected character"));
+                    if let Some(token) = cursor.bump() {
+                        errors.push(ParseError::new(token.span, "unexpected character"));
+                    }
                 }
                 Some(_) => {
                     let span = cursor.peek_span();

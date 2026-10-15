@@ -28,7 +28,7 @@ pub(crate) fn parse_type(cursor: &mut Cursor) -> Result<SyntaxNode, ParseError> 
     let start_span = cursor.peek_span();
     let mut parts: Vec<SyntaxElement> = Vec::new();
     if cursor.peek_kind() == Some(SolidityKind::Mapping.as_u16()) {
-        let mapping = cursor.bump().expect("mapping keyword exists");
+        let mapping = cursor.bump_or_error("mapping keyword")?;
         parts.push(token_element(mapping));
         let open = cursor.expect(SolidityKind::LParen, "`(`")?;
         parts.push(token_element(open));
@@ -43,20 +43,20 @@ pub(crate) fn parse_type(cursor: &mut Cursor) -> Result<SyntaxNode, ParseError> 
     } else if let Some(kind) = cursor.peek_kind()
         && is_type_start(kind)
     {
-        let first = cursor.bump().expect("type token exists");
+        let first = cursor.bump_or_error("type token")?;
         parts.push(token_element(first));
     } else if cursor.peek_kind() == Some(SolidityKind::Ident.as_u16()) {
         // User type outside the beta subset: keep the name, flag nothing.
-        let name = cursor.bump().expect("type name exists");
+        let name = cursor.bump_or_error("type name")?;
         parts.push(token_element(name));
     } else {
         return Err(ParseError::new(cursor.peek_span(), "expected type"));
     }
     while cursor.peek_kind() == Some(SolidityKind::LBracket.as_u16()) {
-        let open = cursor.bump().expect("bracket exists");
+        let open = cursor.bump_or_error("bracket")?;
         parts.push(token_element(open));
         if cursor.peek_kind() == Some(SolidityKind::Number.as_u16()) {
-            let size = cursor.bump().expect("array size exists");
+            let size = cursor.bump_or_error("array size")?;
             parts.push(token_element(size));
         }
         let close = cursor.expect(SolidityKind::RBracket, "`]`")?;

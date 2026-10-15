@@ -52,12 +52,20 @@ impl<'a> Cursor<'a> {
 
     pub(crate) fn expect(&mut self, kind: SolidityKind, what: &str) -> Result<Token, ParseError> {
         match self.peek_kind() {
-            Some(found) if found == kind.as_u16() => Ok(self.bump().expect("peeked token exists")),
+            Some(found) if found == kind.as_u16() => self.bump_or_error(what),
             _ => Err(ParseError::new(
                 self.peek_span(),
                 format!("expected {what}"),
             )),
         }
+    }
+
+    /// Bump the peeked token, or a spanned error when nothing is left.
+    /// Use this instead of `expect` on `bump`: peeking and bumping are
+    /// separate steps, so only this form is panic-free by construction.
+    pub(crate) fn bump_or_error(&mut self, what: &str) -> Result<Token, ParseError> {
+        self.bump()
+            .ok_or_else(|| ParseError::new(self.peek_span(), format!("expected {what}")))
     }
 
     /// Skip to the next sync point: past `;`, or stop before a top-level
