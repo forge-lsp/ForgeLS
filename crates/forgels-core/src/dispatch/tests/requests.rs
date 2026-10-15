@@ -1,5 +1,5 @@
 use super::super::handle_message;
-use super::stub::{open_sol, session_with_stub};
+use super::stub::{init, open_sol, session_with_stub};
 use crate::workspace::Workspace;
 use serde_json::Value;
 
@@ -7,7 +7,7 @@ use serde_json::Value;
 fn hover_returns_contents_and_range() {
     let mut session = session_with_stub(true);
     let mut workspace = Workspace::new();
-    open_sol(&mut workspace);
+    open_sol(&mut session, &mut workspace);
     let reply = handle_message(
         &mut session,
         &mut workspace,
@@ -34,7 +34,7 @@ fn hover_returns_contents_and_range() {
 fn hover_without_declaration_returns_null() {
     let mut session = session_with_stub(false);
     let mut workspace = Workspace::new();
-    open_sol(&mut workspace);
+    open_sol(&mut session, &mut workspace);
     let reply = handle_message(
         &mut session,
         &mut workspace,
@@ -49,6 +49,7 @@ fn hover_without_declaration_returns_null() {
 fn hover_on_unknown_file_returns_null() {
     let mut session = session_with_stub(true);
     let mut workspace = Workspace::new();
+    init(&mut session, &mut workspace);
     let reply = handle_message(
         &mut session,
         &mut workspace,
@@ -63,7 +64,7 @@ fn hover_on_unknown_file_returns_null() {
 fn hover_without_id_stays_silent() {
     let mut session = session_with_stub(true);
     let mut workspace = Workspace::new();
-    open_sol(&mut workspace);
+    open_sol(&mut session, &mut workspace);
     let body = r#"{"jsonrpc":"2.0","method":"textDocument/hover","params":{"textDocument":{"uri":"file:///repo/A.sol"},"position":{"line":0,"character":10}}}"#;
     assert!(handle_message(&mut session, &mut workspace, body).is_none());
 }
@@ -98,7 +99,7 @@ fn completion_body(id: u32, uri: &str, line: u32, character: u32) -> String {
 fn completion_lists_matching_labels() {
     let mut session = session_with_stub(true);
     let mut workspace = Workspace::new();
-    open_sol(&mut workspace);
+    open_sol(&mut session, &mut workspace);
     let reply = handle_message(
         &mut session,
         &mut workspace,
@@ -127,6 +128,7 @@ fn completion_lists_matching_labels() {
 fn completion_on_unknown_file_returns_empty_list() {
     let mut session = session_with_stub(true);
     let mut workspace = Workspace::new();
+    init(&mut session, &mut workspace);
     let reply = handle_message(
         &mut session,
         &mut workspace,
@@ -159,7 +161,7 @@ fn definition_body(id: u32, uri: &str, line: u32, character: u32) -> String {
 fn definition_returns_uri_and_range() {
     let mut session = session_with_stub(true);
     let mut workspace = Workspace::new();
-    open_sol(&mut workspace);
+    open_sol(&mut session, &mut workspace);
     let reply = handle_message(
         &mut session,
         &mut workspace,
@@ -182,6 +184,7 @@ fn definition_returns_uri_and_range() {
 fn definition_on_unknown_file_returns_null() {
     let mut session = session_with_stub(true);
     let mut workspace = Workspace::new();
+    init(&mut session, &mut workspace);
     let reply = handle_message(
         &mut session,
         &mut workspace,

@@ -1,4 +1,5 @@
 use super::super::{Session, handle_message};
+use super::stub::init;
 use crate::workspace::Workspace;
 
 fn init_with_folders(id: &str) -> String {
@@ -184,6 +185,7 @@ fn open_outside_roots_stays_untracked() {
 fn unknown_language_and_extension_stay_silent() {
     let mut session = Session::new();
     let mut workspace = Workspace::new();
+    init(&mut session, &mut workspace);
     // No reply, no tracked file, no crash. Diagnostics do not exist
     // yet, and the path takes no log branch by construction.
     assert!(

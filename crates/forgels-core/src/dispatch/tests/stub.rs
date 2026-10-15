@@ -56,8 +56,14 @@ pub(crate) fn session_with_stub(found: bool) -> Session {
     session
 }
 
-pub(crate) fn open_sol(workspace: &mut Workspace) {
+/// Feed a bare initialize so later requests pass the lifecycle gate.
+pub(crate) fn init(session: &mut Session, workspace: &mut Workspace) {
+    let body = r#"{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"capabilities":{}}}"#;
+    assert!(handle_message(session, workspace, body).is_some());
+}
+
+pub(crate) fn open_sol(session: &mut Session, workspace: &mut Workspace) {
+    init(session, workspace);
     let open = r#"{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///repo/A.sol","languageId":"solidity","version":1,"text":"contract A {}"}}}"#;
-    let mut session = Session::new();
-    assert!(handle_message(&mut session, workspace, open).is_none());
+    assert!(handle_message(session, workspace, open).is_none());
 }

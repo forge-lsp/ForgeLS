@@ -1,4 +1,5 @@
 use super::super::{Session, handle_message, serve_session};
+use super::stub::init;
 use crate::workspace::Workspace;
 use serde_json::Value;
 
@@ -48,6 +49,7 @@ fn stores_client_capabilities() {
 fn replies_method_not_found_and_keeps_running() {
     let mut session = Session::new();
     let mut workspace = Workspace::new();
+    init(&mut session, &mut workspace);
     let body = r#"{"jsonrpc":"2.0","id":2,"method":"textDocument/signatureHelp","params":{}}"#;
     let reply = handle_message(&mut session, &mut workspace, body).expect("must reply");
     let value: Value = serde_json::from_str(&reply).expect("reply is json");
@@ -87,6 +89,7 @@ fn ignores_invalid_json() {
 fn shutdown_replies_null_and_arms_flag() {
     let mut session = Session::new();
     let mut workspace = Workspace::new();
+    init(&mut session, &mut workspace);
     let body = r#"{"jsonrpc":"2.0","id":9,"method":"shutdown","params":{}}"#;
     let reply = handle_message(&mut session, &mut workspace, body).expect("must reply");
     let value: Value = serde_json::from_str(&reply).expect("reply is json");
@@ -102,9 +105,11 @@ fn framed(body: &str) -> Vec<u8> {
 
 #[test]
 fn shutdown_then_exit_returns_zero() {
+    let init = r#"{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"capabilities":{}}}"#;
     let shutdown = r#"{"jsonrpc":"2.0","id":1,"method":"shutdown"}"#;
     let exit = r#"{"jsonrpc":"2.0","method":"exit"}"#;
-    let mut raw = framed(shutdown);
+    let mut raw = framed(init);
+    raw.extend_from_slice(&framed(shutdown));
     raw.extend_from_slice(&framed(exit));
     let mut input = std::io::Cursor::new(raw);
     let mut output = Vec::new();
@@ -139,4 +144,49 @@ fn clean_eof_without_exit_returns_zero() {
     let code =
         serve_session(&mut input, &mut output, &mut session, &mut workspace).expect("serve runs");
     assert_eq!(code, 0);
+}
+
+#[test]
+fn request_before_initialize_gets_not_initialized() {
+    let mut session = Session::new();
+    let mut workspace = Workspace::new();
+    let body = r#"{"jsonrpc":"2.0","id":1,"method":"textDocument/hover","params":{}}"#;
+    let reply = handle_message(&mut session, &mut workspace, body).expect("must reply");
+    let value: Value = serde_json::from_str(&reply).expect("reply is json");
+    assert_eq!(
+        value.pointer("/error/code").expect("has code"),
+        &serde_json::json!(-32002)
+    );
+    // Server still accepts initialize afterwards.
+    assert!(handle_message(&mut session, &mut workspace, &init_body("2")).is_some());
+    assert!(session.initialized);
+}
+
+#[test]
+fn notification_before_initialize_is_dropped() {
+    let mut session = Session::new();
+    let mut workspace = Workspace::new();
+    let body = r#"{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///repo/A.sol","languageId":"solidity","version":1,"text":"contract A {}"}}}"#;
+    assert!(handle_message(&mut session, &mut workspace, body).is_none());
+    assert!(
+        workspace
+            .get(&std::path::PathBuf::from("/repo/A.sol"))
+            .is_none()
+    );
+}
+
+#[test]
+fn request_after_shutdown_gets_invalid_request() {
+    let mut session = Session::new();
+    let mut workspace = Workspace::new();
+    init(&mut session, &mut workspace);
+    let shutdown = r#"{"jsonrpc":"2.0","id":1,"method":"shutdown"}"#;
+    assert!(handle_message(&mut session, &mut workspace, shutdown).is_some());
+    let body = r#"{"jsonrpc":"2.0","id":2,"method":"textDocument/hover","params":{}}"#;
+    let reply = handle_message(&mut session, &mut workspace, body).expect("must reply");
+    let value: Value = serde_json::from_str(&reply).expect("reply is json");
+    assert_eq!(
+        value.pointer("/error/code").expect("has code"),
+        &serde_json::json!(-32600)
+    );
 }

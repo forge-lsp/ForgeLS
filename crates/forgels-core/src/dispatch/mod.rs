@@ -37,6 +37,8 @@ pub struct Session {
     pub shutdown_received: bool,
     /// True once an `exit` notification arrived.
     pub exit_requested: bool,
+    /// True once `initialize` succeeded. Requests before this get -32002.
+    pub initialized: bool,
     /// Registered language analyzers, wired by the binary.
     pub analyzers: AnalyzerMap,
 }
@@ -91,11 +93,10 @@ pub fn serve_session(
 }
 /// Handle one raw JSON-RPC body.
 ///
-/// Returns `Some(response_body)` for `initialize` and `shutdown` requests.
-/// `exit` and other methods return `None`. `exit` only flips session flags;
-/// read the process code via [`Session::exit_code`].
-/// Sync notifications (`didOpen`, `didChange`, `didClose`,
-/// `didChangeWorkspaceFolders`) update the workspace and never reply.
+/// Lifecycle is strict: `exit` always works; requests before `initialize`
+/// get -32002 and other early notifications are dropped; requests after
+/// `shutdown` get -32600. Returns `Some(response_body)` for answered
+/// requests, `None` for notifications and dropped messages.
 pub fn handle_message(
     session: &mut Session,
     workspace: &mut Workspace,
@@ -104,9 +105,21 @@ pub fn handle_message(
     let value: Value = serde_json::from_str(body).ok()?;
     let method = value.get("method")?.as_str()?;
     let params = value.get("params").cloned().unwrap_or(Value::Null);
+    // Exit always works, even before initialize, and never replies.
     if method == "exit" {
         session.exit_requested = true;
         return None;
+    }
+    // Before initialize: requests get ServerNotInitialized, other
+    // notifications are dropped.
+    if !session.initialized && method != "initialize" {
+        let id = value.get("id")?.clone();
+        let response = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "error": { "code": -32002, "message": "Server not initialized" }
+        });
+        return Some(response.to_string());
     }
     if method == "shutdown" {
         session.shutdown_received = true;
@@ -115,6 +128,17 @@ pub fn handle_message(
             "jsonrpc": "2.0",
             "id": id,
             "result": null
+        });
+        return Some(response.to_string());
+    }
+    // After shutdown: only exit may follow. Requests get InvalidRequest,
+    // other notifications are dropped.
+    if session.shutdown_received {
+        let id = value.get("id")?.clone();
+        let response = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "error": { "code": -32600, "message": "Invalid request after shutdown" }
         });
         return Some(response.to_string());
     }
@@ -161,6 +185,7 @@ pub fn handle_message(
     if let Some(caps) = value.pointer("/params/capabilities") {
         session.client_capabilities = Some(caps.clone());
     }
+    session.initialized = true;
     apply_initialize_roots(workspace, &params);
     let response = serde_json::json!({
         "jsonrpc": "2.0",
