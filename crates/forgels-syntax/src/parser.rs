@@ -14,7 +14,10 @@ pub trait Parser {
         let _ = (text, std::mem::size_of::<SyntaxNode>());
         Err(crate::ParseError::new(
             crate::Span::new(0, 0),
-            "parse_text must be implemented per language",
+            format!(
+                "parse_text not implemented for {}",
+                std::any::type_name::<Self>()
+            ),
         ))
     }
 }
