@@ -7,8 +7,11 @@ pub mod ast;
 pub mod lexer;
 pub mod parser;
 
-pub use ast::SolidityFile;
-pub use lexer::SolidityLexer;
+pub use ast::{
+    BlockNode, ContractDef, FunctionDef, ImportDirective, LocalVar, Param, PragmaDirective,
+    SolidityFile, SolidityNode, StateVar, TypeNode,
+};
+pub use lexer::{SolidityKind, SolidityLexer, keyword_kind, symbol_kind};
 pub use parser::SolidityParser;
 
 pub const LANGUAGE_ID: &str = "solidity";
