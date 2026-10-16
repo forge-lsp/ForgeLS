@@ -418,3 +418,12 @@ fn block_members_collect_single_dot() {
     assert!(pairs.contains(&(Some("p".to_string()), Some("age".to_string()))));
     assert!(pairs.contains(&(Some("this".to_string()), Some("total".to_string()))));
 }
+
+#[test]
+fn file_level_using_skips_without_error() {
+    let text = "using SafeMath for uint;\nusing {add as +} for MyNumber global;\ncontract C {}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    assert_eq!(file.contracts().len(), 1);
+}

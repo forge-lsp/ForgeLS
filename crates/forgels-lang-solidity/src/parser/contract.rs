@@ -1,5 +1,5 @@
 use super::cursor::{Cursor, token_element};
-use super::members::{parse_function, parse_state_var, skip_balanced, skip_parens};
+use super::members::{parse_function, parse_state_var, skip_balanced, skip_parens, skip_using};
 use super::types::is_type_start;
 use super::user_types::{
     parse_enum, parse_error, parse_event, parse_modifier, parse_struct, parse_user_type,
@@ -176,6 +176,9 @@ pub(crate) fn parse_contract(
                     None => recover_member(cursor),
                 }
             }
+            Some(kind) if kind == SolidityKind::Using.as_u16() => {
+                skip_using(cursor);
+            }
             Some(kind) if is_type_start(kind) || kind == SolidityKind::Ident.as_u16() => {
                 match parse_state_var(cursor) {
                     Ok(node) => members.push(SyntaxElement::Node(node)),
@@ -238,6 +241,7 @@ pub(crate) fn recover_member(cursor: &mut Cursor) {
                 || kind == SolidityKind::Enum.as_u16()
                 || kind == SolidityKind::ErrorKw.as_u16()
                 || kind == SolidityKind::Type.as_u16()
+                || kind == SolidityKind::Using.as_u16()
                 || is_type_start(kind)
                 || kind == SolidityKind::Ident.as_u16()
             {

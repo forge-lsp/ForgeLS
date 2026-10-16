@@ -539,6 +539,29 @@ pub(crate) fn skip_assembly(cursor: &mut Cursor) {
     }
 }
 
+/// Skip `using X for Y;` without symbols.
+///
+/// Library attachment needs no AST: consume to `;` so the contract
+/// keeps parsing with zero errors. Brace depth guards `{as +}` forms.
+pub(crate) fn skip_using(cursor: &mut Cursor) {
+    cursor.bump();
+    let mut depth = 0u32;
+    while let Some(kind) = cursor.peek_kind() {
+        if kind == SolidityKind::LBrace.as_u16() {
+            depth += 1;
+        } else if kind == SolidityKind::RBrace.as_u16() {
+            if depth == 0 {
+                return;
+            }
+            depth -= 1;
+        } else if kind == SolidityKind::Semicolon.as_u16() && depth == 0 {
+            cursor.bump();
+            return;
+        }
+        cursor.bump();
+    }
+}
+
 /// True when the upcoming tokens look like `Type name [= ;]`.
 pub(crate) fn is_local_decl_ahead(cursor: &mut Cursor) -> bool {
     let tokens = &cursor.tokens[cursor.pos()..];

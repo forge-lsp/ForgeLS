@@ -19,6 +19,7 @@ mod tests;
 use contract::parse_contract;
 use cursor::Cursor;
 use items::{parse_import, parse_pragma};
+use members::skip_using;
 use user_types::{parse_enum, parse_error, parse_event, parse_struct, parse_user_type};
 
 #[derive(Debug, Default)]
@@ -115,6 +116,10 @@ impl SolidityParser {
                         None => cursor.recover(),
                     }
                 }
+                Some(kind) if kind == SolidityKind::Using.as_u16() => {
+                    // File-level `using ... global;`: same skip as members.
+                    skip_using(&mut cursor);
+                }
                 Some(kind) if kind == SolidityKind::Error.as_u16() => {
                     if let Some(token) = cursor.bump() {
                         errors.push(ParseError::new(token.span, "unexpected character"));
@@ -124,7 +129,7 @@ impl SolidityParser {
                     let span = cursor.peek_span();
                     errors.push(ParseError::new(
                         span,
-                        "expected pragma, import, contract, struct, enum, error, event, or type",
+                        "expected pragma, import, contract, struct, enum, error, event, type, or using",
                     ));
                     cursor.recover();
                 }
