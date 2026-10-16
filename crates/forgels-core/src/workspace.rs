@@ -6,8 +6,31 @@ use std::time::Instant;
 use forgels_common::log::debug;
 
 use crate::diagnostics::{DEFAULT_PUBLISH_DELAY, PublishGate};
+use crate::index::ProjectIndex;
 use crate::routing::Language;
 use forgels_protocol::Diagnostic;
+
+/// Max dependents to republish after one change. Bounds fan-out.
+pub const MAX_DEPENDENT_REPUBLISH: usize = 32;
+
+/// Turn a path into a `file://` URI. Encodes bytes outside
+/// `[A-Za-z0-9-_.~/]` as `%XX` so spaces and non-ASCII roundtrip.
+pub(crate) fn path_to_uri(path: &Path) -> String {
+    let raw = path.to_string_lossy();
+    let mut out = String::with_capacity(raw.len() + 7);
+    out.push_str("file://");
+    for byte in raw.as_bytes() {
+        if matches!(
+            byte,
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b'/'
+        ) {
+            out.push(*byte as char);
+        } else {
+            out.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    out
+}
 
 /// One tracked document: routed language, latest full text, and the
 /// editor version from the last open or change notification.
@@ -45,6 +68,7 @@ pub struct Workspace {
     roots: Vec<PathBuf>,
     publish: PublishGate,
     diagnostics: HashMap<PathBuf, Vec<Diagnostic>>,
+    index: ProjectIndex,
 }
 
 impl Default for Workspace {
@@ -60,6 +84,7 @@ impl Workspace {
             roots: Vec::new(),
             publish: PublishGate::new(DEFAULT_PUBLISH_DELAY),
             diagnostics: HashMap::new(),
+            index: ProjectIndex::new(),
         }
     }
 
@@ -70,6 +95,7 @@ impl Workspace {
             roots: Vec::new(),
             publish: PublishGate::new(delay),
             diagnostics: HashMap::new(),
+            index: ProjectIndex::new(),
         }
     }
 
@@ -86,13 +112,14 @@ impl Workspace {
         }
         debug!("open {}", path.display());
         self.files.insert(
-            path,
+            path.clone(),
             Document {
                 language,
                 text,
                 version,
             },
         );
+        self.index.rebuild_file(path, Vec::new());
         Ok(())
     }
 
@@ -115,6 +142,7 @@ impl Workspace {
         }
         debug!("close {}", path.display());
         self.diagnostics.remove(path);
+        self.index.remove(path);
         Ok(())
     }
 
@@ -151,6 +179,49 @@ impl Workspace {
     /// Latest tracked document, if any.
     pub fn get(&self, path: &Path) -> Option<&Document> {
         self.files.get(path)
+    }
+
+    /// Latest text for `path`, if tracked.
+    pub fn get_text(&self, path: &Path) -> Option<&str> {
+        self.files.get(path).map(|doc| doc.text.as_str())
+    }
+
+    /// All tracked files for index rebuilds and cross file queries.
+    pub fn iter_files(&self) -> impl Iterator<Item = (&PathBuf, &Document)> {
+        self.files.iter()
+    }
+
+    /// Dependency graph across open files.
+    pub fn index(&self) -> &ProjectIndex {
+        &self.index
+    }
+
+    /// Replace the dep list for one file after its imports change.
+    pub fn set_file_deps(&mut self, path: PathBuf, deps: Vec<PathBuf>) {
+        self.index.rebuild_file(path, deps);
+    }
+
+    /// Tracked transitive dependents of `path`, capped for republish.
+    pub fn dependents_to_refresh(&self, path: &Path) -> Vec<PathBuf> {
+        self.index
+            .transitive_dependents(path, MAX_DEPENDENT_REPUBLISH)
+            .into_iter()
+            .filter(|dep| self.files.contains_key(dep))
+            .collect()
+    }
+
+    /// Mark every tracked dependent dirty with its own version and one stamp.
+    pub fn mark_dependents_dirty(&mut self, path: &Path, now: Instant) {
+        let targets = self.dependents_to_refresh(path);
+        for target in targets {
+            let version = self
+                .files
+                .get(&target)
+                .map(|doc| doc.version as u64)
+                .unwrap_or(0);
+            let uri = path_to_uri(&target);
+            self.publish.mark_dirty(&uri, version, now);
+        }
     }
 
     /// Replace the root list, from initialize params.
@@ -197,6 +268,7 @@ impl Workspace {
             .collect();
         for path in doomed {
             self.files.remove(&path);
+            self.index.remove(&path);
         }
     }
 }
@@ -407,5 +479,61 @@ mod tests {
     fn unknown_document_has_no_diagnostics() {
         let workspace = Workspace::new();
         assert!(workspace.diagnostics_for(&sol_path()).is_empty());
+    }
+
+    fn two_file_graph() -> Workspace {
+        let mut workspace = Workspace::new();
+        workspace
+            .open(
+                PathBuf::from("/repo/A.sol"),
+                Language::Solidity,
+                "import \"./B.sol\";".to_string(),
+                3,
+            )
+            .expect("open A works");
+        workspace
+            .open(
+                PathBuf::from("/repo/B.sol"),
+                Language::Solidity,
+                "contract B {}".to_string(),
+                7,
+            )
+            .expect("open B works");
+        workspace.set_file_deps(
+            PathBuf::from("/repo/A.sol"),
+            vec![PathBuf::from("/repo/B.sol")],
+        );
+        workspace.set_file_deps(PathBuf::from("/repo/B.sol"), Vec::new());
+        workspace
+    }
+
+    #[test]
+    fn dependents_filter_untracked() {
+        let mut workspace = two_file_graph();
+        workspace
+            .close(&PathBuf::from("/repo/A.sol"))
+            .expect("close works");
+        assert!(
+            workspace
+                .dependents_to_refresh(&PathBuf::from("/repo/B.sol"))
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn mark_dependents_uses_own_version() {
+        let mut workspace = two_file_graph();
+        let now = Instant::now();
+        workspace.mark_dependents_dirty(&PathBuf::from("/repo/B.sol"), now);
+        let due = workspace.take_all_pending();
+        assert_eq!(due, vec![(path_to_uri(&PathBuf::from("/repo/A.sol")), 3)]);
+    }
+
+    #[test]
+    fn path_uri_encodes_space() {
+        assert_eq!(
+            path_to_uri(&PathBuf::from("/repo/my proj/A.sol")),
+            "file:///repo/my%20proj/A.sol"
+        );
     }
 }

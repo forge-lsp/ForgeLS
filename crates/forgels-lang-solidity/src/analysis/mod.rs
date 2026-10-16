@@ -1,4 +1,7 @@
-use forgels_core::{Analyzer, CompletionData, DiagnosticData, HoverData};
+use forgels_core::{
+    Analyzer, CompletionData, DiagnosticData, GotoTarget, HoverData, ProjectContext,
+    analyzer::ImportRef,
+};
 use forgels_syntax::{AstNode, Lexer, Span};
 
 use crate::{ContractDef, FunctionDef, SolidityFile, SolidityLexer, SolidityParser};
@@ -6,13 +9,15 @@ use crate::{ContractDef, FunctionDef, SolidityFile, SolidityLexer, SolidityParse
 mod completion;
 mod goto;
 mod hover;
+mod imports;
 
 #[cfg(test)]
 mod tests;
 
-pub use completion::{CompletionItem, CompletionKind, complete_at};
-pub use goto::goto_definition;
+pub use completion::{CompletionItem, CompletionKind, complete_at, exports_of};
+pub use goto::{goto_definition, resolve_in_dep};
 pub use hover::{Hover, hover_at};
+pub use imports::imports_in;
 
 fn is_word_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'$'
@@ -112,6 +117,27 @@ impl Scope {
                 child.collect_visible(offset, out);
             }
         }
+    }
+
+    /// Contract level symbols: contracts plus their functions.
+    ///
+    /// Used for cross file completion. State vars, params, and locals
+    /// stay local and never cross files.
+    pub fn export_symbols(&self) -> Vec<&Symbol> {
+        let mut out: Vec<&Symbol> = Vec::new();
+        for symbol in &self.symbols {
+            if matches!(symbol.kind, SymbolKind::Contract | SymbolKind::Function) {
+                out.push(symbol);
+            }
+        }
+        for child in &self.children {
+            for symbol in &child.symbols {
+                if matches!(symbol.kind, SymbolKind::Contract | SymbolKind::Function) {
+                    out.push(symbol);
+                }
+            }
+        }
+        out
     }
 }
 
@@ -247,30 +273,89 @@ impl SolidityAnalyzer {
 }
 
 impl Analyzer for SolidityAnalyzer {
-    fn hover(&self, text: &str, offset: u32) -> Option<HoverData> {
-        let file = Self::parse_file(text)?;
-        hover::hover_at(&file, text, offset).map(|found| HoverData {
-            contents: found.contents,
-            span: found.span,
-        })
+    fn hover(&self, ctx: &ProjectContext) -> Option<HoverData> {
+        let local = Self::parse_file(ctx.text)
+            .and_then(|file| hover::hover_at(&file, ctx.text, ctx.offset));
+        if let Some(found) = local {
+            return Some(HoverData {
+                contents: found.contents,
+                span: found.span,
+            });
+        }
+        let (word, span) = word_at(ctx.text, ctx.offset)?;
+        for (dep_path, dep_text) in forgels_core::dep_texts(ctx, 16) {
+            let Some(file_name) = dep_path.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            for item in completion::exports_of(&dep_text) {
+                if item.label == word {
+                    return Some(HoverData {
+                        contents: format!("{} - from {}", item.detail, file_name),
+                        span,
+                    });
+                }
+            }
+        }
+        None
     }
 
-    fn complete(&self, text: &str, offset: u32) -> Vec<CompletionData> {
-        let Some(file) = Self::parse_file(text) else {
-            return Vec::new();
-        };
-        completion::complete_at(&file, text, offset)
-            .iter()
-            .map(|item| CompletionData {
-                label: item.label.clone(),
-                detail: item.detail.clone(),
-            })
-            .collect()
+    fn complete(&self, ctx: &ProjectContext) -> Vec<CompletionData> {
+        let prefix = completion::prefix_at(ctx.text, ctx.offset);
+        let mut seen: Vec<String> = Vec::new();
+        let mut out: Vec<CompletionData> = Vec::new();
+        if let Some(file) = Self::parse_file(ctx.text) {
+            for item in completion::complete_at(&file, ctx.text, ctx.offset) {
+                if seen.contains(&item.label) {
+                    continue;
+                }
+                seen.push(item.label.clone());
+                out.push(CompletionData {
+                    label: item.label,
+                    detail: item.detail,
+                });
+            }
+        }
+        for (dep_path, dep_text) in forgels_core::dep_texts(ctx, 16) {
+            let Some(file_name) = dep_path.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            let origin = file_name.to_string();
+            for item in completion::exports_of(&dep_text) {
+                if !item.label.starts_with(prefix.as_str()) {
+                    continue;
+                }
+                if seen.contains(&item.label) {
+                    continue;
+                }
+                seen.push(item.label.clone());
+                out.push(CompletionData {
+                    label: item.label.clone(),
+                    detail: format!("{} - from {}", item.detail, origin),
+                });
+            }
+        }
+        out
     }
 
-    fn goto(&self, text: &str, offset: u32) -> Option<Span> {
-        let file = Self::parse_file(text)?;
-        goto::goto_definition(&file, text, offset)
+    fn goto(&self, ctx: &ProjectContext) -> Option<Span> {
+        // Single file only; cross file lookup uses goto_location.
+        let file = Self::parse_file(ctx.text)?;
+        goto::goto_definition(&file, ctx.text, ctx.offset)
+    }
+
+    fn goto_location(&self, ctx: &ProjectContext) -> Option<GotoTarget> {
+        if let Some(file) = Self::parse_file(ctx.text)
+            && let Some(span) = goto::goto_definition(&file, ctx.text, ctx.offset)
+        {
+            return Some(GotoTarget::new(ctx.path.to_path_buf(), span));
+        }
+        let (word, _) = word_at(ctx.text, ctx.offset)?;
+        for (dep_path, dep_text) in forgels_core::dep_texts(ctx, 16) {
+            if let Some(span) = goto::resolve_in_dep(&dep_text, &word) {
+                return Some(GotoTarget::new(dep_path, span));
+            }
+        }
+        None
     }
 
     fn diagnostics(&self, text: &str) -> Vec<DiagnosticData> {
@@ -283,5 +368,9 @@ impl Analyzer for SolidityAnalyzer {
                 message: error.message.clone(),
             })
             .collect()
+    }
+
+    fn imports(&self, text: &str) -> Vec<ImportRef> {
+        imports::imports_in(text)
     }
 }

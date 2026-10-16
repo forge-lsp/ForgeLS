@@ -1,6 +1,6 @@
 use super::span_to_range;
 use forgels_protocol::{Diagnostic, DiagnosticSeverity};
-use forgels_syntax::ParseError;
+use forgels_syntax::{ParseError, Span};
 
 /// Map a parser error to an editor diagnostic.
 ///
@@ -25,4 +25,13 @@ pub fn parse_errors_to_diagnostics(text: &str, errors: &[ParseError]) -> Vec<Dia
         .iter()
         .map(|error| parse_error_to_diagnostic(text, error))
         .collect()
+}
+
+/// One unresolved import as an error diagnostic at the path span.
+pub fn unresolved_import_to_diagnostic(text: &str, span: Span, raw: &str) -> Diagnostic {
+    Diagnostic {
+        range: span_to_range(text, span),
+        severity: Some(DiagnosticSeverity::Error),
+        message: format!("unresolved import \"{raw}\""),
+    }
 }

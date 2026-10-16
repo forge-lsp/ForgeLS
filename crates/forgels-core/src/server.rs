@@ -14,9 +14,11 @@ pub struct Server {
 impl Server {
     pub fn new(config: Config) -> Self {
         let delay = config.publish_delay();
+        let mut session = dispatch::Session::new();
+        session.config = config.clone();
         Self {
             workspace: Workspace::with_delay(delay),
-            session: dispatch::Session::new(),
+            session,
             config,
         }
     }

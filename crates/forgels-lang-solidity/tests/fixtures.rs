@@ -1,5 +1,5 @@
 use forgels_lang_solidity::{SolidityLexer, SolidityParser, TypeNode};
-use forgels_syntax::{Lexer, Parser};
+use forgels_syntax::Lexer;
 
 fn load(name: &str) -> String {
     let path = format!("{}/tests/fixtures/{name}", env!("CARGO_MANIFEST_DIR"));
@@ -93,4 +93,30 @@ fn body_keeps_locals_past_assembly() {
         .filter_map(|local| local.name())
         .collect();
     assert_eq!(names, vec!["sum"]);
+}
+
+#[test]
+fn cross_pair_links_router_to_vault() {
+    let provider = parse_fixture("cross_b.sol");
+    let contracts = provider.contracts();
+    assert_eq!(contracts.len(), 1);
+    assert_eq!(contracts[0].name().as_deref(), Some("Vault"));
+    let functions: Vec<String> = contracts[0]
+        .functions()
+        .iter()
+        .filter_map(|function| function.name())
+        .collect();
+    assert!(functions.contains(&"withdraw".to_string()));
+    assert!(functions.contains(&"deposit".to_string()));
+
+    let user = parse_fixture("cross_a.sol");
+    assert_eq!(
+        user.imports()
+            .iter()
+            .filter_map(|import| import.path())
+            .collect::<Vec<String>>(),
+        vec!["./cross_b.sol".to_string()]
+    );
+    let text = load("cross_a.sol");
+    assert!(text.rfind("withdraw").is_some(), "usage present");
 }

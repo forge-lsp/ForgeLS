@@ -1,9 +1,13 @@
 use serde_json::Value;
 
-use super::sync::uri_to_path;
+use forgels_common::fs::exists;
+use forgels_common::paths::resolve_with_remappings;
+
+use super::sync::{resolve_root_for, uri_to_path};
 use super::{Session, Workspace};
-use crate::diagnostics::span_to_range;
+use crate::diagnostics::{span_to_range, unresolved_import_to_diagnostic};
 use forgels_protocol::{Diagnostic, DiagnosticSeverity};
+use forgels_syntax::Span;
 
 /// Immediate notifications for one message body: open publishes current
 /// diagnostics at once, close pushes an empty array.
@@ -80,17 +84,36 @@ fn publish_for_uri(
     let doc = workspace.get(&path)?;
     let analyzer = session.analyzers.get(&doc.language)?;
     let found = analyzer.diagnostics(&doc.text);
-    let diagnostics: Vec<Diagnostic> = found
+    let mut ordered: Vec<(Span, Diagnostic)> = found
         .iter()
         .map(|item| {
-            let range = span_to_range(&doc.text, item.span);
-            Diagnostic {
-                range,
+            let diagnostic = Diagnostic {
+                range: span_to_range(&doc.text, item.span),
                 severity: Some(DiagnosticSeverity::Error),
                 message: item.message.clone(),
-            }
+            };
+            (item.span, diagnostic)
         })
         .collect();
+    let root = resolve_root_for(workspace, &session.config, &path);
+    for item in analyzer.imports(&doc.text) {
+        let resolved = resolve_with_remappings(&path, &item.raw, &root, &session.config.remappings);
+        let missing = match &resolved {
+            None => true,
+            Some(target) => workspace.get(target).is_none() && !exists(target),
+        };
+        if missing {
+            let diagnostic = unresolved_import_to_diagnostic(&doc.text, item.span, &item.raw);
+            ordered.push((item.span, diagnostic));
+        }
+    }
+    ordered.sort_by(|a, b| {
+        a.0.start
+            .cmp(&b.0.start)
+            .then(a.0.end.cmp(&b.0.end))
+            .then(a.1.message.cmp(&b.1.message))
+    });
+    let diagnostics: Vec<Diagnostic> = ordered.into_iter().map(|(_, item)| item).collect();
     workspace.set_diagnostics(path, diagnostics.clone());
     let items: Vec<Value> = diagnostics
         .iter()

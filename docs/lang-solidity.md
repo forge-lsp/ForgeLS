@@ -34,3 +34,28 @@ Status: token kinds defined. Real lexer and parser are planned.
 - Symbols: braces, brackets, parens, arithmetic, comparison, bitwise,
   assignment combos, `=>`, `?`, `;`, `,`, `:`, `.`.
 - Comments: `//` line and `/* */` block. Whitespace is skipped.
+
+## Imports
+
+- Source: `analysis::imports::imports_in` tokenizes and parses with recovery, then reads `SolidityFile::imports()`.
+- Shapes:
+  - `import "./A.sol";` gives `raw = "./A.sol"`, `symbols = []`.
+  - `import {B as C} from "./B.sol";` gives `raw = "./B.sol"`, `symbols = ["B", "C"]`.
+  - `import * as NS from "./C.sol";` gives `raw = "./C.sol"`, `symbols = ["NS"]`.
+- Broken files still report imports. Entries without a path are skipped.
+- Core resolves each `raw` with `resolve_with_remappings` and rebuilds the `ProjectIndex` entry.
+
+## Cross-file
+
+- Completion: local `complete_at` plus `exports_of` from `dep_texts(ctx, 16)`. Deduped by label, local wins. Imported items add ` - from <file>`.
+- Hover: local `hover_at` first. Else scan `exports_of` for the word at cursor and show `<detail> - from <file>`.
+- Goto: `goto_definition` for same file. `goto_location` falls back to `resolve_in_dep` over `dep_texts(ctx, 16)` and returns `GotoTarget { path, span }`.
+- Exports: `Scope::export_symbols` returns contracts plus their functions only.
+
+## V1 limits
+
+- Tracked only: `dep_texts` skips untracked and missing files.
+- Caps: dep read cap is 16, republish fan-out cap is 32.
+- Symbols: `Contract` and `Function` cross files. `StateVar`, `Param`, and `LocalVar` stay local.
+- Imports: union without alias precision. `{B as C}` records both `B` and `C`, no alias mapping.
+- Parse: parse on each call, no incremental cache.
