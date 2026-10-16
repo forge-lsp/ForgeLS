@@ -113,9 +113,17 @@ fn definition_result(session: &Session, workspace: &Workspace, params: &Value) -
     let offset = position_to_offset(&doc.text, Position { line, character });
     let ctx = ProjectContext::new(&path, &doc.text, offset, workspace);
     let target = analyzer.goto_location(&ctx)?;
-    let target_text = workspace.get_text(&target.path)?;
+    let target_text = match workspace.get_text(&target.path) {
+        Some(text) => text.to_string(),
+        None => {
+            if !forgels_common::fs::is_trackable_file(&target.path) {
+                return None;
+            }
+            std::fs::read_to_string(&target.path).ok()?
+        }
+    };
     target_text.get(target.span.start as usize..target.span.end as usize)?;
-    let range = span_to_range(target_text, target.span);
+    let range = span_to_range(&target_text, target.span);
     let target_uri = path_to_uri(&target.path);
     Some(serde_json::json!({
         "uri": target_uri,

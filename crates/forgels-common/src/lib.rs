@@ -5,8 +5,10 @@ pub mod http;
 pub mod log;
 pub mod paths;
 
-pub use fs::{WalkCaps, exists, list_files_with_extension, read_to_string, write_string};
+pub use fs::{
+    WalkCaps, exists, is_trackable_file, list_files_with_extension, read_to_string, write_string,
+};
 pub use paths::{
-    Remapping, normalize, parse_remapping, relative_path, resolve_import, resolve_root,
-    resolve_with_remappings,
+    MAX_NODE_MODULES_DEPTH, Remapping, node_module_candidates, normalize, parse_remapping,
+    relative_path, resolve_import, resolve_import_full, resolve_root, resolve_with_remappings,
 };

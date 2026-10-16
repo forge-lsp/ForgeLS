@@ -13,6 +13,20 @@ pub fn exists(path: &Path) -> bool {
     path.is_file()
 }
 
+/// True when `path` is a trackable regular file.
+///
+/// Uses `symlink_metadata` so symlinks never count, even when they
+/// point at real files. This keeps V1 pnpm layouts out on purpose.
+pub fn is_trackable_file(path: &Path) -> bool {
+    let Ok(meta) = std::fs::symlink_metadata(path) else {
+        return false;
+    };
+    if meta.file_type().is_symlink() {
+        return false;
+    }
+    meta.is_file()
+}
+
 /// Bounds for `list_files_with_extension`. Both caps stop the walk.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WalkCaps {
@@ -170,6 +184,30 @@ mod tests {
         write(&root, "A.sol");
         assert!(list_files_with_extension(&root, "", WalkCaps::default()).is_empty());
         assert!(list_files_with_extension(&root, "sol", WalkCaps::new(0, 10)).is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn trackable_accepts_file_rejects_missing_and_dir() {
+        let root = fresh_dir("forgels-fs-trackable");
+        write(&root, "A.sol");
+        assert!(is_trackable_file(&root.join("A.sol")));
+        assert!(!is_trackable_file(&root.join("Missing.sol")));
+        assert!(!is_trackable_file(&root));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn trackable_rejects_symlink() {
+        let root = fresh_dir("forgels-fs-symlink");
+        write(&root, "Real.sol");
+        let link = root.join("Link.sol");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(root.join("Real.sol"), &link).expect("symlink");
+        #[cfg(unix)]
+        assert!(!is_trackable_file(&link));
+        #[cfg(unix)]
+        assert!(is_trackable_file(&root.join("Real.sol")));
         let _ = std::fs::remove_dir_all(&root);
     }
 }
