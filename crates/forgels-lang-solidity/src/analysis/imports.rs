@@ -13,9 +13,11 @@ pub fn imports_in(text: &str) -> Vec<ImportRef> {
     file.imports()
         .iter()
         .filter_map(|directive| {
-            directive
-                .path()
-                .map(|raw| ImportRef::with_symbols(raw, directive.symbols()))
+            let raw = directive.path()?;
+            let span = directive
+                .path_span()
+                .unwrap_or(forgels_syntax::Span::new(0, 0));
+            Some(ImportRef::with_span(raw, directive.symbols(), span))
         })
         .collect()
 }
@@ -32,6 +34,19 @@ mod tests {
         assert_eq!(found[0].raw, "./A.sol");
         assert_eq!(found[1].raw, "./B.sol");
         assert!(found[1].symbols.contains(&"B".to_string()));
+    }
+
+    #[test]
+    fn symbol_shapes_match_spec() {
+        let aliased = imports_in("import {A as B} from \"./B.sol\";\ncontract A {}");
+        assert_eq!(aliased.len(), 1);
+        assert_eq!(aliased[0].symbols, vec!["A".to_string(), "B".to_string()]);
+        let plain = imports_in("import \"./A.sol\";\ncontract A {}");
+        assert_eq!(plain.len(), 1);
+        assert!(plain[0].symbols.is_empty());
+        let star = imports_in("import * as NS from \"./C.sol\";\ncontract A {}");
+        assert_eq!(star.len(), 1);
+        assert_eq!(star[0].symbols, vec!["NS".to_string()]);
     }
 
     #[test]

@@ -1,6 +1,6 @@
 use super::contract::ContractDef;
 use super::{SolidityNode, cast_node, first_ident_text};
-use forgels_syntax::{AstNode, SyntaxElement, SyntaxNode};
+use forgels_syntax::{AstNode, Span, SyntaxElement, SyntaxNode};
 
 #[derive(Debug, Clone)]
 pub struct SolidityFile {
@@ -101,6 +101,24 @@ impl ImportDirective {
                     let text = token.text.trim_matches(|mark| mark == '"' || mark == '\'');
                     if token.text.len() != text.len() {
                         Some(text.to_string())
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            })
+    }
+
+    /// Span of the path token, quotes included, for diagnostics.
+    pub fn path_span(&self) -> Option<Span> {
+        self.syntax
+            .children
+            .iter()
+            .find_map(|element| match element {
+                SyntaxElement::Token(token) => {
+                    let text = token.text.trim_matches(|mark| mark == '"' || mark == '\'');
+                    if token.text.len() != text.len() {
+                        Some(token.span)
                     } else {
                         None
                     }

@@ -35,3 +35,24 @@ flowchart LR
 - New shared syntax goes to `forgels-syntax`.
 - New protocol types go to `forgels-protocol`.
 - Binary wires routing only. Logic lives in `forgels-core` or language crates.
+
+## Cross-file
+
+- Graph: `forgels-core::index::ProjectIndex` keeps forward `files` edges and reverse `dependents` edges per open file. `rebuild_file` dedupes deps and fixes both directions.
+- Update: `didOpen` and `didChange` run `refresh_index`, then `mark_dependents_dirty`. `didClose` drops the doc and marks dependents dirty so missing imports resurface.
+- Context: `ProjectContext` carries `path`, `text`, `offset`, plus `workspace`. Helpers are `index()` and `file_text()`.
+- Read: `dep_texts(ctx, cap)` returns transitive dep texts in index order. Tracked files only, deduped by path, cycle safe, capped by caller.
+- Resolve: `resolve_import` accepts only `./` and `../`, lexical join next to the importer, no disk access. Bare, absolute, and empty specifiers return `None`.
+- Remap: `resolve_with_remappings` tries relative first, then longest prefix match joined to root. Join is lexical only.
+- Root: `resolve_root_for` picks owning workspace root, else config root, else importer parent.
+- Fan-out: `dependents_to_refresh` filters `transitive_dependents` to tracked files. Cap is `MAX_DEPENDENT_REPUBLISH = 32`. Each target republishes with its own version.
+
+```mermaid
+flowchart LR
+  Open[didOpen/didChange] --> Resolve[resolve imports]
+  Resolve --> Index[ProjectIndex rebuild]
+  Index --> Deps[dependents_to_refresh cap 32]
+  Deps --> Pub[publishDiagnostics]
+  Ctx[ProjectContext] --> DepTexts[dep_texts cap N]
+  DepTexts --> Lang[language analyzer]
+```

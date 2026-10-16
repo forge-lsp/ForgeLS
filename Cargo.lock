@@ -62,6 +62,7 @@ dependencies = [
  "forgels-core",
  "forgels-protocol",
  "forgels-syntax",
+ "serde_json",
  "tracing",
 ]
 

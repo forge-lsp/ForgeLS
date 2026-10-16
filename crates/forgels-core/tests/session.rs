@@ -11,18 +11,21 @@ use serde_json::Value;
 struct StubAnalyzer;
 
 impl Analyzer for StubAnalyzer {
-    fn hover(&self, _text: &str, _offset: u32) -> Option<HoverData> {
+    fn hover(&self, _ctx: &forgels_core::analyzer::ProjectContext) -> Option<HoverData> {
         Some(HoverData {
             contents: "stub hover".to_string(),
             span: Span::new(0, 8),
         })
     }
 
-    fn complete(&self, _text: &str, _offset: u32) -> Vec<forgels_core::analyzer::CompletionData> {
+    fn complete(
+        &self,
+        _ctx: &forgels_core::analyzer::ProjectContext,
+    ) -> Vec<forgels_core::analyzer::CompletionData> {
         Vec::new()
     }
 
-    fn goto(&self, _text: &str, _offset: u32) -> Option<Span> {
+    fn goto(&self, _ctx: &forgels_core::analyzer::ProjectContext) -> Option<Span> {
         None
     }
 

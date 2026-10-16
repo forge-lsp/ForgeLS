@@ -4,10 +4,11 @@ use crate::workspace::Workspace;
 #[derive(Debug)]
 struct StubAnalyzer {
     found: bool,
+    cross: Option<(std::path::PathBuf, forgels_syntax::Span)>,
 }
 
 impl crate::analyzer::Analyzer for StubAnalyzer {
-    fn hover(&self, _text: &str, _offset: u32) -> Option<crate::analyzer::HoverData> {
+    fn hover(&self, _ctx: &crate::analyzer::ProjectContext) -> Option<crate::analyzer::HoverData> {
         if self.found {
             Some(crate::analyzer::HoverData {
                 contents: "stub detail".to_string(),
@@ -18,7 +19,10 @@ impl crate::analyzer::Analyzer for StubAnalyzer {
         }
     }
 
-    fn complete(&self, _text: &str, _offset: u32) -> Vec<crate::analyzer::CompletionData> {
+    fn complete(
+        &self,
+        _ctx: &crate::analyzer::ProjectContext,
+    ) -> Vec<crate::analyzer::CompletionData> {
         vec![
             crate::analyzer::CompletionData {
                 label: "stub_one".to_string(),
@@ -31,8 +35,19 @@ impl crate::analyzer::Analyzer for StubAnalyzer {
         ]
     }
 
-    fn goto(&self, _text: &str, _offset: u32) -> Option<forgels_syntax::Span> {
-        Some(forgels_syntax::Span::new(13, 18))
+    fn goto(&self, _ctx: &crate::analyzer::ProjectContext) -> Option<forgels_syntax::Span> {
+        Some(forgels_syntax::Span::new(9, 10))
+    }
+
+    fn goto_location(
+        &self,
+        ctx: &crate::analyzer::ProjectContext,
+    ) -> Option<crate::analyzer::GotoTarget> {
+        if let Some((path, span)) = &self.cross {
+            return Some(crate::analyzer::GotoTarget::new(path.clone(), *span));
+        }
+        self.goto(ctx)
+            .map(|span| crate::analyzer::GotoTarget::new(ctx.path.to_path_buf(), span))
     }
 
     fn diagnostics(&self, text: &str) -> Vec<crate::analyzer::DiagnosticData> {
@@ -51,7 +66,19 @@ pub(crate) fn session_with_stub(found: bool) -> Session {
     let mut session = Session::new();
     session.analyzers.insert(
         crate::routing::Language::Solidity,
-        Box::new(StubAnalyzer { found }),
+        Box::new(StubAnalyzer { found, cross: None }),
+    );
+    session
+}
+
+pub(crate) fn session_with_cross(path: std::path::PathBuf, span: forgels_syntax::Span) -> Session {
+    let mut session = Session::new();
+    session.analyzers.insert(
+        crate::routing::Language::Solidity,
+        Box::new(StubAnalyzer {
+            found: true,
+            cross: Some((path, span)),
+        }),
     );
     session
 }
