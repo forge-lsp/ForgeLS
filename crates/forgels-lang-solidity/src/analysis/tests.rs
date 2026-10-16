@@ -627,6 +627,8 @@ fn overload_uses_first_definition() {
         found[0].message,
         "this function 'greet' takes 1 arguments but 2 supplied"
     );
+}
+
 fn parse_recovered(text: &str) -> crate::SolidityFile {
     let tokens = SolidityLexer.tokenize(text);
     let (file, _) = SolidityParser.parse_with_errors(&tokens);
