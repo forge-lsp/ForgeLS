@@ -1,5 +1,5 @@
 use super::contract::ContractDef;
-use super::user_types::{EnumDef, ErrorDef, StructDef, UserTypeDef};
+use super::user_types::{EnumDef, ErrorDef, EventDef, StructDef, UserTypeDef};
 use super::{SolidityNode, cast_node, first_ident_text};
 use forgels_syntax::{AstNode, Span, SyntaxElement, SyntaxNode};
 
@@ -70,6 +70,13 @@ impl SolidityFile {
         self.children_of(SolidityNode::UserType)
             .into_iter()
             .filter_map(UserTypeDef::cast)
+            .collect()
+    }
+
+    pub fn events(&self) -> Vec<EventDef> {
+        self.children_of(SolidityNode::Event)
+            .into_iter()
+            .filter_map(EventDef::cast)
             .collect()
     }
 }

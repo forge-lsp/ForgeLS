@@ -1,5 +1,5 @@
 use super::members::{FunctionDef, StateVar};
-use super::user_types::{EnumDef, ErrorDef, StructDef, UserTypeDef};
+use super::user_types::{EnumDef, ErrorDef, EventDef, ModifierDef, StructDef, UserTypeDef};
 use super::{SolidityNode, cast_node};
 use crate::lexer::SolidityKind;
 use forgels_syntax::{AstNode, SyntaxElement, SyntaxNode};
@@ -47,6 +47,22 @@ impl ContractDef {
             SyntaxElement::Token(token) => token.kind == SolidityKind::Abstract.as_u16(),
             _ => false,
         })
+    }
+
+    /// Contract flavor for hover: `contract`, `interface`, or `library`.
+    /// Stored keyword decides; missing keyword means plain contract.
+    pub fn kind_label(&self) -> &'static str {
+        for element in &self.syntax.children {
+            if let SyntaxElement::Token(token) = element {
+                if token.kind == SolidityKind::Interface.as_u16() {
+                    return "interface";
+                }
+                if token.kind == SolidityKind::Library.as_u16() {
+                    return "library";
+                }
+            }
+        }
+        "contract"
     }
 
     fn members_of(&self, kind: SolidityNode) -> Vec<SyntaxNode> {
@@ -99,6 +115,20 @@ impl ContractDef {
         self.members_of(SolidityNode::UserType)
             .into_iter()
             .filter_map(UserTypeDef::cast)
+            .collect()
+    }
+
+    pub fn events(&self) -> Vec<EventDef> {
+        self.members_of(SolidityNode::Event)
+            .into_iter()
+            .filter_map(EventDef::cast)
+            .collect()
+    }
+
+    pub fn modifiers(&self) -> Vec<ModifierDef> {
+        self.members_of(SolidityNode::Modifier)
+            .into_iter()
+            .filter_map(ModifierDef::cast)
             .collect()
     }
 }

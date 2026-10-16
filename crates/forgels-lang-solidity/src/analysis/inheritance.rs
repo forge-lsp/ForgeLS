@@ -165,6 +165,40 @@ pub(crate) fn inherited_symbols(file: &SolidityFile, contract: &ContractDef) -> 
                 detail,
             });
         }
+        for item in base.events() {
+            let Some(item_name) = item.name() else {
+                continue;
+            };
+            if item_name.is_empty() || !seen.insert(item_name.clone()) {
+                continue;
+            }
+            let mut detail = String::from("event ");
+            detail.push_str(&item_name);
+            detail.push_str(&suffix);
+            out.push(Symbol {
+                name: item_name,
+                kind: SymbolKind::Event,
+                span: item.syntax().span,
+                detail,
+            });
+        }
+        for item in base.modifiers() {
+            let Some(item_name) = item.name() else {
+                continue;
+            };
+            if item_name.is_empty() || !seen.insert(item_name.clone()) {
+                continue;
+            }
+            let mut detail = String::from("modifier ");
+            detail.push_str(&item_name);
+            detail.push_str(&suffix);
+            out.push(Symbol {
+                name: item_name,
+                kind: SymbolKind::Modifier,
+                span: item.syntax().span,
+                detail,
+            });
+        }
         for var in base.state_vars() {
             let Some(var_name) = var.name() else {
                 continue;

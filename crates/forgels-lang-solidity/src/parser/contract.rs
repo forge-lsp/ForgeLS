@@ -1,7 +1,9 @@
 use super::cursor::{Cursor, token_element};
 use super::members::{parse_function, parse_state_var, skip_balanced, skip_parens};
 use super::types::is_type_start;
-use super::user_types::{parse_enum, parse_error, parse_struct, parse_user_type};
+use super::user_types::{
+    parse_enum, parse_error, parse_event, parse_modifier, parse_struct, parse_user_type,
+};
 use crate::SolidityNode;
 use crate::lexer::SolidityKind;
 use forgels_syntax::{ParseError, Span, SyntaxElement, SyntaxNode};
@@ -15,17 +17,36 @@ pub(crate) fn parse_contract(
         return None;
     };
     let start = head.span;
-    // Optional `abstract`, then the `contract` keyword itself.
-    // Keywords are stored except `contract`; the name stays the first
-    // identifier so accessors never confuse modifiers with names.
+    // Optional `abstract`, then the `contract`/`interface`/`library`
+    // keyword itself. The kind token is stored so `kind_label` can
+    // report interface and library with the right detail; the name
+    // stays the first identifier so accessors keep working.
     let mut prefix: Vec<SyntaxElement> = Vec::new();
     if head.kind == SolidityKind::Abstract.as_u16() {
         prefix.push(token_element(head));
-        if let Err(error) = cursor.expect(SolidityKind::Contract, "`contract`") {
-            errors.push(error);
-            return None;
+        match cursor.peek_kind() {
+            Some(kind)
+                if kind == SolidityKind::Contract.as_u16()
+                    || kind == SolidityKind::Interface.as_u16()
+                    || kind == SolidityKind::Library.as_u16() =>
+            {
+                let Some(kind_token) = cursor.bump() else {
+                    errors.push(ParseError::new(cursor.peek_span(), "expected `contract`"));
+                    return None;
+                };
+                prefix.push(token_element(kind_token));
+            }
+            _ => {
+                errors.push(ParseError::new(cursor.peek_span(), "expected `contract`"));
+                return None;
+            }
         }
-    } else if head.kind != SolidityKind::Contract.as_u16() {
+    } else if head.kind == SolidityKind::Contract.as_u16()
+        || head.kind == SolidityKind::Interface.as_u16()
+        || head.kind == SolidityKind::Library.as_u16()
+    {
+        prefix.push(token_element(head));
+    } else {
         errors.push(ParseError::new(head.span, "expected `contract`"));
         return None;
     }
@@ -76,9 +97,12 @@ pub(crate) fn parse_contract(
                         || kind == SolidityKind::Import.as_u16()
                         || kind == SolidityKind::Contract.as_u16()
                         || kind == SolidityKind::Abstract.as_u16()
+                        || kind == SolidityKind::Interface.as_u16()
+                        || kind == SolidityKind::Library.as_u16()
                         || kind == SolidityKind::Struct.as_u16()
                         || kind == SolidityKind::Enum.as_u16()
                         || kind == SolidityKind::ErrorKw.as_u16()
+                        || kind == SolidityKind::Event.as_u16()
                         || kind == SolidityKind::Type.as_u16()
                     {
                         break;
@@ -109,9 +133,23 @@ pub(crate) fn parse_contract(
             Some(kind) if kind == SolidityKind::RBrace.as_u16() => break,
             Some(kind)
                 if kind == SolidityKind::Function.as_u16()
-                    || kind == SolidityKind::Constructor.as_u16() =>
+                    || kind == SolidityKind::Constructor.as_u16()
+                    || kind == SolidityKind::Fallback.as_u16()
+                    || kind == SolidityKind::Receive.as_u16() =>
             {
                 match parse_function(cursor, errors) {
+                    Some(node) => members.push(SyntaxElement::Node(node)),
+                    None => recover_member(cursor),
+                }
+            }
+            Some(kind) if kind == SolidityKind::Modifier.as_u16() => {
+                match parse_modifier(cursor, errors) {
+                    Some(node) => members.push(SyntaxElement::Node(node)),
+                    None => recover_member(cursor),
+                }
+            }
+            Some(kind) if kind == SolidityKind::Event.as_u16() => {
+                match parse_event(cursor, errors) {
                     Some(node) => members.push(SyntaxElement::Node(node)),
                     None => recover_member(cursor),
                 }
@@ -192,6 +230,10 @@ pub(crate) fn recover_member(cursor: &mut Cursor) {
             }
             if kind == SolidityKind::Function.as_u16()
                 || kind == SolidityKind::Constructor.as_u16()
+                || kind == SolidityKind::Fallback.as_u16()
+                || kind == SolidityKind::Receive.as_u16()
+                || kind == SolidityKind::Modifier.as_u16()
+                || kind == SolidityKind::Event.as_u16()
                 || kind == SolidityKind::Struct.as_u16()
                 || kind == SolidityKind::Enum.as_u16()
                 || kind == SolidityKind::ErrorKw.as_u16()

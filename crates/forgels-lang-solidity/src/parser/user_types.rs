@@ -306,3 +306,147 @@ pub(crate) fn parse_user_type(
         vec![token_element(name), SyntaxElement::Node(underlying)],
     ))
 }
+
+/// Parse `event Name(params) [anonymous];`, keeping name plus params.
+///
+/// Params reuse param parsing so `indexed` stays attached to the name.
+/// Missing `;` is one error with the node kept for hover and goto.
+pub(crate) fn parse_event(cursor: &mut Cursor, errors: &mut Vec<ParseError>) -> Option<SyntaxNode> {
+    let Some(head) = cursor.bump() else {
+        errors.push(ParseError::new(cursor.peek_span(), "expected event name"));
+        return None;
+    };
+    if head.kind != SolidityKind::Event.as_u16() {
+        errors.push(ParseError::new(head.span, "expected event name"));
+        return None;
+    }
+    let start = head.span.start;
+    let name = match cursor.expect(SolidityKind::Ident, "event name") {
+        Ok(name) => name,
+        Err(error) => {
+            errors.push(error);
+            return None;
+        }
+    };
+    let mut children = vec![token_element(name.clone())];
+    if cursor.peek_kind() == Some(SolidityKind::LParen.as_u16()) {
+        cursor.bump();
+        if cursor.peek_kind() != Some(SolidityKind::RParen.as_u16()) {
+            loop {
+                match parse_param(cursor) {
+                    Ok(param) => children.push(SyntaxElement::Node(param)),
+                    Err(error) => {
+                        errors.push(error);
+                        return None;
+                    }
+                }
+                if cursor.peek_kind() == Some(SolidityKind::Comma.as_u16()) {
+                    cursor.bump();
+                } else {
+                    break;
+                }
+            }
+        }
+        if cursor.expect(SolidityKind::RParen, "`)`").is_err() {
+            errors.push(ParseError::new(cursor.peek_span(), "expected `)`"));
+            return None;
+        }
+    }
+    if cursor.peek_kind() == Some(SolidityKind::Anonymous.as_u16()) {
+        cursor.bump();
+    }
+    let end = match cursor.expect(SolidityKind::Semicolon, "`;`") {
+        Ok(semi) => semi.span.end,
+        Err(error) => {
+            errors.push(error);
+            name.span.end
+        }
+    };
+    Some(SyntaxNode::with_children(
+        SolidityNode::Event.as_u16(),
+        Span::new(start, end),
+        children,
+    ))
+}
+
+/// Parse `modifier Name(params) ... { body }`, keeping the name only.
+///
+/// Params are skipped with paren balance and the body with brace
+/// balance so malformed rows still yield the name. A `;` stub is also
+/// accepted for forward declarations.
+pub(crate) fn parse_modifier(
+    cursor: &mut Cursor,
+    errors: &mut Vec<ParseError>,
+) -> Option<SyntaxNode> {
+    use super::members::skip_balanced;
+    let Some(head) = cursor.bump() else {
+        errors.push(ParseError::new(
+            cursor.peek_span(),
+            "expected modifier name",
+        ));
+        return None;
+    };
+    if head.kind != SolidityKind::Modifier.as_u16() {
+        errors.push(ParseError::new(head.span, "expected modifier name"));
+        return None;
+    }
+    let start = head.span.start;
+    let name = match cursor.expect(SolidityKind::Ident, "modifier name") {
+        Ok(name) => name,
+        Err(error) => {
+            errors.push(error);
+            return None;
+        }
+    };
+    if cursor.peek_kind() == Some(SolidityKind::LParen.as_u16()) {
+        skip_parens(cursor);
+    }
+    // Optional modifiers on the modifier itself: `virtual`, `override`,
+    // or custom names. Consumed, not stored.
+    loop {
+        match cursor.peek_kind() {
+            Some(kind)
+                if kind == SolidityKind::Virtual.as_u16()
+                    || kind == SolidityKind::Override.as_u16() =>
+            {
+                cursor.bump();
+                if cursor.peek_kind() == Some(SolidityKind::LParen.as_u16()) {
+                    skip_parens(cursor);
+                }
+            }
+            Some(kind) if kind == SolidityKind::Ident.as_u16() => {
+                cursor.bump();
+                if cursor.peek_kind() == Some(SolidityKind::LParen.as_u16()) {
+                    skip_parens(cursor);
+                }
+            }
+            _ => break,
+        }
+    }
+    let end = if cursor.peek_kind() == Some(SolidityKind::Semicolon.as_u16()) {
+        cursor
+            .bump()
+            .map(|semi| semi.span.end)
+            .unwrap_or(name.span.end)
+    } else if cursor.peek_kind() == Some(SolidityKind::LBrace.as_u16()) {
+        let body_start = cursor.peek_span().start;
+        skip_balanced(cursor);
+        cursor
+            .tokens
+            .get(cursor.pos().saturating_sub(1))
+            .map(|token| token.span.end)
+            .unwrap_or(body_start)
+    } else {
+        errors.push(ParseError::new(cursor.peek_span(), "expected `{`"));
+        return Some(SyntaxNode::with_children(
+            SolidityNode::Modifier.as_u16(),
+            Span::new(start, name.span.end),
+            vec![token_element(name)],
+        ));
+    };
+    Some(SyntaxNode::with_children(
+        SolidityNode::Modifier.as_u16(),
+        Span::new(start, end.max(name.span.end)),
+        vec![token_element(name)],
+    ))
+}

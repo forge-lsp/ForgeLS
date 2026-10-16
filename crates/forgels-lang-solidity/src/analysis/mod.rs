@@ -58,6 +58,8 @@ pub enum SymbolKind {
     Struct,
     Enum,
     Error,
+    Event,
+    Modifier,
     UserType,
     StateVar,
     LocalVar,
@@ -135,7 +137,7 @@ impl Scope {
     }
 
     /// Contract level symbols: contracts, functions, structs, enums,
-    /// errors, and user types.
+    /// errors, events, modifiers, and user types.
     ///
     /// Used for cross file completion. State vars, params, and locals
     /// stay local and never cross files.
@@ -149,6 +151,8 @@ impl Scope {
                     | SymbolKind::Struct
                     | SymbolKind::Enum
                     | SymbolKind::Error
+                    | SymbolKind::Event
+                    | SymbolKind::Modifier
                     | SymbolKind::UserType
             ) {
                 out.push(symbol);
@@ -163,6 +167,8 @@ impl Scope {
                         | SymbolKind::Struct
                         | SymbolKind::Enum
                         | SymbolKind::Error
+                        | SymbolKind::Event
+                        | SymbolKind::Modifier
                         | SymbolKind::UserType
                 ) {
                     out.push(symbol);
@@ -203,6 +209,12 @@ pub fn collect_symbols(file: &SolidityFile) -> Scope {
         }
         root.symbols.push(user_type_symbol(&item));
     }
+    for item in file.events() {
+        if item.name().is_none_or(|name| name.is_empty()) {
+            continue;
+        }
+        root.symbols.push(event_symbol(&item));
+    }
     for contract in file.contracts() {
         if contract.name().is_none_or(|name| name.is_empty()) {
             continue;
@@ -215,7 +227,8 @@ pub fn collect_symbols(file: &SolidityFile) -> Scope {
 
 fn contract_symbol(contract: &ContractDef) -> Symbol {
     let name = contract.name().unwrap_or_default();
-    let mut detail = String::from("contract ");
+    let mut detail = String::from(contract.kind_label());
+    detail.push(' ');
     detail.push_str(&name);
     if !contract.heritage().is_empty() {
         detail.push_str(" is ");
@@ -256,6 +269,20 @@ fn user_type_symbol(item: &crate::UserTypeDef) -> Symbol {
     Symbol::new(name, SymbolKind::UserType, item.syntax().span, detail)
 }
 
+fn event_symbol(item: &crate::EventDef) -> Symbol {
+    let name = item.name().unwrap_or_default();
+    let mut detail = String::from("event ");
+    detail.push_str(&name);
+    Symbol::new(name, SymbolKind::Event, item.syntax().span, detail)
+}
+
+fn modifier_symbol(item: &crate::ModifierDef) -> Symbol {
+    let name = item.name().unwrap_or_default();
+    let mut detail = String::from("modifier ");
+    detail.push_str(&name);
+    Symbol::new(name, SymbolKind::Modifier, item.syntax().span, detail)
+}
+
 fn contract_scope(file: &SolidityFile, contract: &ContractDef) -> Scope {
     let mut scope = Scope::new(contract.syntax().span);
     for item in contract.structs() {
@@ -288,6 +315,22 @@ fn contract_scope(file: &SolidityFile, contract: &ContractDef) -> Scope {
                 continue;
             }
             scope.symbols.push(user_type_symbol(&item));
+        }
+    }
+    for item in contract.events() {
+        if let Some(name) = item.name() {
+            if name.is_empty() {
+                continue;
+            }
+            scope.symbols.push(event_symbol(&item));
+        }
+    }
+    for item in contract.modifiers() {
+        if let Some(name) = item.name() {
+            if name.is_empty() {
+                continue;
+            }
+            scope.symbols.push(modifier_symbol(&item));
         }
     }
     for var in contract.state_vars() {
