@@ -1,6 +1,7 @@
 use super::cursor::{Cursor, token_element};
 use super::members::{parse_function, parse_state_var, skip_balanced, skip_parens};
 use super::types::is_type_start;
+use super::user_types::{parse_enum, parse_struct};
 use crate::SolidityNode;
 use crate::lexer::SolidityKind;
 use forgels_syntax::{ParseError, Span, SyntaxElement, SyntaxNode};
@@ -75,6 +76,8 @@ pub(crate) fn parse_contract(
                         || kind == SolidityKind::Import.as_u16()
                         || kind == SolidityKind::Contract.as_u16()
                         || kind == SolidityKind::Abstract.as_u16()
+                        || kind == SolidityKind::Struct.as_u16()
+                        || kind == SolidityKind::Enum.as_u16()
                     {
                         break;
                     }
@@ -92,8 +95,14 @@ pub(crate) fn parse_contract(
     loop {
         match cursor.peek_kind() {
             None => {
+                // Typing state: body never closed. Keep the members
+                // parsed so far instead of dropping the contract.
                 errors.push(ParseError::new(cursor.peek_span(), "unclosed `{`"));
-                return None;
+                return Some(SyntaxNode::with_children(
+                    SolidityNode::Contract.as_u16(),
+                    Span::new(start.start, cursor.peek_span().end),
+                    members,
+                ));
             }
             Some(kind) if kind == SolidityKind::RBrace.as_u16() => break,
             Some(kind)
@@ -105,6 +114,16 @@ pub(crate) fn parse_contract(
                     None => recover_member(cursor),
                 }
             }
+            Some(kind) if kind == SolidityKind::Struct.as_u16() => {
+                match parse_struct(cursor, errors) {
+                    Some(node) => members.push(SyntaxElement::Node(node)),
+                    None => recover_member(cursor),
+                }
+            }
+            Some(kind) if kind == SolidityKind::Enum.as_u16() => match parse_enum(cursor, errors) {
+                Some(node) => members.push(SyntaxElement::Node(node)),
+                None => recover_member(cursor),
+            },
             Some(kind) if is_type_start(kind) || kind == SolidityKind::Ident.as_u16() => {
                 match parse_state_var(cursor) {
                     Ok(node) => members.push(SyntaxElement::Node(node)),
@@ -124,8 +143,14 @@ pub(crate) fn parse_contract(
         }
     }
     let Some(close) = cursor.bump() else {
+        // Unreachable in practice: RBrace was peeked above. Keep the
+        // partial node on the defensive path instead of dropping it.
         errors.push(ParseError::new(cursor.peek_span(), "expected `}`"));
-        return None;
+        return Some(SyntaxNode::with_children(
+            SolidityNode::Contract.as_u16(),
+            Span::new(start.start, cursor.peek_span().end),
+            members,
+        ));
     };
     Some(SyntaxNode::with_children(
         SolidityNode::Contract.as_u16(),
@@ -153,6 +178,8 @@ pub(crate) fn recover_member(cursor: &mut Cursor) {
             }
             if kind == SolidityKind::Function.as_u16()
                 || kind == SolidityKind::Constructor.as_u16()
+                || kind == SolidityKind::Struct.as_u16()
+                || kind == SolidityKind::Enum.as_u16()
                 || is_type_start(kind)
                 || kind == SolidityKind::Ident.as_u16()
             {

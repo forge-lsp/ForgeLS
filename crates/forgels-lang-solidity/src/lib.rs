@@ -10,13 +10,13 @@ pub mod parser;
 
 pub use analysis::{
     CompletionItem, CompletionKind, Hover, Scope, SolidityAnalyzer, Symbol, SymbolKind,
-    collect_symbols, complete_at, exports_of, goto_definition, hover_at, imports_in,
-    resolve_in_dep,
+    collect_symbols, complete_at, complete_import_paths, completion_item_kind, exports_of,
+    goto_definition, hover_at, import_path_at, imports_in, resolve_in_dep,
 };
 
 pub use ast::{
-    BlockNode, ContractDef, FunctionDef, ImportDirective, LocalVar, Param, PragmaDirective,
-    Returns, SolidityFile, SolidityNode, StateVar, TypeNode,
+    BlockNode, CallStmt, ContractDef, EnumDef, FunctionDef, ImportDirective, LocalVar, MemberExpr,
+    Param, PragmaDirective, Returns, SolidityFile, SolidityNode, StateVar, StructDef, TypeNode,
 };
 pub use lexer::{KEYWORDS, SolidityKind, SolidityLexer, keyword_kind, symbol_kind};
 pub use parser::SolidityParser;

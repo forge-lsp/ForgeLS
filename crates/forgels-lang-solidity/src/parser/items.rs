@@ -13,6 +13,9 @@ pub(crate) fn parse_pragma(cursor: &mut Cursor) -> Result<SyntaxNode, ParseError
             || kind == SolidityKind::Pragma.as_u16()
             || kind == SolidityKind::Import.as_u16()
             || kind == SolidityKind::Contract.as_u16()
+            || kind == SolidityKind::Abstract.as_u16()
+            || kind == SolidityKind::Struct.as_u16()
+            || kind == SolidityKind::Enum.as_u16()
             || kind == SolidityKind::RBrace.as_u16()
         {
             break;

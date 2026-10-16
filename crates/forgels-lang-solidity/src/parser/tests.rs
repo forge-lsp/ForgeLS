@@ -258,3 +258,163 @@ fn experimental_pragma_parses_to_semicolon() {
     assert_eq!(file.pragmas().len(), 1);
     assert_eq!(file.pragmas()[0].name().as_deref(), Some("experimental"));
 }
+
+#[test]
+fn call_with_nested_args_counts_top_level_only() {
+    use forgels_syntax::AstNode;
+    let text = "contract C {\nfunction f() public {\ngreet(bar(1, 2), [3, 4]);\n}\nfunction greet(uint a, uint b) public {}\n}";
+    let file = parse_ok(text);
+    let body = file.contracts()[0].functions()[0].body().expect("body");
+    let calls = body.calls();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].callee().as_deref(), Some("greet"));
+    assert_eq!(calls[0].arg_count(), 2);
+    let span_text =
+        &text[calls[0].syntax().span.start as usize..calls[0].syntax().span.end as usize];
+    assert!(span_text.ends_with(')'), "span: {span_text}");
+}
+
+#[test]
+fn empty_call_has_zero_args() {
+    let text = "contract C {\nfunction f() public {\ngreet();\n}\nfunction greet() public {}\n}";
+    let file = parse_ok(text);
+    let body = file.contracts()[0].functions()[0].body().expect("body");
+    let calls = body.calls();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].arg_count(), 0);
+}
+
+#[test]
+fn member_and_named_calls_produce_no_node() {
+    let text = "contract C {\nfunction f() public {\nobj.greet(1);\ngreet({value: 1});\n}\n}";
+    let lexer = SolidityLexer;
+    let tokens = lexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let body = file.contracts()[0].functions()[0].body().expect("body");
+    assert!(body.calls().is_empty());
+}
+
+#[test]
+fn calls_do_not_change_locals() {
+    use crate::LocalVar;
+    let text =
+        "contract C {\nfunction f() public {\nuint x = 1;\ngreet(x);\nstring memory s;\n}\n}";
+    let file = parse_ok(text);
+    let body = file.contracts()[0].functions()[0].body().expect("body");
+    let names: Vec<String> = body.locals().iter().filter_map(LocalVar::name).collect();
+    assert_eq!(names, vec!["x", "s"]);
+    assert_eq!(body.calls().len(), 1);
+}
+
+#[test]
+fn file_struct_and_enum_parse() {
+    let text = "struct Person {\nuint age;\n}\nenum Color {\nRed,\nBlue\n}\ncontract C {\n}";
+    let file = parse_ok(text);
+    let structs: Vec<String> = file
+        .structs()
+        .iter()
+        .filter_map(|item| item.name())
+        .collect();
+    assert_eq!(structs, vec!["Person"]);
+    let enums: Vec<String> = file.enums().iter().filter_map(|item| item.name()).collect();
+    assert_eq!(enums, vec!["Color"]);
+}
+
+#[test]
+fn contract_struct_and_enum_are_members() {
+    let text = "contract C is A {\nstruct Person {\nuint age;\n}\nenum Color {\nRed\n}\nuint x;\n}";
+    let file = parse_ok(text);
+    let contract = &file.contracts()[0];
+    assert_eq!(contract.heritage(), vec!["A"]);
+    let structs: Vec<String> = contract
+        .structs()
+        .iter()
+        .filter_map(|item| item.name())
+        .collect();
+    assert_eq!(structs, vec!["Person"]);
+    let enums: Vec<String> = contract
+        .enums()
+        .iter()
+        .filter_map(|item| item.name())
+        .collect();
+    assert_eq!(enums, vec!["Color"]);
+    assert_eq!(contract.state_vars().len(), 1);
+}
+
+#[test]
+fn unclosed_struct_still_yields_name() {
+    let text = "contract C {\nstruct Person {\nuint age;\n";
+    let lexer = SolidityLexer;
+    let tokens = lexer.tokenize(text);
+    let (file, _) = SolidityParser.parse_with_errors(&tokens);
+    let names: Vec<String> = file.contracts()[0]
+        .structs()
+        .iter()
+        .filter_map(|item| item.name())
+        .collect();
+    assert_eq!(names, vec!["Person"]);
+}
+
+#[test]
+fn unclosed_file_struct_still_yields_name() {
+    let text = "struct Person {\nuint age;\n";
+    let lexer = SolidityLexer;
+    let tokens = lexer.tokenize(text);
+    let (file, _) = SolidityParser.parse_with_errors(&tokens);
+    let names: Vec<String> = file
+        .structs()
+        .iter()
+        .filter_map(|item| item.name())
+        .collect();
+    assert_eq!(names, vec!["Person"]);
+}
+
+#[test]
+fn unclosed_enum_still_yields_name() {
+    let text = "contract C {\nenum Color {\nRed,\n";
+    let lexer = SolidityLexer;
+    let tokens = lexer.tokenize(text);
+    let (file, _) = SolidityParser.parse_with_errors(&tokens);
+    let names: Vec<String> = file.contracts()[0]
+        .enums()
+        .iter()
+        .filter_map(|item| item.name())
+        .collect();
+    assert_eq!(names, vec!["Color"]);
+}
+
+#[test]
+fn struct_fields_keep_type_and_name() {
+    let text = "struct Person {\nuint age;\nstring memory name;\n}";
+    let file = parse_ok(text);
+    let fields = file.structs()[0].fields();
+    let names: Vec<String> = fields.iter().filter_map(|field| field.name()).collect();
+    assert_eq!(names, vec!["age", "name"]);
+    let types: Vec<String> = fields
+        .iter()
+        .filter_map(|field| field.type_node().map(|node| node.text()))
+        .collect();
+    assert_eq!(types, vec!["uint", "string"]);
+}
+
+#[test]
+fn enum_variants_are_stored() {
+    let text = "enum Color {\nRed,\nBlue\n}";
+    let file = parse_ok(text);
+    assert_eq!(file.enums()[0].variants(), vec!["Red", "Blue"]);
+}
+
+#[test]
+fn block_members_collect_single_dot() {
+    let text = "contract C {\nfunction f() public {\nPerson p;\np.age;\nthis.total;\n}\n}";
+    let file = parse_ok(text);
+    let body = file.contracts()[0].functions()[0].body().expect("body");
+    let pairs: Vec<(Option<String>, Option<String>)> = body
+        .members()
+        .iter()
+        .map(|member| (member.receiver(), member.member()))
+        .collect();
+    assert!(pairs.contains(&(Some("p".to_string()), Some("age".to_string()))));
+    assert!(pairs.contains(&(Some("this".to_string()), Some("total".to_string()))));
+}

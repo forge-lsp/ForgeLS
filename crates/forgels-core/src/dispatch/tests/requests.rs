@@ -124,6 +124,16 @@ fn completion_lists_matching_labels() {
         items[0].pointer("/label").expect("has label"),
         &serde_json::json!("stub_one")
     );
+    assert_eq!(
+        items[0].pointer("/kind").expect("has kind"),
+        &serde_json::json!(3)
+    );
+    assert_eq!(
+        items[1].pointer("/kind").expect("has kind"),
+        &serde_json::json!(6)
+    );
+    assert!(items[0].get("textEdit").is_none());
+    assert!(items[1].get("textEdit").is_none());
 }
 
 #[test]
@@ -277,6 +287,46 @@ fn definition_with_invalid_span_returns_null() {
 }
 
 #[test]
+fn definition_reads_disk_only_target() {
+    let root = std::env::temp_dir().join("forgels-goto-disk");
+    let _ = std::fs::remove_dir_all(&root);
+    let a = root.join("contracts/A.sol");
+    let b = root.join("contracts/node_modules/pkg/B.sol");
+    std::fs::create_dir_all(b.parent().expect("parent")).expect("dirs");
+    std::fs::write(&b, "contract B {}").expect("write");
+    let mut session = session_with_cross(b.clone(), Span::new(9, 10));
+    let mut workspace = Workspace::new();
+    init(&mut session, &mut workspace);
+    let uri = super::super::sync::path_to_uri(&a);
+    let open = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "textDocument/didOpen",
+        "params": { "textDocument": {
+            "uri": uri, "languageId": "solidity", "version": 1, "text": "contract A {}",
+        } },
+    })
+    .to_string();
+    assert!(handle_message(&mut session, &mut workspace, &open).is_none());
+    let reply = handle_message(
+        &mut session,
+        &mut workspace,
+        &definition_body(7, &uri, 0, 10),
+    )
+    .expect("must reply");
+    let value: Value = serde_json::from_str(&reply).expect("reply is json");
+    let result = value.get("result").expect("has result");
+    assert_eq!(
+        result.pointer("/uri").expect("has uri"),
+        &serde_json::json!(super::super::sync::path_to_uri(&b))
+    );
+    assert_eq!(
+        result.pointer("/range/start").expect("has start"),
+        &serde_json::json!({"line": 0, "character": 9})
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn hover_reads_current_file_through_context() {
     use crate::analyzer::{Analyzer, ProjectContext};
 
@@ -375,6 +425,8 @@ fn completion_lists_dep_symbol_with_origin() {
                     out.push(crate::analyzer::CompletionData {
                         label: "dep_fn".to_string(),
                         detail: format!("function dep_fn() - from {name}"),
+                        kind: forgels_protocol::CompletionItemKind::FUNCTION,
+                        text_edit: None,
                     });
                 }
             }
@@ -445,4 +497,149 @@ fn completion_lists_dep_symbol_with_origin() {
         items[0].pointer("/detail").expect("has detail"),
         &serde_json::json!("function dep_fn() - from B.sol")
     );
+    assert_eq!(
+        items[0].pointer("/kind").expect("has kind"),
+        &serde_json::json!(3)
+    );
+}
+
+#[test]
+fn completion_emits_text_edit_for_path() {
+    use crate::analyzer::{Analyzer, ProjectContext, TextEdit};
+
+    #[derive(Debug)]
+    struct EditStub;
+
+    impl Analyzer for EditStub {
+        fn hover(&self, _ctx: &ProjectContext) -> Option<crate::analyzer::HoverData> {
+            None
+        }
+
+        fn complete(&self, _ctx: &ProjectContext) -> Vec<crate::analyzer::CompletionData> {
+            vec![crate::analyzer::CompletionData {
+                label: "./B.sol".to_string(),
+                detail: "file".to_string(),
+                kind: forgels_protocol::CompletionItemKind::FILE,
+                text_edit: Some(TextEdit::new(Span::new(8, 11), "./B.sol".to_string())),
+            }]
+        }
+
+        fn goto(&self, _ctx: &ProjectContext) -> Option<Span> {
+            None
+        }
+
+        fn diagnostics(&self, _text: &str) -> Vec<crate::analyzer::DiagnosticData> {
+            Vec::new()
+        }
+    }
+
+    let mut session = super::super::Session::new();
+    session
+        .analyzers
+        .insert(crate::routing::Language::Solidity, Box::new(EditStub));
+    let mut workspace = Workspace::new();
+    init(&mut session, &mut workspace);
+    let open = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "textDocument/didOpen",
+        "params": { "textDocument": {
+            "uri": "file:///repo/A.sol",
+            "languageId": "solidity",
+            "version": 1,
+            "text": "import \"./B\";",
+        } },
+    })
+    .to_string();
+    assert!(handle_message(&mut session, &mut workspace, &open).is_none());
+    let reply = handle_message(
+        &mut session,
+        &mut workspace,
+        &completion_body(10, "file:///repo/A.sol", 0, 11),
+    )
+    .expect("must reply");
+    let value: Value = serde_json::from_str(&reply).expect("reply is json");
+    let items = value
+        .pointer("/result/items")
+        .expect("has items")
+        .as_array()
+        .expect("array");
+    assert_eq!(items.len(), 1);
+    assert_eq!(
+        items[0].pointer("/textEdit/newText").expect("has edit"),
+        &serde_json::json!("./B.sol")
+    );
+    assert_eq!(
+        items[0]
+            .pointer("/textEdit/range/start")
+            .expect("has start"),
+        &serde_json::json!({"line": 0, "character": 8})
+    );
+    assert_eq!(
+        items[0].pointer("/textEdit/range/end").expect("has end"),
+        &serde_json::json!({"line": 0, "character": 11})
+    );
+}
+
+#[test]
+fn completion_skips_out_of_bounds_edit() {
+    use crate::analyzer::{Analyzer, ProjectContext, TextEdit};
+
+    #[derive(Debug)]
+    struct BadStub;
+
+    impl Analyzer for BadStub {
+        fn hover(&self, _ctx: &ProjectContext) -> Option<crate::analyzer::HoverData> {
+            None
+        }
+
+        fn complete(&self, _ctx: &ProjectContext) -> Vec<crate::analyzer::CompletionData> {
+            vec![crate::analyzer::CompletionData {
+                label: "./B.sol".to_string(),
+                detail: "file".to_string(),
+                kind: forgels_protocol::CompletionItemKind::FILE,
+                text_edit: Some(TextEdit::new(Span::new(500, 510), "./B.sol".to_string())),
+            }]
+        }
+
+        fn goto(&self, _ctx: &ProjectContext) -> Option<Span> {
+            None
+        }
+
+        fn diagnostics(&self, _text: &str) -> Vec<crate::analyzer::DiagnosticData> {
+            Vec::new()
+        }
+    }
+
+    let mut session = super::super::Session::new();
+    session
+        .analyzers
+        .insert(crate::routing::Language::Solidity, Box::new(BadStub));
+    let mut workspace = Workspace::new();
+    init(&mut session, &mut workspace);
+    let open = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "textDocument/didOpen",
+        "params": { "textDocument": {
+            "uri": "file:///repo/A.sol",
+            "languageId": "solidity",
+            "version": 1,
+            "text": "import \"./B\";",
+        } },
+    })
+    .to_string();
+    assert!(handle_message(&mut session, &mut workspace, &open).is_none());
+    let reply = handle_message(
+        &mut session,
+        &mut workspace,
+        &completion_body(11, "file:///repo/A.sol", 0, 11),
+    )
+    .expect("must reply");
+    let value: Value = serde_json::from_str(&reply).expect("reply is json");
+    let items = value
+        .pointer("/result/items")
+        .expect("has items")
+        .as_array()
+        .expect("array");
+    assert_eq!(items.len(), 1);
+    assert!(items[0].get("textEdit").is_none());
 }

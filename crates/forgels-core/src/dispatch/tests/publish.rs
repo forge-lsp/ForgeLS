@@ -86,3 +86,120 @@ fn shutdown_flushes_pending() {
     assert_eq!(notes.len(), 1);
     assert!(flush_all(&session, &mut workspace).is_empty());
 }
+
+#[derive(Debug)]
+struct NodeStub;
+
+impl crate::analyzer::Analyzer for NodeStub {
+    fn hover(&self, _ctx: &crate::analyzer::ProjectContext) -> Option<crate::analyzer::HoverData> {
+        None
+    }
+
+    fn complete(
+        &self,
+        _ctx: &crate::analyzer::ProjectContext,
+    ) -> Vec<crate::analyzer::CompletionData> {
+        Vec::new()
+    }
+
+    fn goto(&self, _ctx: &crate::analyzer::ProjectContext) -> Option<forgels_syntax::Span> {
+        None
+    }
+
+    fn diagnostics(&self, _text: &str) -> Vec<crate::analyzer::DiagnosticData> {
+        Vec::new()
+    }
+
+    fn imports(&self, text: &str) -> Vec<crate::analyzer::ImportRef> {
+        if text.contains("pkg/B.sol") {
+            vec![crate::analyzer::ImportRef::new("pkg/B.sol".to_string())]
+        } else {
+            Vec::new()
+        }
+    }
+}
+
+fn node_session() -> Session {
+    let mut session = Session::new();
+    session
+        .analyzers
+        .insert(crate::routing::Language::Solidity, Box::new(NodeStub));
+    session
+}
+
+fn diagnostics_for(session: &Session, workspace: &mut Workspace, uri: &str) -> Vec<Value> {
+    let open = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "textDocument/didOpen",
+        "params": { "textDocument": {
+            "uri": uri, "languageId": "solidity",
+            "version": 1, "text": "import \"pkg/B.sol\"; contract A {}",
+        } },
+    })
+    .to_string();
+    let notes = immediate_notifications(session, workspace, &open);
+    assert_eq!(notes.len(), 1);
+    let value: Value = serde_json::from_str(&notes[0]).expect("frame is json");
+    value
+        .pointer("/params/diagnostics")
+        .expect("has diagnostics")
+        .as_array()
+        .expect("array")
+        .clone()
+}
+
+#[test]
+fn node_hit_resolves_no_unresolved() {
+    let root = std::env::temp_dir().join("forgels-publish-node-hit");
+    let _ = std::fs::remove_dir_all(&root);
+    let a = root.join("contracts/A.sol");
+    let b = root.join("contracts/node_modules/pkg/B.sol");
+    std::fs::create_dir_all(b.parent().expect("parent")).expect("dirs");
+    std::fs::write(&b, "contract B {}").expect("write");
+    let mut session = node_session();
+    let mut workspace = Workspace::new();
+    super::stub::init(&mut session, &mut workspace);
+    let uri = super::super::sync::path_to_uri(&a);
+    let open = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "textDocument/didOpen",
+        "params": { "textDocument": {
+            "uri": uri, "languageId": "solidity",
+            "version": 1, "text": "import \"pkg/B.sol\"; contract A {}",
+        } },
+    })
+    .to_string();
+    assert!(handle_message(&mut session, &mut workspace, &open).is_none());
+    let found = diagnostics_for(&session, &mut workspace, &uri);
+    assert!(found.is_empty());
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn truly_missing_reports_unresolved() {
+    let root = std::env::temp_dir().join("forgels-publish-node-miss");
+    let _ = std::fs::remove_dir_all(&root);
+    let a = root.join("contracts/A.sol");
+    std::fs::create_dir_all(a.parent().expect("parent")).expect("dirs");
+    let mut session = node_session();
+    let mut workspace = Workspace::new();
+    super::stub::init(&mut session, &mut workspace);
+    let uri = super::super::sync::path_to_uri(&a);
+    let open = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "textDocument/didOpen",
+        "params": { "textDocument": {
+            "uri": uri, "languageId": "solidity",
+            "version": 1, "text": "import \"pkg/B.sol\"; contract A {}",
+        } },
+    })
+    .to_string();
+    assert!(handle_message(&mut session, &mut workspace, &open).is_none());
+    let found = diagnostics_for(&session, &mut workspace, &uri);
+    assert_eq!(found.len(), 1);
+    assert_eq!(
+        found[0].pointer("/message").expect("has message"),
+        &serde_json::json!("unresolved import \"pkg/B.sol\"")
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}

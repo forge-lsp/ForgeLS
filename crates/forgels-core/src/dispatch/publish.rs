@@ -1,7 +1,7 @@
 use serde_json::Value;
 
-use forgels_common::fs::exists;
-use forgels_common::paths::resolve_with_remappings;
+use forgels_common::fs::is_trackable_file;
+use forgels_common::paths::resolve_import_full;
 
 use super::sync::{resolve_root_for, uri_to_path};
 use super::{Session, Workspace};
@@ -97,10 +97,16 @@ fn publish_for_uri(
         .collect();
     let root = resolve_root_for(workspace, &session.config, &path);
     for item in analyzer.imports(&doc.text) {
-        let resolved = resolve_with_remappings(&path, &item.raw, &root, &session.config.remappings);
+        let resolved = resolve_import_full(
+            &path,
+            &item.raw,
+            &root,
+            &session.config.remappings,
+            is_trackable_file,
+        );
         let missing = match &resolved {
             None => true,
-            Some(target) => workspace.get(target).is_none() && !exists(target),
+            Some(target) => workspace.get(target).is_none() && !is_trackable_file(target),
         };
         if missing {
             let diagnostic = unresolved_import_to_diagnostic(&doc.text, item.span, &item.raw);

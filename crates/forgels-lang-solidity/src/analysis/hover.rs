@@ -11,8 +11,23 @@ pub struct Hover {
 
 /// Hover info for the word at `offset`, if it names a visible declaration.
 ///
+/// Member positions after a dot resolve against the receiver type first.
 /// Positions on whitespace, operators, or undeclared words return `None`.
 pub fn hover_at(file: &SolidityFile, text: &str, offset: u32) -> Option<Hover> {
+    // Receiver itself keeps scope hover; only the member uses type lookup.
+    if let Some(ctx) = super::members::member_context_at(text, offset)
+        && (ctx.member_span.contains(offset) || ctx.member_span.end == offset)
+    {
+        let scope = collect_symbols(file);
+        let kind = super::members::receiver_type(file, &scope, offset, &ctx.receiver);
+        let found = super::members::members_of(file, &kind)
+            .into_iter()
+            .find(|member| member.name == ctx.member)?;
+        return Some(Hover {
+            contents: found.detail,
+            span: found.span,
+        });
+    }
     let (word, _) = word_at(text, offset)?;
     let scope = collect_symbols(file);
     let symbol = scope.resolve(&word, offset)?;

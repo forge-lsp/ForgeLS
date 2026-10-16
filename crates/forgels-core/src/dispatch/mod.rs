@@ -25,7 +25,7 @@ pub fn server_capabilities() -> Value {
     serde_json::json!({
         "textDocumentSync": 1,
         "hoverProvider": true,
-        "completionProvider": {},
+        "completionProvider": { "triggerCharacters": ["\"", "'", "/"] },
         "definitionProvider": true
     })
 }
@@ -173,6 +173,13 @@ pub fn handle_message(
         }
         "workspace/didChangeWorkspaceFolders" => {
             apply_folder_change(workspace, &params);
+            return None;
+        }
+        // Standard notifications with no handler: acknowledge silently
+        // instead of warning. `initialized` always follows `initialize`,
+        // `$/setTrace` and `$/cancelRequest` are client bookkeeping, and
+        // `didSave` carries nothing new under full text sync.
+        "initialized" | "$/setTrace" | "$/cancelRequest" | "textDocument/didSave" => {
             return None;
         }
         _ => {}

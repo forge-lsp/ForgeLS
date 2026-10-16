@@ -27,6 +27,25 @@ pub(crate) fn parse_var(cursor: &mut Cursor, kind: SolidityNode) -> Result<Synta
     ) {
         cursor.bump();
     }
+    // State modifiers sit between type and name: `uint public constant x`.
+    // Consumed, not stored: the name stays the first word token, so
+    // `StateVar::name` keeps working without modifier filtering.
+    loop {
+        match cursor.peek_kind() {
+            Some(kind)
+                if kind == SolidityKind::Public.as_u16()
+                    || kind == SolidityKind::Private.as_u16()
+                    || kind == SolidityKind::Internal.as_u16()
+                    || kind == SolidityKind::Constant.as_u16()
+                    || kind == SolidityKind::Immutable.as_u16()
+                    || kind == SolidityKind::Override.as_u16()
+                    || kind == SolidityKind::Transient.as_u16() =>
+            {
+                cursor.bump();
+            }
+            _ => break,
+        }
+    }
     let name = cursor.expect(SolidityKind::Ident, "variable name")?;
     let mut end = name.span.end.max(type_end);
     if cursor.peek_kind() == Some(SolidityKind::Assign.as_u16()) {
@@ -217,8 +236,9 @@ pub(crate) fn parse_param(cursor: &mut Cursor) -> Result<SyntaxNode, ParseError>
 }
 
 /// Parse `{ ... }`, keeping local variable declarations and the full span.
-/// Local errors go to `errors` while valid locals stay. `None` means the
-/// block never closed.
+/// Local errors go to `errors` while valid locals stay. EOF yields the
+/// partial block so typing inside a body keeps working. `None` means no
+/// `{` ever opened.
 pub(crate) fn parse_block(cursor: &mut Cursor, errors: &mut Vec<ParseError>) -> Option<SyntaxNode> {
     let open = match cursor.expect(SolidityKind::LBrace, "`{`") {
         Ok(open) => open,
@@ -227,12 +247,16 @@ pub(crate) fn parse_block(cursor: &mut Cursor, errors: &mut Vec<ParseError>) -> 
             return None;
         }
     };
-    let mut locals: Vec<SyntaxElement> = Vec::new();
+    let mut items: Vec<SyntaxElement> = Vec::new();
     loop {
         match cursor.peek_kind() {
             None => {
                 errors.push(ParseError::new(cursor.peek_span(), "unclosed `{`"));
-                return None;
+                return Some(SyntaxNode::with_children(
+                    SolidityNode::Block.as_u16(),
+                    Span::new(open.span.start, cursor.peek_span().end),
+                    items,
+                ));
             }
             Some(kind) if kind == SolidityKind::RBrace.as_u16() => break,
             Some(kind) if kind == SolidityKind::Assembly.as_u16() => {
@@ -243,7 +267,7 @@ pub(crate) fn parse_block(cursor: &mut Cursor, errors: &mut Vec<ParseError>) -> 
                     && is_local_decl_ahead(cursor) =>
             {
                 match parse_local_var(cursor) {
-                    Ok(node) => locals.push(SyntaxElement::Node(node)),
+                    Ok(node) => items.push(SyntaxElement::Node(node)),
                     Err(error) => {
                         errors.push(error);
                         recover_statement(cursor);
@@ -251,9 +275,19 @@ pub(crate) fn parse_block(cursor: &mut Cursor, errors: &mut Vec<ParseError>) -> 
                 }
             }
             Some(kind) if is_type_start(kind) || kind == SolidityKind::Ident.as_u16() => {
-                // Type-like token without a following name: an expression
-                // statement, skipped like any other.
-                recover_statement(cursor);
+                if kind == SolidityKind::Ident.as_u16()
+                    && let Some(member) = try_parse_member(cursor)
+                {
+                    items.push(SyntaxElement::Node(member));
+                } else if kind == SolidityKind::Ident.as_u16()
+                    && let Some(call) = try_parse_call(cursor)
+                {
+                    items.push(SyntaxElement::Node(call));
+                } else {
+                    // Type-like token without a following name: an expression
+                    // statement, skipped like any other.
+                    recover_statement(cursor);
+                }
             }
             _ => {
                 recover_statement(cursor);
@@ -261,14 +295,165 @@ pub(crate) fn parse_block(cursor: &mut Cursor, errors: &mut Vec<ParseError>) -> 
         }
     }
     let Some(close) = cursor.bump() else {
+        // Unreachable in practice: RBrace was peeked above. Keep the
+        // partial block on the defensive path instead of dropping it.
         errors.push(ParseError::new(cursor.peek_span(), "expected `}`"));
-        return None;
+        return Some(SyntaxNode::with_children(
+            SolidityNode::Block.as_u16(),
+            Span::new(open.span.start, cursor.peek_span().end),
+            items,
+        ));
     };
     Some(SyntaxNode::with_children(
         SolidityNode::Block.as_u16(),
         Span::new(open.span.start, close.span.end),
-        locals,
+        items,
     ))
+}
+
+/// Try `recv.member` with single ident receiver, including `this`/`super`.
+///
+/// Returns the Member node and consumes through the member name (or dot
+/// when the name is still missing). Only the first dot is stored; chained
+/// tails like `.c` in `a.b.c` stay for `recover_statement`.
+pub(crate) fn try_parse_member(cursor: &mut Cursor) -> Option<SyntaxNode> {
+    let tokens = cursor.tokens;
+    let comment = SolidityKind::Comment.as_u16();
+    let next_code = |mut index: usize| -> Option<usize> {
+        while let Some(token) = tokens.get(index) {
+            if token.kind != comment {
+                return Some(index);
+            }
+            index += 1;
+        }
+        None
+    };
+    let recv_idx = next_code(cursor.pos())?;
+    let recv = tokens.get(recv_idx)?.clone();
+    if recv.kind != SolidityKind::Ident.as_u16() {
+        return None;
+    }
+    let dot_idx = next_code(recv_idx + 1)?;
+    let dot = tokens.get(dot_idx)?.clone();
+    if dot.kind != SolidityKind::Dot.as_u16() {
+        return None;
+    }
+    let member_idx = next_code(dot_idx + 1);
+    let member = member_idx
+        .and_then(|index| tokens.get(index))
+        .filter(|token| token.kind == SolidityKind::Ident.as_u16())
+        .cloned();
+    let start = recv.span.start;
+    let mut children = vec![token_element(recv), token_element(dot.clone())];
+    let (end, target) = match member {
+        Some(ref name) => {
+            let end = name.span.end;
+            children.push(token_element(name.clone()));
+            (end, member_idx.unwrap_or(dot_idx))
+        }
+        None => (dot.span.end, dot_idx),
+    };
+    while cursor.pos() <= target {
+        if cursor.bump().is_none() {
+            break;
+        }
+    }
+    Some(SyntaxNode::with_children(
+        SolidityNode::Member.as_u16(),
+        Span::new(start, end),
+        children,
+    ))
+}
+
+/// Try `name(args)` at block top level. Returns the Call node on success.
+///
+/// Plain calls only: member access (`a.b()`), named args (`f({x: 1})`),
+/// and `new`/`super`/`constructor` fall back to `recover_statement`
+/// with no node and no error. Commas count at paren depth one with
+/// no open bracket; empty parens give zero args.
+pub(crate) fn try_parse_call(cursor: &mut Cursor) -> Option<SyntaxNode> {
+    let tokens = cursor.tokens;
+    let comment = SolidityKind::Comment.as_u16();
+    let next_code = |mut index: usize| -> Option<usize> {
+        while let Some(token) = tokens.get(index) {
+            if token.kind != comment {
+                return Some(index);
+            }
+            index += 1;
+        }
+        None
+    };
+    let callee_idx = next_code(cursor.pos())?;
+    let callee = tokens.get(callee_idx)?.clone();
+    if callee.kind != SolidityKind::Ident.as_u16() {
+        return None;
+    }
+    if callee.text == "super" || callee.text == "constructor" || callee.text == "new" {
+        return None;
+    }
+    let lparen_idx = next_code(callee_idx + 1)?;
+    if tokens.get(lparen_idx)?.kind != SolidityKind::LParen.as_u16() {
+        return None;
+    }
+    let mut paren_depth = 0u32;
+    let mut bracket_depth = 0u32;
+    let mut commas = Vec::new();
+    let mut rparen_idx = None;
+    let mut index = lparen_idx;
+    while let Some(token) = tokens.get(index) {
+        if token.kind == comment {
+            index += 1;
+            continue;
+        }
+        let kind = token.kind;
+        if kind == SolidityKind::LBrace.as_u16() {
+            return None;
+        }
+        if kind == SolidityKind::LParen.as_u16() {
+            paren_depth += 1;
+        } else if kind == SolidityKind::RParen.as_u16() {
+            if paren_depth == 0 {
+                return None;
+            }
+            paren_depth -= 1;
+            if paren_depth == 0 {
+                rparen_idx = Some(index);
+                break;
+            }
+        } else if kind == SolidityKind::LBracket.as_u16() {
+            bracket_depth += 1;
+        } else if kind == SolidityKind::RBracket.as_u16() {
+            if bracket_depth == 0 {
+                return None;
+            }
+            bracket_depth -= 1;
+        } else if kind == SolidityKind::Comma.as_u16() && paren_depth == 1 && bracket_depth == 0 {
+            commas.push(token.clone());
+        }
+        index += 1;
+    }
+    let rparen_idx = rparen_idx?;
+    let rparen = tokens.get(rparen_idx)?.clone();
+    let after_lparen = next_code(lparen_idx + 1)?;
+    let is_empty = after_lparen == rparen_idx;
+    let mut children = vec![token_element(callee.clone())];
+    if !is_empty {
+        children.push(token_element(tokens.get(lparen_idx)?.clone()));
+        for comma in commas {
+            children.push(token_element(comma));
+        }
+    }
+    let node = SyntaxNode::with_children(
+        SolidityNode::Call.as_u16(),
+        Span::new(callee.span.start, rparen.span.end),
+        children,
+    );
+    while cursor.pos() <= rparen_idx {
+        if cursor.bump().is_none() {
+            break;
+        }
+    }
+    Some(node)
 }
 
 /// Skip an inline assembly block without errors.

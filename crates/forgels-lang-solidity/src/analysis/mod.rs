@@ -1,20 +1,28 @@
 use forgels_core::{
     Analyzer, CompletionData, DiagnosticData, GotoTarget, HoverData, ProjectContext,
-    analyzer::ImportRef,
+    analyzer::{ImportRef, TextEdit},
 };
 use forgels_syntax::{AstNode, Lexer, Span};
 
-use crate::{ContractDef, FunctionDef, SolidityFile, SolidityLexer, SolidityParser};
+use crate::{
+    ContractDef, EnumDef, FunctionDef, SolidityFile, SolidityLexer, SolidityParser, StructDef,
+};
 
+mod calls;
 mod completion;
 mod goto;
 mod hover;
 mod imports;
+pub(crate) mod inheritance;
+pub(crate) mod members;
 
 #[cfg(test)]
 mod tests;
 
-pub use completion::{CompletionItem, CompletionKind, complete_at, exports_of};
+pub use completion::{
+    CompletionItem, CompletionKind, complete_at, complete_bare_imports, complete_import_paths,
+    completion_item_kind, exports_of, import_inner_span, import_path_at,
+};
 pub use goto::{goto_definition, resolve_in_dep};
 pub use hover::{Hover, hover_at};
 pub use imports::imports_in;
@@ -47,9 +55,12 @@ fn word_at(text: &str, offset: u32) -> Option<(String, Span)> {
 pub enum SymbolKind {
     Contract,
     Function,
+    Struct,
+    Enum,
     StateVar,
     LocalVar,
     Param,
+    Field,
 }
 
 /// One declaration: name, kind, node span, and hover-ready detail.
@@ -113,26 +124,37 @@ impl Scope {
     fn collect_visible<'a>(&'a self, offset: u32, out: &mut Vec<&'a Symbol>) {
         out.extend(self.symbols.iter());
         for child in &self.children {
-            if child.span.contains(offset) {
+            // Cursor at the scope end edge counts as inside: typing
+            // happens at offsets no token covers yet.
+            if child.span.contains(offset) || child.span.end == offset {
                 child.collect_visible(offset, out);
             }
         }
     }
 
-    /// Contract level symbols: contracts plus their functions.
+    /// Contract level symbols: contracts, functions, structs, and enums.
     ///
     /// Used for cross file completion. State vars, params, and locals
     /// stay local and never cross files.
     pub fn export_symbols(&self) -> Vec<&Symbol> {
         let mut out: Vec<&Symbol> = Vec::new();
         for symbol in &self.symbols {
-            if matches!(symbol.kind, SymbolKind::Contract | SymbolKind::Function) {
+            if matches!(
+                symbol.kind,
+                SymbolKind::Contract | SymbolKind::Function | SymbolKind::Struct | SymbolKind::Enum
+            ) {
                 out.push(symbol);
             }
         }
         for child in &self.children {
             for symbol in &child.symbols {
-                if matches!(symbol.kind, SymbolKind::Contract | SymbolKind::Function) {
+                if matches!(
+                    symbol.kind,
+                    SymbolKind::Contract
+                        | SymbolKind::Function
+                        | SymbolKind::Struct
+                        | SymbolKind::Enum
+                ) {
                     out.push(symbol);
                 }
             }
@@ -142,11 +164,29 @@ impl Scope {
 }
 
 /// Collect every declaration in the file into nested scopes.
+///
+/// Uses recovery parse output as is: partial nodes may miss names,
+/// and nameless contracts are skipped so they never surface.
 pub fn collect_symbols(file: &SolidityFile) -> Scope {
     let mut root = Scope::new(file.syntax().span);
+    for item in file.structs() {
+        if item.name().is_none_or(|name| name.is_empty()) {
+            continue;
+        }
+        root.symbols.push(struct_symbol(&item));
+    }
+    for item in file.enums() {
+        if item.name().is_none_or(|name| name.is_empty()) {
+            continue;
+        }
+        root.symbols.push(enum_symbol(&item));
+    }
     for contract in file.contracts() {
+        if contract.name().is_none_or(|name| name.is_empty()) {
+            continue;
+        }
         root.symbols.push(contract_symbol(&contract));
-        root.children.push(contract_scope(&contract));
+        root.children.push(contract_scope(file, &contract));
     }
     root
 }
@@ -162,8 +202,38 @@ fn contract_symbol(contract: &ContractDef) -> Symbol {
     Symbol::new(name, SymbolKind::Contract, contract.syntax().span, detail)
 }
 
-fn contract_scope(contract: &ContractDef) -> Scope {
+fn struct_symbol(item: &StructDef) -> Symbol {
+    let name = item.name().unwrap_or_default();
+    let mut detail = String::from("struct ");
+    detail.push_str(&name);
+    Symbol::new(name, SymbolKind::Struct, item.syntax().span, detail)
+}
+
+fn enum_symbol(item: &EnumDef) -> Symbol {
+    let name = item.name().unwrap_or_default();
+    let mut detail = String::from("enum ");
+    detail.push_str(&name);
+    Symbol::new(name, SymbolKind::Enum, item.syntax().span, detail)
+}
+
+fn contract_scope(file: &SolidityFile, contract: &ContractDef) -> Scope {
     let mut scope = Scope::new(contract.syntax().span);
+    for item in contract.structs() {
+        if let Some(name) = item.name() {
+            if name.is_empty() {
+                continue;
+            }
+            scope.symbols.push(struct_symbol(&item));
+        }
+    }
+    for item in contract.enums() {
+        if let Some(name) = item.name() {
+            if name.is_empty() {
+                continue;
+            }
+            scope.symbols.push(enum_symbol(&item));
+        }
+    }
     for var in contract.state_vars() {
         if let Some(name) = var.name() {
             let mut detail = var.type_node().map(|node| node.text()).unwrap_or_default();
@@ -178,8 +248,17 @@ fn contract_scope(contract: &ContractDef) -> Scope {
         }
     }
     for function in contract.functions() {
+        if function.name().is_none_or(|name| name.is_empty()) {
+            continue;
+        }
         scope.symbols.push(function_symbol(&function));
         scope.children.push(function_scope(&function));
+    }
+    for inherited in inheritance::inherited_symbols(file, contract) {
+        if scope.symbols.iter().any(|own| own.name == inherited.name) {
+            continue;
+        }
+        scope.symbols.push(inherited);
     }
     scope
 }
@@ -265,22 +344,107 @@ impl SolidityAnalyzer {
         Self
     }
 
-    fn parse_file(text: &str) -> Option<SolidityFile> {
+    /// Parse with recovery and keep the file even when errors exist.
+    ///
+    /// Completion, hover, and goto run while the user types, so errors
+    /// are the norm. Diagnostics still report them separately.
+    fn parse_file(text: &str) -> SolidityFile {
         let tokens = SolidityLexer.tokenize(text);
-        let (file, errors) = SolidityParser.parse_with_errors(&tokens);
-        if errors.is_empty() { Some(file) } else { None }
+        let (file, _) = SolidityParser.parse_with_errors(&tokens);
+        file
+    }
+
+    fn dep_files(ctx: &ProjectContext) -> Vec<(std::path::PathBuf, SolidityFile)> {
+        let mut out = Vec::new();
+        for (path, text) in forgels_core::dep_texts(ctx, 16) {
+            out.push((path.clone(), Self::parse_file(&text)));
+            if out.len() >= 16 {
+                break;
+            }
+        }
+        out
+    }
+
+    fn member_completion(
+        file: &SolidityFile,
+        ctx_text: &str,
+        offset: u32,
+        member: &members::MemberContext,
+        deps: &[(std::path::PathBuf, SolidityFile)],
+    ) -> Vec<CompletionData> {
+        let scope = collect_symbols(file);
+        let kind = members::receiver_type_with_deps(file, &scope, offset, &member.receiver, deps);
+        let mut seen: Vec<String> = Vec::new();
+        let mut out: Vec<CompletionData> = Vec::new();
+        for item in members::members_of(file, &kind) {
+            if !item.name.starts_with(member.member.as_str()) {
+                continue;
+            }
+            if seen.contains(&item.name) {
+                continue;
+            }
+            seen.push(item.name.clone());
+            out.push(CompletionData {
+                label: item.name.clone(),
+                detail: item.detail.clone(),
+                kind: completion::completion_item_kind(completion::CompletionKind::Symbol(
+                    item.kind,
+                )),
+                text_edit: None,
+            });
+        }
+        for (info, _) in members::collect_cross_file_members(file, &kind, deps) {
+            if !info.name.starts_with(member.member.as_str()) {
+                continue;
+            }
+            if seen.contains(&info.name) {
+                continue;
+            }
+            seen.push(info.name.clone());
+            out.push(CompletionData {
+                label: info.name.clone(),
+                detail: info.detail.clone(),
+                kind: completion::completion_item_kind(completion::CompletionKind::Symbol(
+                    info.kind,
+                )),
+                text_edit: None,
+            });
+        }
+        out.sort_by(|left, right| left.label.cmp(&right.label));
+        let _ = ctx_text;
+        out
     }
 }
 
 impl Analyzer for SolidityAnalyzer {
     fn hover(&self, ctx: &ProjectContext) -> Option<HoverData> {
-        let local = Self::parse_file(ctx.text)
-            .and_then(|file| hover::hover_at(&file, ctx.text, ctx.offset));
-        if let Some(found) = local {
+        let file = Self::parse_file(ctx.text);
+        if let Some(found) = hover::hover_at(&file, ctx.text, ctx.offset) {
             return Some(HoverData {
                 contents: found.contents,
                 span: found.span,
             });
+        }
+        if let Some(member) = members::member_context_at(ctx.text, ctx.offset)
+            && (member.member_span.contains(ctx.offset) || member.member_span.end == ctx.offset)
+        {
+            let deps = Self::dep_files(ctx);
+            let scope = collect_symbols(&file);
+            let kind = members::receiver_type_with_deps(
+                &file,
+                &scope,
+                ctx.offset,
+                &member.receiver,
+                &deps,
+            );
+            if let Some((info, _)) =
+                members::resolve_member_cross_file(&file, &kind, &member.member, &deps)
+            {
+                return Some(HoverData {
+                    contents: info.detail,
+                    span: member.member_span,
+                });
+            }
         }
         let (word, span) = word_at(ctx.text, ctx.offset)?;
         for (dep_path, dep_text) in forgels_core::dep_texts(ctx, 16) {
@@ -300,20 +464,56 @@ impl Analyzer for SolidityAnalyzer {
     }
 
     fn complete(&self, ctx: &ProjectContext) -> Vec<CompletionData> {
+        let tokens = SolidityLexer.tokenize(ctx.text);
+        let (recovered, _) = SolidityParser.parse_with_errors(&tokens);
+        if let Some(outer) = completion::import_path_at(&recovered, ctx.text, ctx.offset) {
+            let prefix = completion::path_prefix_at(ctx.text, ctx.offset);
+            let mut items =
+                completion::complete_import_paths(ctx.path, ctx.workspace.roots(), &prefix);
+            if !prefix.starts_with('.') {
+                for bare in
+                    completion::complete_bare_imports(ctx.path, ctx.workspace.roots(), &prefix)
+                {
+                    if items.iter().any(|known| known.label == bare.label) {
+                        continue;
+                    }
+                    items.push(bare);
+                }
+                items.sort_by(|left, right| left.label.cmp(&right.label));
+            }
+            let inner = completion::import_inner_span(ctx.text, outer);
+            return items
+                .into_iter()
+                .map(|item| {
+                    let edit = inner.map(|span| TextEdit::new(span, item.label.clone()));
+                    CompletionData {
+                        label: item.label.clone(),
+                        detail: item.detail.clone(),
+                        kind: completion::completion_item_kind(item.kind),
+                        text_edit: edit,
+                    }
+                })
+                .collect();
+        }
+        let file = Self::parse_file(ctx.text);
+        if let Some(member) = members::member_context_at(ctx.text, ctx.offset) {
+            let deps = Self::dep_files(ctx);
+            return Self::member_completion(&file, ctx.text, ctx.offset, &member, &deps);
+        }
         let prefix = completion::prefix_at(ctx.text, ctx.offset);
         let mut seen: Vec<String> = Vec::new();
         let mut out: Vec<CompletionData> = Vec::new();
-        if let Some(file) = Self::parse_file(ctx.text) {
-            for item in completion::complete_at(&file, ctx.text, ctx.offset) {
-                if seen.contains(&item.label) {
-                    continue;
-                }
-                seen.push(item.label.clone());
-                out.push(CompletionData {
-                    label: item.label,
-                    detail: item.detail,
-                });
+        for item in completion::complete_at(&file, ctx.text, ctx.offset) {
+            if seen.contains(&item.label) {
+                continue;
             }
+            seen.push(item.label.clone());
+            out.push(CompletionData {
+                label: item.label,
+                detail: item.detail,
+                kind: completion::completion_item_kind(item.kind),
+                text_edit: None,
+            });
         }
         for (dep_path, dep_text) in forgels_core::dep_texts(ctx, 16) {
             let Some(file_name) = dep_path.file_name().and_then(|name| name.to_str()) else {
@@ -331,6 +531,8 @@ impl Analyzer for SolidityAnalyzer {
                 out.push(CompletionData {
                     label: item.label.clone(),
                     detail: format!("{} - from {}", item.detail, origin),
+                    kind: completion::completion_item_kind(item.kind),
+                    text_edit: None,
                 });
             }
         }
@@ -339,15 +541,32 @@ impl Analyzer for SolidityAnalyzer {
 
     fn goto(&self, ctx: &ProjectContext) -> Option<Span> {
         // Single file only; cross file lookup uses goto_location.
-        let file = Self::parse_file(ctx.text)?;
+        let file = Self::parse_file(ctx.text);
         goto::goto_definition(&file, ctx.text, ctx.offset)
     }
 
     fn goto_location(&self, ctx: &ProjectContext) -> Option<GotoTarget> {
-        if let Some(file) = Self::parse_file(ctx.text)
-            && let Some(span) = goto::goto_definition(&file, ctx.text, ctx.offset)
-        {
+        let file = Self::parse_file(ctx.text);
+        if let Some(span) = goto::goto_definition(&file, ctx.text, ctx.offset) {
             return Some(GotoTarget::new(ctx.path.to_path_buf(), span));
+        }
+        if let Some(member) = members::member_context_at(ctx.text, ctx.offset)
+            && (member.member_span.contains(ctx.offset) || member.member_span.end == ctx.offset)
+        {
+            let deps = Self::dep_files(ctx);
+            let scope = collect_symbols(&file);
+            let kind = members::receiver_type_with_deps(
+                &file,
+                &scope,
+                ctx.offset,
+                &member.receiver,
+                &deps,
+            );
+            if let Some((info, path)) =
+                members::resolve_member_cross_file(&file, &kind, &member.member, &deps)
+            {
+                return Some(GotoTarget::new(path, info.span));
+            }
         }
         let (word, _) = word_at(ctx.text, ctx.offset)?;
         for (dep_path, dep_text) in forgels_core::dep_texts(ctx, 16) {
@@ -360,14 +579,24 @@ impl Analyzer for SolidityAnalyzer {
 
     fn diagnostics(&self, text: &str) -> Vec<DiagnosticData> {
         let tokens = SolidityLexer.tokenize(text);
-        let (_, errors) = SolidityParser.parse_with_errors(&tokens);
-        errors
+        let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+        let mut out: Vec<DiagnosticData> = errors
             .iter()
             .map(|error| DiagnosticData {
                 span: error.span,
                 message: error.message.clone(),
             })
-            .collect()
+            .collect();
+        let scope = collect_symbols(&file);
+        out.extend(calls::arity_diagnostics(&file, &scope));
+        out.sort_by(|a, b| {
+            a.span
+                .start
+                .cmp(&b.span.start)
+                .then(a.span.end.cmp(&b.span.end))
+                .then(a.message.cmp(&b.message))
+        });
+        out
     }
 
     fn imports(&self, text: &str) -> Vec<ImportRef> {

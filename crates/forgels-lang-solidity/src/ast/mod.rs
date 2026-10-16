@@ -1,14 +1,18 @@
 use forgels_syntax::{SyntaxElement, SyntaxNode};
 
+mod calls;
 mod contract;
 mod file;
 mod members;
 mod types;
+mod user_types;
 
+pub use calls::CallStmt;
 pub use contract::ContractDef;
 pub use file::{ImportDirective, PragmaDirective, SolidityFile};
-pub use members::{FunctionDef, LocalVar, Param, Returns, StateVar};
+pub use members::{FunctionDef, LocalVar, MemberExpr, Param, Returns, StateVar};
 pub use types::{BlockNode, TypeNode};
+pub use user_types::{EnumDef, StructDef};
 
 /// Node kinds for the Solidity skeleton. Start at 1000 so token kinds
 /// from [`crate::SolidityKind`] never collide.
@@ -26,6 +30,10 @@ pub enum SolidityNode {
     Type,
     Block,
     Returns,
+    Call,
+    Struct,
+    Enum,
+    Member,
 }
 
 impl SolidityNode {

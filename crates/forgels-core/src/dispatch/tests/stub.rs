@@ -27,10 +27,14 @@ impl crate::analyzer::Analyzer for StubAnalyzer {
             crate::analyzer::CompletionData {
                 label: "stub_one".to_string(),
                 detail: "first".to_string(),
+                kind: forgels_protocol::CompletionItemKind::FUNCTION,
+                text_edit: None,
             },
             crate::analyzer::CompletionData {
                 label: "stub_two".to_string(),
                 detail: "second".to_string(),
+                kind: forgels_protocol::CompletionItemKind::VARIABLE,
+                text_edit: None,
             },
         ]
     }

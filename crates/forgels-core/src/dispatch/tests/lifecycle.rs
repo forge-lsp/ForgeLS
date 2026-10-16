@@ -34,6 +34,10 @@ fn advertises_exact_beta_capabilities() {
             "textDocumentSync"
         ]
     );
+    let triggers = caps
+        .pointer("/completionProvider/triggerCharacters")
+        .expect("has triggers");
+    assert_eq!(triggers, &serde_json::json!(["\"", "'", "/"]));
 }
 
 #[test]
@@ -68,6 +72,25 @@ fn ignores_unknown_notification_without_id() {
     let mut workspace = Workspace::new();
     let body = r#"{"jsonrpc":"2.0","method":"something/custom","params":{}}"#;
     assert!(handle_message(&mut session, &mut workspace, body).is_none());
+}
+
+#[test]
+fn ignores_standard_noise_notifications() {
+    let mut session = Session::new();
+    let mut workspace = Workspace::new();
+    init(&mut session, &mut workspace);
+    for method in [
+        "initialized",
+        "$/setTrace",
+        "$/cancelRequest",
+        "textDocument/didSave",
+    ] {
+        let body = format!(r#"{{"jsonrpc":"2.0","method":"{method}","params":{{}}}}"#);
+        assert!(
+            handle_message(&mut session, &mut workspace, &body).is_none(),
+            "{method} stays silent"
+        );
+    }
 }
 
 #[test]

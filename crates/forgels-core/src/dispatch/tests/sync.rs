@@ -277,6 +277,93 @@ fn path_to_uri_roundtrips_through_uri_to_path() {
 }
 
 #[derive(Debug)]
+struct BareStub;
+
+impl crate::analyzer::Analyzer for BareStub {
+    fn hover(&self, _ctx: &crate::analyzer::ProjectContext) -> Option<crate::analyzer::HoverData> {
+        None
+    }
+
+    fn complete(
+        &self,
+        _ctx: &crate::analyzer::ProjectContext,
+    ) -> Vec<crate::analyzer::CompletionData> {
+        Vec::new()
+    }
+
+    fn goto(&self, _ctx: &crate::analyzer::ProjectContext) -> Option<forgels_syntax::Span> {
+        None
+    }
+
+    fn diagnostics(&self, _text: &str) -> Vec<crate::analyzer::DiagnosticData> {
+        Vec::new()
+    }
+
+    fn imports(&self, text: &str) -> Vec<crate::analyzer::ImportRef> {
+        if text.contains("pkg/B.sol") {
+            vec![crate::analyzer::ImportRef::new("pkg/B.sol".to_string())]
+        } else {
+            Vec::new()
+        }
+    }
+}
+
+#[test]
+fn bare_import_indexes_node_modules_hit() {
+    let root = std::env::temp_dir().join("forgels-sync-node");
+    let _ = std::fs::remove_dir_all(&root);
+    let a = root.join("contracts/A.sol");
+    let b = root.join("contracts/node_modules/pkg/B.sol");
+    std::fs::create_dir_all(b.parent().expect("parent")).expect("dirs");
+    std::fs::write(&b, "contract B {}").expect("write");
+    let mut session = Session::new();
+    session
+        .analyzers
+        .insert(crate::routing::Language::Solidity, Box::new(BareStub));
+    let mut workspace = Workspace::new();
+    init(&mut session, &mut workspace);
+    let uri = path_to_uri(&a);
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "textDocument/didOpen",
+        "params": { "textDocument": {
+            "uri": uri, "languageId": "solidity",
+            "version": 1, "text": "import \"pkg/B.sol\"; contract A {}",
+        } },
+    })
+    .to_string();
+    assert!(handle_message(&mut session, &mut workspace, &body).is_none());
+    assert_eq!(workspace.index().deps_of(&a), std::slice::from_ref(&b));
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn bare_import_missing_stays_unresolved() {
+    let root = std::env::temp_dir().join("forgels-sync-node-missing");
+    let _ = std::fs::remove_dir_all(&root);
+    let a = root.join("contracts/A.sol");
+    let mut session = Session::new();
+    session
+        .analyzers
+        .insert(crate::routing::Language::Solidity, Box::new(BareStub));
+    let mut workspace = Workspace::new();
+    init(&mut session, &mut workspace);
+    let uri = path_to_uri(&a);
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "textDocument/didOpen",
+        "params": { "textDocument": {
+            "uri": uri, "languageId": "solidity",
+            "version": 1, "text": "import \"pkg/B.sol\"; contract A {}",
+        } },
+    })
+    .to_string();
+    assert!(handle_message(&mut session, &mut workspace, &body).is_none());
+    assert!(workspace.index().deps_of(&a).is_empty());
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[derive(Debug)]
 struct ImportStub;
 
 impl crate::analyzer::Analyzer for ImportStub {
