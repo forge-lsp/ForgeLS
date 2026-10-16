@@ -6,6 +6,7 @@ use std::time::Instant;
 use forgels_common::log::debug;
 
 use crate::diagnostics::{DEFAULT_PUBLISH_DELAY, PublishGate};
+use crate::index::ProjectIndex;
 use crate::routing::Language;
 use forgels_protocol::Diagnostic;
 
@@ -45,6 +46,7 @@ pub struct Workspace {
     roots: Vec<PathBuf>,
     publish: PublishGate,
     diagnostics: HashMap<PathBuf, Vec<Diagnostic>>,
+    index: ProjectIndex,
 }
 
 impl Default for Workspace {
@@ -60,6 +62,7 @@ impl Workspace {
             roots: Vec::new(),
             publish: PublishGate::new(DEFAULT_PUBLISH_DELAY),
             diagnostics: HashMap::new(),
+            index: ProjectIndex::new(),
         }
     }
 
@@ -70,6 +73,7 @@ impl Workspace {
             roots: Vec::new(),
             publish: PublishGate::new(delay),
             diagnostics: HashMap::new(),
+            index: ProjectIndex::new(),
         }
     }
 
@@ -86,13 +90,14 @@ impl Workspace {
         }
         debug!("open {}", path.display());
         self.files.insert(
-            path,
+            path.clone(),
             Document {
                 language,
                 text,
                 version,
             },
         );
+        self.index.rebuild_file(path, Vec::new());
         Ok(())
     }
 
@@ -115,6 +120,7 @@ impl Workspace {
         }
         debug!("close {}", path.display());
         self.diagnostics.remove(path);
+        self.index.remove(path);
         Ok(())
     }
 
@@ -151,6 +157,26 @@ impl Workspace {
     /// Latest tracked document, if any.
     pub fn get(&self, path: &Path) -> Option<&Document> {
         self.files.get(path)
+    }
+
+    /// Latest text for `path`, if tracked.
+    pub fn get_text(&self, path: &Path) -> Option<&str> {
+        self.files.get(path).map(|doc| doc.text.as_str())
+    }
+
+    /// All tracked files for index rebuilds and cross file queries.
+    pub fn iter_files(&self) -> impl Iterator<Item = (&PathBuf, &Document)> {
+        self.files.iter()
+    }
+
+    /// Dependency graph across open files.
+    pub fn index(&self) -> &ProjectIndex {
+        &self.index
+    }
+
+    /// Replace the dep list for one file after its imports change.
+    pub fn set_file_deps(&mut self, path: PathBuf, deps: Vec<PathBuf>) {
+        self.index.rebuild_file(path, deps);
     }
 
     /// Replace the root list, from initialize params.
@@ -197,6 +223,7 @@ impl Workspace {
             .collect();
         for path in doomed {
             self.files.remove(&path);
+            self.index.remove(&path);
         }
     }
 }
