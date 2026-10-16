@@ -37,6 +37,19 @@ mod tests {
     }
 
     #[test]
+    fn symbol_shapes_match_spec() {
+        let aliased = imports_in("import {A as B} from \"./B.sol\";\ncontract A {}");
+        assert_eq!(aliased.len(), 1);
+        assert_eq!(aliased[0].symbols, vec!["A".to_string(), "B".to_string()]);
+        let plain = imports_in("import \"./A.sol\";\ncontract A {}");
+        assert_eq!(plain.len(), 1);
+        assert!(plain[0].symbols.is_empty());
+        let star = imports_in("import * as NS from \"./C.sol\";\ncontract A {}");
+        assert_eq!(star.len(), 1);
+        assert_eq!(star[0].symbols, vec!["NS".to_string()]);
+    }
+
+    #[test]
     fn broken_file_still_reports_imports() {
         let text = "import \"./A.sol\";\ncontract ;\n";
         let found = imports_in(text);

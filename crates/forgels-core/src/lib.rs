@@ -15,6 +15,7 @@ pub mod workspace;
 
 pub use analyzer::{
     Analyzer, AnalyzerMap, CompletionData, DiagnosticData, HoverData, ImportRef, ProjectContext,
+    dep_texts,
 };
 pub use config::Config;
 pub use index::{FileEntry, ProjectIndex};

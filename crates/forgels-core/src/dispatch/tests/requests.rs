@@ -255,3 +255,113 @@ fn hover_reads_current_file_through_context() {
         &serde_json::json!("contract B {}")
     );
 }
+
+#[test]
+fn completion_lists_dep_symbol_with_origin() {
+    use crate::analyzer::{Analyzer, ProjectContext, dep_texts};
+
+    #[derive(Debug)]
+    struct DepAnalyzer;
+
+    fn prefix_before(text: &str, offset: u32) -> String {
+        let end = (offset as usize).min(text.len());
+        let bytes = text.as_bytes();
+        let mut start = end;
+        while start > 0 {
+            let byte = bytes[start - 1];
+            if byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'$' {
+                start -= 1;
+            } else {
+                break;
+            }
+        }
+        text.get(start..end).unwrap_or("").to_string()
+    }
+
+    impl Analyzer for DepAnalyzer {
+        fn hover(&self, _ctx: &ProjectContext) -> Option<crate::analyzer::HoverData> {
+            None
+        }
+
+        fn complete(&self, ctx: &ProjectContext) -> Vec<crate::analyzer::CompletionData> {
+            let prefix = prefix_before(ctx.text, ctx.offset);
+            let mut out = Vec::new();
+            for (dep_path, dep_text) in dep_texts(ctx, 16) {
+                let Some(name) = dep_path.file_name().and_then(|item| item.to_str()) else {
+                    continue;
+                };
+                if dep_text.contains("dep_fn") && "dep_fn".starts_with(prefix.as_str()) {
+                    out.push(crate::analyzer::CompletionData {
+                        label: "dep_fn".to_string(),
+                        detail: format!("function dep_fn() - from {name}"),
+                    });
+                }
+            }
+            out
+        }
+
+        fn goto(&self, _ctx: &ProjectContext) -> Option<forgels_syntax::Span> {
+            None
+        }
+
+        fn diagnostics(&self, _text: &str) -> Vec<crate::analyzer::DiagnosticData> {
+            Vec::new()
+        }
+
+        fn imports(&self, text: &str) -> Vec<crate::analyzer::ImportRef> {
+            if text.contains("./B.sol") {
+                vec![crate::analyzer::ImportRef::new("./B.sol".to_string())]
+            } else {
+                Vec::new()
+            }
+        }
+    }
+
+    let mut session = super::super::Session::new();
+    session
+        .analyzers
+        .insert(crate::routing::Language::Solidity, Box::new(DepAnalyzer));
+    let mut workspace = Workspace::new();
+    init(&mut session, &mut workspace);
+    for (uri, text) in [
+        (
+            "file:///repo/B.sol",
+            "contract B {\nfunction dep_fn() public {}\n}",
+        ),
+        (
+            "file:///repo/A.sol",
+            "import \"./B.sol\";\ncontract A {\nfunction f() public {\ndep\n}\n}",
+        ),
+    ] {
+        let open = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "textDocument/didOpen",
+            "params": { "textDocument": {
+                "uri": uri, "languageId": "solidity", "version": 1, "text": text,
+            } },
+        })
+        .to_string();
+        assert!(handle_message(&mut session, &mut workspace, &open).is_none());
+    }
+    let reply = handle_message(
+        &mut session,
+        &mut workspace,
+        &completion_body(9, "file:///repo/A.sol", 3, 3),
+    )
+    .expect("must reply");
+    let value: Value = serde_json::from_str(&reply).expect("reply is json");
+    let items = value
+        .pointer("/result/items")
+        .expect("has items")
+        .as_array()
+        .expect("array");
+    assert_eq!(items.len(), 1);
+    assert_eq!(
+        items[0].pointer("/label").expect("has label"),
+        &serde_json::json!("dep_fn")
+    );
+    assert_eq!(
+        items[0].pointer("/detail").expect("has detail"),
+        &serde_json::json!("function dep_fn() - from B.sol")
+    );
+}

@@ -13,7 +13,7 @@ mod imports;
 #[cfg(test)]
 mod tests;
 
-pub use completion::{CompletionItem, CompletionKind, complete_at};
+pub use completion::{CompletionItem, CompletionKind, complete_at, exports_of};
 pub use goto::goto_definition;
 pub use hover::{Hover, hover_at};
 pub use imports::imports_in;
@@ -116,6 +116,27 @@ impl Scope {
                 child.collect_visible(offset, out);
             }
         }
+    }
+
+    /// Contract level symbols: contracts plus their functions.
+    ///
+    /// Used for cross file completion. State vars, params, and locals
+    /// stay local and never cross files.
+    pub fn export_symbols(&self) -> Vec<&Symbol> {
+        let mut out: Vec<&Symbol> = Vec::new();
+        for symbol in &self.symbols {
+            if matches!(symbol.kind, SymbolKind::Contract | SymbolKind::Function) {
+                out.push(symbol);
+            }
+        }
+        for child in &self.children {
+            for symbol in &child.symbols {
+                if matches!(symbol.kind, SymbolKind::Contract | SymbolKind::Function) {
+                    out.push(symbol);
+                }
+            }
+        }
+        out
     }
 }
 
@@ -261,17 +282,41 @@ impl Analyzer for SolidityAnalyzer {
     }
 
     fn complete(&self, ctx: &ProjectContext) -> Vec<CompletionData> {
-        // Single file only; cross file lookup lands in FORGE-94..96.
-        let Some(file) = Self::parse_file(ctx.text) else {
-            return Vec::new();
-        };
-        completion::complete_at(&file, ctx.text, ctx.offset)
-            .iter()
-            .map(|item| CompletionData {
-                label: item.label.clone(),
-                detail: item.detail.clone(),
-            })
-            .collect()
+        let prefix = completion::prefix_at(ctx.text, ctx.offset);
+        let mut seen: Vec<String> = Vec::new();
+        let mut out: Vec<CompletionData> = Vec::new();
+        if let Some(file) = Self::parse_file(ctx.text) {
+            for item in completion::complete_at(&file, ctx.text, ctx.offset) {
+                if seen.contains(&item.label) {
+                    continue;
+                }
+                seen.push(item.label.clone());
+                out.push(CompletionData {
+                    label: item.label,
+                    detail: item.detail,
+                });
+            }
+        }
+        for (dep_path, dep_text) in forgels_core::dep_texts(ctx, 16) {
+            let Some(file_name) = dep_path.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            let origin = file_name.to_string();
+            for item in completion::exports_of(&dep_text) {
+                if !item.label.starts_with(prefix.as_str()) {
+                    continue;
+                }
+                if seen.contains(&item.label) {
+                    continue;
+                }
+                seen.push(item.label.clone());
+                out.push(CompletionData {
+                    label: item.label.clone(),
+                    detail: format!("{} - from {}", item.detail, origin),
+                });
+            }
+        }
+        out
     }
 
     fn goto(&self, ctx: &ProjectContext) -> Option<Span> {

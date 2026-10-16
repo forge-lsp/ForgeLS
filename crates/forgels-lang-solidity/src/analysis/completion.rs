@@ -1,5 +1,6 @@
 use super::{SymbolKind, collect_symbols, is_word_byte};
-use crate::SolidityFile;
+use crate::{SolidityFile, SolidityLexer, SolidityParser};
+use forgels_syntax::Lexer;
 
 pub struct CompletionItem {
     pub label: String,
@@ -50,7 +51,7 @@ pub fn complete_at(file: &SolidityFile, text: &str, offset: u32) -> Vec<Completi
 }
 
 /// Typed fragment ending at `offset`: word chars directly before it.
-fn prefix_at(text: &str, offset: u32) -> String {
+pub(crate) fn prefix_at(text: &str, offset: u32) -> String {
     let end = (offset as usize).min(text.len());
     let bytes = text.as_bytes();
     let mut start = end;
@@ -58,4 +59,24 @@ fn prefix_at(text: &str, offset: u32) -> String {
         start -= 1;
     }
     text.get(start..end).unwrap_or("").to_string()
+}
+
+/// Contract level exports of `text`: contracts and their functions.
+///
+/// Parses with recovery so broken deps still contribute. Locals, params,
+/// and state vars stay local and never cross files. Caller filters by
+/// prefix and tags the origin file.
+pub fn exports_of(text: &str) -> Vec<CompletionItem> {
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, _) = SolidityParser.parse_with_errors(&tokens);
+    let scope = collect_symbols(&file);
+    scope
+        .export_symbols()
+        .iter()
+        .map(|symbol| CompletionItem {
+            label: symbol.name.clone(),
+            detail: symbol.detail.clone(),
+            kind: CompletionKind::Symbol(symbol.kind),
+        })
+        .collect()
 }

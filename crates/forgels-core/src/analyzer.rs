@@ -1,5 +1,5 @@
-use std::collections::HashMap;
-use std::path::Path;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 
 use forgels_syntax::Span;
 
@@ -90,6 +90,28 @@ impl<'a> ProjectContext<'a> {
         self.workspace.get_text(path)
     }
 }
+
+/// Texts of transitive deps for cross file completion.
+///
+/// Reads tracked files only, skips untracked, dedups by path,
+/// and caps at `cap` entries. Cycle safe via the index closure.
+pub fn dep_texts(ctx: &ProjectContext, cap: usize) -> Vec<(PathBuf, String)> {
+    let mut out: Vec<(PathBuf, String)> = Vec::new();
+    let mut seen: HashSet<PathBuf> = HashSet::new();
+    for dep in ctx.index().transitive_closure(ctx.path) {
+        if out.len() >= cap {
+            break;
+        }
+        if !seen.insert(dep.clone()) {
+            continue;
+        }
+        let Some(text) = ctx.file_text(&dep) else {
+            continue;
+        };
+        out.push((dep, text.to_string()));
+    }
+    out
+}
 /// Language analyzer: pure analysis behind one trait.
 ///
 /// Core owns this trait and calls it; each `forgels-lang-*` crate
@@ -109,3 +131,58 @@ pub trait Analyzer: std::fmt::Debug {
 
 /// Registered analyzers by language. Empty when the binary wires none.
 pub type AnalyzerMap = HashMap<Language, Box<dyn Analyzer>>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn open(workspace: &mut Workspace, name: &str, text: &str) {
+        workspace
+            .open(PathBuf::from(name), Language::Solidity, text.to_string(), 1)
+            .expect("open works");
+    }
+
+    fn ctx_for<'a>(workspace: &'a Workspace, path: &'a Path, text: &'a str) -> ProjectContext<'a> {
+        ProjectContext::new(path, text, 0, workspace)
+    }
+
+    #[test]
+    fn skips_untracked_and_returns_transitive() {
+        let mut workspace = Workspace::new();
+        open(&mut workspace, "/A.sol", "a");
+        open(&mut workspace, "/B.sol", "b");
+        open(&mut workspace, "/C.sol", "c");
+        workspace.set_file_deps(PathBuf::from("/A.sol"), vec![PathBuf::from("/B.sol")]);
+        workspace.set_file_deps(
+            PathBuf::from("/B.sol"),
+            vec![PathBuf::from("/C.sol"), PathBuf::from("/Missing.sol")],
+        );
+        let path = PathBuf::from("/A.sol");
+        let text = workspace.get_text(&path).expect("tracked").to_string();
+        let ctx = ctx_for(&workspace, &path, &text);
+        let found = dep_texts(&ctx, 16);
+        let names: Vec<String> = found
+            .iter()
+            .map(|(path, _)| path.to_string_lossy().into_owned())
+            .collect();
+        assert!(names.contains(&"/B.sol".to_string()));
+        assert!(names.contains(&"/C.sol".to_string()));
+        assert!(!names.contains(&"/Missing.sol".to_string()));
+    }
+
+    #[test]
+    fn caps_results_and_survives_cycle() {
+        let mut workspace = Workspace::new();
+        open(&mut workspace, "/A.sol", "a");
+        open(&mut workspace, "/B.sol", "b");
+        workspace.set_file_deps(PathBuf::from("/A.sol"), vec![PathBuf::from("/B.sol")]);
+        workspace.set_file_deps(PathBuf::from("/B.sol"), vec![PathBuf::from("/A.sol")]);
+        let path = PathBuf::from("/A.sol");
+        let text = workspace.get_text(&path).expect("tracked").to_string();
+        let ctx = ctx_for(&workspace, &path, &text);
+        let capped = dep_texts(&ctx, 1);
+        assert_eq!(capped.len(), 1);
+        let all = dep_texts(&ctx, 16);
+        assert_eq!(all.len(), 1);
+    }
+}
