@@ -14,7 +14,9 @@ mod imports;
 #[cfg(test)]
 mod tests;
 
-pub use completion::{CompletionItem, CompletionKind, complete_at, exports_of};
+pub use completion::{
+    CompletionItem, CompletionKind, complete_at, complete_import_paths, exports_of, import_path_at,
+};
 pub use goto::{goto_definition, resolve_in_dep};
 pub use hover::{Hover, hover_at};
 pub use imports::imports_in;
@@ -300,6 +302,18 @@ impl Analyzer for SolidityAnalyzer {
     }
 
     fn complete(&self, ctx: &ProjectContext) -> Vec<CompletionData> {
+        let tokens = SolidityLexer.tokenize(ctx.text);
+        let (recovered, _) = SolidityParser.parse_with_errors(&tokens);
+        if completion::import_path_at(&recovered, ctx.text, ctx.offset).is_some() {
+            let prefix = completion::path_prefix_at(ctx.text, ctx.offset);
+            return completion::complete_import_paths(ctx.path, ctx.workspace.roots(), &prefix)
+                .into_iter()
+                .map(|item| CompletionData {
+                    label: item.label,
+                    detail: item.detail,
+                })
+                .collect();
+        }
         let prefix = completion::prefix_at(ctx.text, ctx.offset);
         let mut seen: Vec<String> = Vec::new();
         let mut out: Vec<CompletionData> = Vec::new();

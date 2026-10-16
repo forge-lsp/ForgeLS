@@ -34,6 +34,10 @@ fn advertises_exact_beta_capabilities() {
             "textDocumentSync"
         ]
     );
+    let triggers = caps
+        .pointer("/completionProvider/triggerCharacters")
+        .expect("has triggers");
+    assert_eq!(triggers, &serde_json::json!(["\"", "'", "/"]));
 }
 
 #[test]

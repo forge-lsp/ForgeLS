@@ -94,6 +94,62 @@ pub fn resolve_with_remappings(
     Some(normalize_lexically(&joined))
 }
 
+/// Lexical path of `target` seen from `from_file`.
+///
+/// Always `./` or `../` prefixed, with `/` separators. Both sides must be
+/// absolute or both relative, otherwise `None`. No disk access.
+pub fn relative_path(from_file: &Path, target: &Path) -> Option<String> {
+    let base = from_file.parent().unwrap_or(Path::new(""));
+    let base_norm = normalize_lexically(base);
+    let target_norm = normalize_lexically(target);
+    if base_norm.has_root() != target_norm.has_root() {
+        return None;
+    }
+    let base_drive = base_norm.components().find_map(|part| match part {
+        Component::Prefix(prefix) => Some(prefix.as_os_str().to_owned()),
+        _ => None,
+    });
+    let target_drive = target_norm.components().find_map(|part| match part {
+        Component::Prefix(prefix) => Some(prefix.as_os_str().to_owned()),
+        _ => None,
+    });
+    if base_drive != target_drive {
+        return None;
+    }
+    let base_parts: Vec<Component> = base_norm.components().collect();
+    let target_parts: Vec<Component> = target_norm.components().collect();
+    let mut common = 0;
+    while common < base_parts.len()
+        && common < target_parts.len()
+        && base_parts[common] == target_parts[common]
+    {
+        common += 1;
+    }
+    let mut rel: Vec<String> = Vec::new();
+    for part in &base_parts[common..] {
+        match part {
+            Component::Normal(_) | Component::ParentDir => rel.push("..".to_string()),
+            _ => {}
+        }
+    }
+    for part in &target_parts[common..] {
+        match part {
+            Component::Normal(name) => rel.push(name.to_string_lossy().into_owned()),
+            Component::ParentDir => rel.push("..".to_string()),
+            _ => {}
+        }
+    }
+    if rel.is_empty() {
+        return Some("./".to_string());
+    }
+    let joined = rel.join("/");
+    if joined.starts_with("..") {
+        Some(joined)
+    } else {
+        Some(format!("./{joined}"))
+    }
+}
+
 fn normalize_lexically(path: &Path) -> PathBuf {
     let mut out = PathBuf::new();
     for part in path.components() {
@@ -197,5 +253,44 @@ mod tests {
         assert!(parse_remapping("no-equals").is_none());
         assert!(parse_remapping("=lib/").is_none());
         assert!(parse_remapping("@oz/=").is_none());
+    }
+
+    #[test]
+    fn relative_same_dir_gets_dot_prefix() {
+        assert_eq!(
+            relative_path(
+                Path::new("/repo/contracts/A.sol"),
+                Path::new("/repo/contracts/B.sol")
+            ),
+            Some("./B.sol".to_string())
+        );
+    }
+
+    #[test]
+    fn relative_subdir_stays_dot_prefixed() {
+        assert_eq!(
+            relative_path(
+                Path::new("/repo/contracts/A.sol"),
+                Path::new("/repo/contracts/sub/C.sol")
+            ),
+            Some("./sub/C.sol".to_string())
+        );
+    }
+
+    #[test]
+    fn relative_parent_climbs_with_dots() {
+        assert_eq!(
+            relative_path(
+                Path::new("/repo/contracts/A.sol"),
+                Path::new("/repo/shared/B.sol")
+            ),
+            Some("../shared/B.sol".to_string())
+        );
+    }
+
+    #[test]
+    fn relative_mixed_roots_return_none() {
+        assert!(relative_path(Path::new("/repo/A.sol"), Path::new("contracts/B.sol")).is_none());
+        assert!(relative_path(Path::new("contracts/A.sol"), Path::new("/repo/B.sol")).is_none());
     }
 }
