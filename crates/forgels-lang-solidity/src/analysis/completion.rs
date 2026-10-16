@@ -25,6 +25,9 @@ pub fn complete_at(file: &SolidityFile, text: &str, offset: u32) -> Vec<Completi
     let mut seen: Vec<String> = Vec::new();
     let mut items: Vec<CompletionItem> = Vec::new();
     for symbol in scope.visible_at(offset) {
+        if symbol.name.is_empty() {
+            continue;
+        }
         if symbol.name.starts_with(prefix.as_str()) && !seen.contains(&symbol.name) {
             seen.push(symbol.name.clone());
             items.push(CompletionItem {

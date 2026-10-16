@@ -92,8 +92,14 @@ pub(crate) fn parse_contract(
     loop {
         match cursor.peek_kind() {
             None => {
+                // Typing state: body never closed. Keep the members
+                // parsed so far instead of dropping the contract.
                 errors.push(ParseError::new(cursor.peek_span(), "unclosed `{`"));
-                return None;
+                return Some(SyntaxNode::with_children(
+                    SolidityNode::Contract.as_u16(),
+                    Span::new(start.start, cursor.peek_span().end),
+                    members,
+                ));
             }
             Some(kind) if kind == SolidityKind::RBrace.as_u16() => break,
             Some(kind)
@@ -124,8 +130,14 @@ pub(crate) fn parse_contract(
         }
     }
     let Some(close) = cursor.bump() else {
+        // Unreachable in practice: RBrace was peeked above. Keep the
+        // partial node on the defensive path instead of dropping it.
         errors.push(ParseError::new(cursor.peek_span(), "expected `}`"));
-        return None;
+        return Some(SyntaxNode::with_children(
+            SolidityNode::Contract.as_u16(),
+            Span::new(start.start, cursor.peek_span().end),
+            members,
+        ));
     };
     Some(SyntaxNode::with_children(
         SolidityNode::Contract.as_u16(),

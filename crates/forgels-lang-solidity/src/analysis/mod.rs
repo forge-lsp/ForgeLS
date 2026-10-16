@@ -113,7 +113,9 @@ impl Scope {
     fn collect_visible<'a>(&'a self, offset: u32, out: &mut Vec<&'a Symbol>) {
         out.extend(self.symbols.iter());
         for child in &self.children {
-            if child.span.contains(offset) {
+            // Cursor at the scope end edge counts as inside: typing
+            // happens at offsets no token covers yet.
+            if child.span.contains(offset) || child.span.end == offset {
                 child.collect_visible(offset, out);
             }
         }
@@ -142,9 +144,15 @@ impl Scope {
 }
 
 /// Collect every declaration in the file into nested scopes.
+///
+/// Uses recovery parse output as is: partial nodes may miss names,
+/// and nameless contracts are skipped so they never surface.
 pub fn collect_symbols(file: &SolidityFile) -> Scope {
     let mut root = Scope::new(file.syntax().span);
     for contract in file.contracts() {
+        if contract.name().is_none_or(|name| name.is_empty()) {
+            continue;
+        }
         root.symbols.push(contract_symbol(&contract));
         root.children.push(contract_scope(&contract));
     }
@@ -178,6 +186,9 @@ fn contract_scope(contract: &ContractDef) -> Scope {
         }
     }
     for function in contract.functions() {
+        if function.name().is_none_or(|name| name.is_empty()) {
+            continue;
+        }
         scope.symbols.push(function_symbol(&function));
         scope.children.push(function_scope(&function));
     }
@@ -265,17 +276,20 @@ impl SolidityAnalyzer {
         Self
     }
 
-    fn parse_file(text: &str) -> Option<SolidityFile> {
+    /// Parse with recovery and keep the file even when errors exist.
+    ///
+    /// Completion, hover, and goto run while the user types, so errors
+    /// are the norm. Diagnostics still report them separately.
+    fn parse_file(text: &str) -> SolidityFile {
         let tokens = SolidityLexer.tokenize(text);
-        let (file, errors) = SolidityParser.parse_with_errors(&tokens);
-        if errors.is_empty() { Some(file) } else { None }
+        let (file, _) = SolidityParser.parse_with_errors(&tokens);
+        file
     }
 }
 
 impl Analyzer for SolidityAnalyzer {
     fn hover(&self, ctx: &ProjectContext) -> Option<HoverData> {
-        let local = Self::parse_file(ctx.text)
-            .and_then(|file| hover::hover_at(&file, ctx.text, ctx.offset));
+        let local = hover::hover_at(&Self::parse_file(ctx.text), ctx.text, ctx.offset);
         if let Some(found) = local {
             return Some(HoverData {
                 contents: found.contents,
@@ -303,17 +317,16 @@ impl Analyzer for SolidityAnalyzer {
         let prefix = completion::prefix_at(ctx.text, ctx.offset);
         let mut seen: Vec<String> = Vec::new();
         let mut out: Vec<CompletionData> = Vec::new();
-        if let Some(file) = Self::parse_file(ctx.text) {
-            for item in completion::complete_at(&file, ctx.text, ctx.offset) {
-                if seen.contains(&item.label) {
-                    continue;
-                }
-                seen.push(item.label.clone());
-                out.push(CompletionData {
-                    label: item.label,
-                    detail: item.detail,
-                });
+        let file = Self::parse_file(ctx.text);
+        for item in completion::complete_at(&file, ctx.text, ctx.offset) {
+            if seen.contains(&item.label) {
+                continue;
             }
+            seen.push(item.label.clone());
+            out.push(CompletionData {
+                label: item.label,
+                detail: item.detail,
+            });
         }
         for (dep_path, dep_text) in forgels_core::dep_texts(ctx, 16) {
             let Some(file_name) = dep_path.file_name().and_then(|name| name.to_str()) else {
@@ -339,13 +352,12 @@ impl Analyzer for SolidityAnalyzer {
 
     fn goto(&self, ctx: &ProjectContext) -> Option<Span> {
         // Single file only; cross file lookup uses goto_location.
-        let file = Self::parse_file(ctx.text)?;
+        let file = Self::parse_file(ctx.text);
         goto::goto_definition(&file, ctx.text, ctx.offset)
     }
 
     fn goto_location(&self, ctx: &ProjectContext) -> Option<GotoTarget> {
-        if let Some(file) = Self::parse_file(ctx.text)
-            && let Some(span) = goto::goto_definition(&file, ctx.text, ctx.offset)
+        if let Some(span) = goto::goto_definition(&Self::parse_file(ctx.text), ctx.text, ctx.offset)
         {
             return Some(GotoTarget::new(ctx.path.to_path_buf(), span));
         }
