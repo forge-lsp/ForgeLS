@@ -49,7 +49,19 @@ pub(crate) fn parse_var(cursor: &mut Cursor, kind: SolidityNode) -> Result<Synta
             _ => break,
         }
     }
-    let name = cursor.expect(SolidityKind::Ident, "variable name")?;
+    // Names accept any word token, not only Ident: `after` lexes as
+    // reserved yet SBE-style code uses it as `uint after`. Structural
+    // tokens never match, so missing names still fail cleanly.
+    let name = if let Some(token) = cursor.peek().cloned()
+        && is_param_name(&token.text)
+    {
+        cursor.bump_or_error("variable name")?
+    } else {
+        return Err(ParseError::new(
+            cursor.peek_span(),
+            "expected variable name",
+        ));
+    };
     let mut end = name.span.end.max(type_end);
     if cursor.peek_kind() == Some(SolidityKind::Assign.as_u16()) {
         cursor.bump();
@@ -567,18 +579,33 @@ pub(crate) fn is_local_decl_ahead(cursor: &mut Cursor) -> bool {
             }
         }
     }
-    // Data location sits between type and name: skip one if present.
-    if tokens.get(index).is_some_and(|token| {
-        token.kind == SolidityKind::Memory.as_u16()
-            || token.kind == SolidityKind::Storage.as_u16()
-            || token.kind == SolidityKind::Calldata.as_u16()
-    }) {
-        index += 1;
+    // Data location and modifiers sit between type and name:
+    // `bytes memory x`, `address payable holder`, `uint public y`.
+    // Skipped in a loop so the trailing name still parses.
+    loop {
+        if tokens.get(index).is_some_and(|token| {
+            token.kind == SolidityKind::Memory.as_u16()
+                || token.kind == SolidityKind::Storage.as_u16()
+                || token.kind == SolidityKind::Calldata.as_u16()
+                || token.kind == SolidityKind::Public.as_u16()
+                || token.kind == SolidityKind::Private.as_u16()
+                || token.kind == SolidityKind::Internal.as_u16()
+                || token.kind == SolidityKind::Constant.as_u16()
+                || token.kind == SolidityKind::Immutable.as_u16()
+                || token.kind == SolidityKind::Override.as_u16()
+                || token.kind == SolidityKind::Transient.as_u16()
+                || token.kind == SolidityKind::Payable.as_u16()
+        }) {
+            index += 1;
+        } else {
+            break;
+        }
     }
-    matches!(
-        tokens.get(index).map(|token| token.kind),
-        Some(kind) if kind == SolidityKind::Ident.as_u16()
-    )
+    // Names accept any word token, matching `parse_var` and `parse_param`:
+    // `after` lexes as reserved but works as `uint after`.
+    tokens
+        .get(index)
+        .is_some_and(|token| is_param_name(&token.text))
 }
 
 /// Skip one statement: to `;`, over a balanced block, or stop at `}`.
