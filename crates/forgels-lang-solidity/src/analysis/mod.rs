@@ -273,12 +273,29 @@ impl SolidityAnalyzer {
 
 impl Analyzer for SolidityAnalyzer {
     fn hover(&self, ctx: &ProjectContext) -> Option<HoverData> {
-        // Single file only; cross file lookup lands in FORGE-94..96.
-        let file = Self::parse_file(ctx.text)?;
-        hover::hover_at(&file, ctx.text, ctx.offset).map(|found| HoverData {
-            contents: found.contents,
-            span: found.span,
-        })
+        let local = Self::parse_file(ctx.text)
+            .and_then(|file| hover::hover_at(&file, ctx.text, ctx.offset));
+        if let Some(found) = local {
+            return Some(HoverData {
+                contents: found.contents,
+                span: found.span,
+            });
+        }
+        let (word, span) = word_at(ctx.text, ctx.offset)?;
+        for (dep_path, dep_text) in forgels_core::dep_texts(ctx, 16) {
+            let Some(file_name) = dep_path.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            for item in completion::exports_of(&dep_text) {
+                if item.label == word {
+                    return Some(HoverData {
+                        contents: format!("{} - from {}", item.detail, file_name),
+                        span,
+                    });
+                }
+            }
+        }
+        None
     }
 
     fn complete(&self, ctx: &ProjectContext) -> Vec<CompletionData> {

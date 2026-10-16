@@ -326,3 +326,110 @@ fn cyclic_deps_terminate() {
     let found = complete_multi(&workspace, "/A.sol", a, "bea");
     assert!(found.iter().any(|(label, _)| label == "beacon"));
 }
+
+fn hover_multi(
+    workspace: &Workspace,
+    path: &str,
+    text: &str,
+    needle: &str,
+) -> Option<forgels_core::HoverData> {
+    let owned = text.to_string();
+    let buf = PathBuf::from(path);
+    let at = owned.rfind(needle).expect("needle") as u32;
+    let ctx = ProjectContext::new(buf.as_path(), &owned, at, workspace);
+    SolidityAnalyzer.hover(&ctx)
+}
+
+#[test]
+fn dep_hover_includes_origin() {
+    let b = "contract Vault {\nfunction withdraw(uint a) public {}\n}";
+    let a = "import \"./B.sol\";\ncontract A {\nfunction f() public {\nwithdraw;\n}\n}";
+    let mut workspace = open_workspace(&[("/A.sol", a), ("/B.sol", b)]);
+    workspace.set_file_deps(PathBuf::from("/A.sol"), vec![PathBuf::from("/B.sol")]);
+    let hit = hover_multi(&workspace, "/A.sol", a, "withdraw").expect("dep hover");
+    assert!(
+        hit.contents.contains("function withdraw"),
+        "contents: {}",
+        hit.contents
+    );
+    assert!(
+        hit.contents.contains("from B.sol"),
+        "contents: {}",
+        hit.contents
+    );
+    let at = a.rfind("withdraw").expect("word") as u32;
+    assert!(hit.span.contains(at));
+}
+
+#[test]
+fn local_hover_shadows_dep() {
+    let b = "contract Vault {\nfunction withdraw(uint a) public {}\n}";
+    let a = "import \"./B.sol\";\ncontract A {\nfunction withdraw() public {\nwithdraw;\n}\n}";
+    let mut workspace = open_workspace(&[("/A.sol", a), ("/B.sol", b)]);
+    workspace.set_file_deps(PathBuf::from("/A.sol"), vec![PathBuf::from("/B.sol")]);
+    let hit = hover_multi(&workspace, "/A.sol", a, "withdraw").expect("local hover");
+    assert!(
+        !hit.contents.contains("from"),
+        "local wins: {}",
+        hit.contents
+    );
+    assert_eq!(hit.contents, "function withdraw()");
+}
+
+#[test]
+fn transitive_dep_hover() {
+    let c = "contract C {\nfunction settle() public {}\n}";
+    let b = "import \"./C.sol\";\ncontract B {\n}";
+    let a = "import \"./B.sol\";\ncontract A {\nfunction f() public {\nsettle;\n}\n}";
+    let mut workspace = open_workspace(&[("/A.sol", a), ("/B.sol", b), ("/C.sol", c)]);
+    workspace.set_file_deps(PathBuf::from("/A.sol"), vec![PathBuf::from("/B.sol")]);
+    workspace.set_file_deps(PathBuf::from("/B.sol"), vec![PathBuf::from("/C.sol")]);
+    let hit = hover_multi(&workspace, "/A.sol", a, "settle").expect("transitive hover");
+    assert!(
+        hit.contents.contains("from C.sol"),
+        "contents: {}",
+        hit.contents
+    );
+}
+
+#[test]
+fn untracked_dep_hover_returns_none() {
+    let a = "import \"./Missing.sol\";\ncontract A {\nfunction f() public {\nwithdraw;\n}\n}";
+    let mut workspace = open_workspace(&[("/A.sol", a)]);
+    workspace.set_file_deps(PathBuf::from("/A.sol"), vec![PathBuf::from("/Missing.sol")]);
+    assert!(hover_multi(&workspace, "/A.sol", a, "withdraw").is_none());
+}
+
+#[test]
+fn cyclic_dep_hover_terminates() {
+    let b = "import \"./A.sol\";\ncontract B {\nfunction beacon() public {}\n}";
+    let a = "import \"./B.sol\";\ncontract A {\nfunction f() public {\nbeacon;\n}\n}";
+    let mut workspace = open_workspace(&[("/A.sol", a), ("/B.sol", b)]);
+    workspace.set_file_deps(PathBuf::from("/A.sol"), vec![PathBuf::from("/B.sol")]);
+    workspace.set_file_deps(PathBuf::from("/B.sol"), vec![PathBuf::from("/A.sol")]);
+    let hit = hover_multi(&workspace, "/A.sol", a, "beacon").expect("cycle hover");
+    assert!(
+        hit.contents.contains("from B.sol"),
+        "contents: {}",
+        hit.contents
+    );
+}
+
+#[test]
+fn broken_dep_hover_still_works() {
+    let b = "contract Vault {\nfunction withdraw(uint a) public {}\n}\n@@@ broken";
+    let a = "import \"./B.sol\";\ncontract A {\nfunction f() public {\nwithdraw;\n}\n}";
+    let mut workspace = open_workspace(&[("/A.sol", a), ("/B.sol", b)]);
+    workspace.set_file_deps(PathBuf::from("/A.sol"), vec![PathBuf::from("/B.sol")]);
+    let hit = hover_multi(&workspace, "/A.sol", a, "withdraw").expect("broken dep hover");
+    assert!(
+        hit.contents.contains("function withdraw"),
+        "contents: {}",
+        hit.contents
+    );
+    assert!(
+        hit.contents.contains("from B.sol"),
+        "contents: {}",
+        hit.contents
+    );
+}
