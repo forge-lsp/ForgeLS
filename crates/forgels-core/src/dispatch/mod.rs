@@ -25,7 +25,7 @@ pub fn server_capabilities() -> Value {
     serde_json::json!({
         "textDocumentSync": 1,
         "hoverProvider": true,
-        "completionProvider": {},
+        "completionProvider": { "triggerCharacters": ["\"", "'", "/"] },
         "definitionProvider": true
     })
 }

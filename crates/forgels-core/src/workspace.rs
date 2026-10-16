@@ -229,6 +229,11 @@ impl Workspace {
         self.roots = roots;
     }
 
+    /// Workspace roots for file discovery. Empty when the editor sent none.
+    pub fn roots(&self) -> &[PathBuf] {
+        &self.roots
+    }
+
     /// Add one root from a workspace folder change. Idempotent.
     pub fn add_root(&mut self, root: PathBuf) {
         if !self.roots.contains(&root) {
