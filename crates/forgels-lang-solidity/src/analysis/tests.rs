@@ -250,6 +250,52 @@ fn complete_multi(
 }
 
 #[test]
+fn completion_suggests_symbols_when_file_has_errors() {
+    // Typing state: incomplete contract, partial word, no closing brace.
+    let text = "contract C {\nuint256 total;\ntot";
+    let workspace = open_workspace(&[("/repo/C.sol", text)]);
+    let items = complete_multi(&workspace, "/repo/C.sol", text, "tot");
+    let labels: Vec<&str> = items.iter().map(|item| item.0.as_str()).collect();
+    assert!(labels.contains(&"total"), "labels: {labels:?}");
+    assert!(!labels.iter().any(|label| label.is_empty()));
+    // Keywords still suggest while the file is broken.
+    let keyword_text = "contract C {\nuint256 total;\nfun";
+    let keyword_workspace = open_workspace(&[("/repo/C.sol", keyword_text)]);
+    let keyword_items = complete_multi(&keyword_workspace, "/repo/C.sol", keyword_text, "fun");
+    let keyword_labels: Vec<&str> = keyword_items.iter().map(|item| item.0.as_str()).collect();
+    assert!(
+        keyword_labels.contains(&"function"),
+        "labels: {keyword_labels:?}"
+    );
+}
+
+#[test]
+fn hover_resolves_word_when_file_has_errors() {
+    let text = "contract C {\nuint256 total;\ntotal";
+    let workspace = open_workspace(&[("/repo/C.sol", text)]);
+    let owned = text.to_string();
+    let buf = PathBuf::from("/repo/C.sol");
+    let at = owned.rfind("total").expect("use") as u32;
+    let ctx = ProjectContext::new(buf.as_path(), &owned, at, &workspace);
+    let found = SolidityAnalyzer.hover(&ctx).expect("hover");
+    assert_eq!(found.contents, "uint256 total");
+}
+
+#[test]
+fn goto_resolves_word_when_file_has_errors() {
+    let text = "contract C {\nuint256 total;\ntotal";
+    let workspace = open_workspace(&[("/repo/C.sol", text)]);
+    let owned = text.to_string();
+    let buf = PathBuf::from("/repo/C.sol");
+    let at = owned.rfind("total").expect("use") as u32;
+    let ctx = ProjectContext::new(buf.as_path(), &owned, at, &workspace);
+    let target = SolidityAnalyzer.goto_location(&ctx).expect("goto");
+    assert_eq!(target.path, buf);
+    let decl = text.find("total").expect("decl") as u32;
+    assert!(target.span.start <= decl && decl < target.span.end);
+}
+
+#[test]
 fn exports_of_lists_contracts_and_functions_only() {
     let text = "contract Vault {\nuint256 total;\nfunction withdraw(uint a) public {}\nfunction deposit() public {\nuint x = 1;\n}\n}";
     let items = exports_of(text);

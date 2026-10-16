@@ -217,8 +217,9 @@ pub(crate) fn parse_param(cursor: &mut Cursor) -> Result<SyntaxNode, ParseError>
 }
 
 /// Parse `{ ... }`, keeping local variable declarations and the full span.
-/// Local errors go to `errors` while valid locals stay. `None` means the
-/// block never closed.
+/// Local errors go to `errors` while valid locals stay. EOF yields the
+/// partial block so typing inside a body keeps working. `None` means no
+/// `{` ever opened.
 pub(crate) fn parse_block(cursor: &mut Cursor, errors: &mut Vec<ParseError>) -> Option<SyntaxNode> {
     let open = match cursor.expect(SolidityKind::LBrace, "`{`") {
         Ok(open) => open,
@@ -232,7 +233,11 @@ pub(crate) fn parse_block(cursor: &mut Cursor, errors: &mut Vec<ParseError>) -> 
         match cursor.peek_kind() {
             None => {
                 errors.push(ParseError::new(cursor.peek_span(), "unclosed `{`"));
-                return None;
+                return Some(SyntaxNode::with_children(
+                    SolidityNode::Block.as_u16(),
+                    Span::new(open.span.start, cursor.peek_span().end),
+                    locals,
+                ));
             }
             Some(kind) if kind == SolidityKind::RBrace.as_u16() => break,
             Some(kind) if kind == SolidityKind::Assembly.as_u16() => {
@@ -261,8 +266,14 @@ pub(crate) fn parse_block(cursor: &mut Cursor, errors: &mut Vec<ParseError>) -> 
         }
     }
     let Some(close) = cursor.bump() else {
+        // Unreachable in practice: RBrace was peeked above. Keep the
+        // partial block on the defensive path instead of dropping it.
         errors.push(ParseError::new(cursor.peek_span(), "expected `}`"));
-        return None;
+        return Some(SyntaxNode::with_children(
+            SolidityNode::Block.as_u16(),
+            Span::new(open.span.start, cursor.peek_span().end),
+            locals,
+        ));
     };
     Some(SyntaxNode::with_children(
         SolidityNode::Block.as_u16(),
