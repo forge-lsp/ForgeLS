@@ -13,9 +13,11 @@ pub fn imports_in(text: &str) -> Vec<ImportRef> {
     file.imports()
         .iter()
         .filter_map(|directive| {
-            directive
-                .path()
-                .map(|raw| ImportRef::with_symbols(raw, directive.symbols()))
+            let raw = directive.path()?;
+            let span = directive
+                .path_span()
+                .unwrap_or(forgels_syntax::Span::new(0, 0));
+            Some(ImportRef::with_span(raw, directive.symbols(), span))
         })
         .collect()
 }

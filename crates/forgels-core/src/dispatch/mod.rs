@@ -43,6 +43,8 @@ pub struct Session {
     pub initialized: bool,
     /// Registered language analyzers, wired by the binary.
     pub analyzers: AnalyzerMap,
+    /// Server config: remappings and root fallback for imports.
+    pub config: crate::config::Config,
 }
 
 impl Session {
@@ -149,11 +151,11 @@ pub fn handle_message(
     }
     match method {
         "textDocument/didOpen" => {
-            apply_did_open(workspace, &session.analyzers, &params);
+            apply_did_open(workspace, &session.analyzers, &session.config, &params);
             return None;
         }
         "textDocument/didChange" => {
-            apply_did_change(workspace, &session.analyzers, &params);
+            apply_did_change(workspace, &session.analyzers, &session.config, &params);
             return None;
         }
         "textDocument/didClose" => {

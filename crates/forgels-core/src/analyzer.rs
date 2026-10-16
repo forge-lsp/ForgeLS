@@ -31,6 +31,7 @@ pub struct DiagnosticData {
 pub struct ImportRef {
     pub raw: String,
     pub symbols: Vec<String>,
+    pub span: Span,
 }
 
 impl ImportRef {
@@ -38,11 +39,20 @@ impl ImportRef {
         Self {
             raw,
             symbols: Vec::new(),
+            span: Span::new(0, 0),
         }
     }
 
     pub fn with_symbols(raw: String, symbols: Vec<String>) -> Self {
-        Self { raw, symbols }
+        Self {
+            raw,
+            symbols,
+            span: Span::new(0, 0),
+        }
+    }
+
+    pub fn with_span(raw: String, symbols: Vec<String>, span: Span) -> Self {
+        Self { raw, symbols, span }
     }
 }
 /// Language analyzer: pure analysis behind one trait.
