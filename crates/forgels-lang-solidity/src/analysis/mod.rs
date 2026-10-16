@@ -1,4 +1,6 @@
-use forgels_core::{Analyzer, CompletionData, DiagnosticData, HoverData, analyzer::ImportRef};
+use forgels_core::{
+    Analyzer, CompletionData, DiagnosticData, HoverData, ProjectContext, analyzer::ImportRef,
+};
 use forgels_syntax::{AstNode, Lexer, Span};
 
 use crate::{ContractDef, FunctionDef, SolidityFile, SolidityLexer, SolidityParser};
@@ -249,19 +251,21 @@ impl SolidityAnalyzer {
 }
 
 impl Analyzer for SolidityAnalyzer {
-    fn hover(&self, text: &str, offset: u32) -> Option<HoverData> {
-        let file = Self::parse_file(text)?;
-        hover::hover_at(&file, text, offset).map(|found| HoverData {
+    fn hover(&self, ctx: &ProjectContext) -> Option<HoverData> {
+        // Single file only; cross file lookup lands in FORGE-94..96.
+        let file = Self::parse_file(ctx.text)?;
+        hover::hover_at(&file, ctx.text, ctx.offset).map(|found| HoverData {
             contents: found.contents,
             span: found.span,
         })
     }
 
-    fn complete(&self, text: &str, offset: u32) -> Vec<CompletionData> {
-        let Some(file) = Self::parse_file(text) else {
+    fn complete(&self, ctx: &ProjectContext) -> Vec<CompletionData> {
+        // Single file only; cross file lookup lands in FORGE-94..96.
+        let Some(file) = Self::parse_file(ctx.text) else {
             return Vec::new();
         };
-        completion::complete_at(&file, text, offset)
+        completion::complete_at(&file, ctx.text, ctx.offset)
             .iter()
             .map(|item| CompletionData {
                 label: item.label.clone(),
@@ -270,9 +274,10 @@ impl Analyzer for SolidityAnalyzer {
             .collect()
     }
 
-    fn goto(&self, text: &str, offset: u32) -> Option<Span> {
-        let file = Self::parse_file(text)?;
-        goto::goto_definition(&file, text, offset)
+    fn goto(&self, ctx: &ProjectContext) -> Option<Span> {
+        // Single file only; cross file lookup lands in FORGE-94..96.
+        let file = Self::parse_file(ctx.text)?;
+        goto::goto_definition(&file, ctx.text, ctx.offset)
     }
 
     fn diagnostics(&self, text: &str) -> Vec<DiagnosticData> {

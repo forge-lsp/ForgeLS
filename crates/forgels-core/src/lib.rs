@@ -13,7 +13,9 @@ pub mod server;
 pub mod transport;
 pub mod workspace;
 
-pub use analyzer::{Analyzer, AnalyzerMap, CompletionData, DiagnosticData, HoverData, ImportRef};
+pub use analyzer::{
+    Analyzer, AnalyzerMap, CompletionData, DiagnosticData, HoverData, ImportRef, ProjectContext,
+};
 pub use config::Config;
 pub use index::{FileEntry, ProjectIndex};
 pub use server::Server;

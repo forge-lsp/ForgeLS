@@ -2,6 +2,7 @@ use serde_json::Value;
 
 use super::sync::uri_to_path;
 use super::{Session, Workspace};
+use crate::analyzer::ProjectContext;
 use crate::diagnostics::{position_to_offset, span_to_range};
 use forgels_protocol::Position;
 
@@ -28,10 +29,12 @@ fn hover_result(session: &Session, workspace: &Workspace, params: &Value) -> Opt
     let position = params.get("position")?;
     let line = position.get("line")?.as_u64()? as u32;
     let character = position.get("character")?.as_u64()? as u32;
-    let doc = workspace.get(&uri_to_path(uri))?;
+    let path = uri_to_path(uri);
+    let doc = workspace.get(&path)?;
     let analyzer = session.analyzers.get(&doc.language)?;
     let offset = position_to_offset(&doc.text, Position { line, character });
-    let found = analyzer.hover(&doc.text, offset)?;
+    let ctx = ProjectContext::new(&path, &doc.text, offset, workspace);
+    let found = analyzer.hover(&ctx)?;
     let range = span_to_range(&doc.text, found.span);
     Some(serde_json::json!({
         "contents": { "kind": "plaintext", "value": found.contents },
@@ -66,11 +69,13 @@ fn completion_result(session: &Session, workspace: &Workspace, params: &Value) -
     let position = params.get("position")?;
     let line = position.get("line")?.as_u64()? as u32;
     let character = position.get("character")?.as_u64()? as u32;
-    let doc = workspace.get(&uri_to_path(uri))?;
+    let path = uri_to_path(uri);
+    let doc = workspace.get(&path)?;
     let analyzer = session.analyzers.get(&doc.language)?;
     let offset = position_to_offset(&doc.text, Position { line, character });
+    let ctx = ProjectContext::new(&path, &doc.text, offset, workspace);
     let items: Vec<Value> = analyzer
-        .complete(&doc.text, offset)
+        .complete(&ctx)
         .iter()
         .map(|item| serde_json::json!({ "label": item.label, "detail": item.detail }))
         .collect();
@@ -100,10 +105,12 @@ fn definition_result(session: &Session, workspace: &Workspace, params: &Value) -
     let position = params.get("position")?;
     let line = position.get("line")?.as_u64()? as u32;
     let character = position.get("character")?.as_u64()? as u32;
-    let doc = workspace.get(&uri_to_path(uri))?;
+    let path = uri_to_path(uri);
+    let doc = workspace.get(&path)?;
     let analyzer = session.analyzers.get(&doc.language)?;
     let offset = position_to_offset(&doc.text, Position { line, character });
-    let target = analyzer.goto(&doc.text, offset)?;
+    let ctx = ProjectContext::new(&path, &doc.text, offset, workspace);
+    let target = analyzer.goto(&ctx)?;
     let range = span_to_range(&doc.text, target);
     Some(serde_json::json!({
         "uri": uri,

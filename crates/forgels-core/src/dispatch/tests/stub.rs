@@ -7,7 +7,7 @@ struct StubAnalyzer {
 }
 
 impl crate::analyzer::Analyzer for StubAnalyzer {
-    fn hover(&self, _text: &str, _offset: u32) -> Option<crate::analyzer::HoverData> {
+    fn hover(&self, _ctx: &crate::analyzer::ProjectContext) -> Option<crate::analyzer::HoverData> {
         if self.found {
             Some(crate::analyzer::HoverData {
                 contents: "stub detail".to_string(),
@@ -18,7 +18,10 @@ impl crate::analyzer::Analyzer for StubAnalyzer {
         }
     }
 
-    fn complete(&self, _text: &str, _offset: u32) -> Vec<crate::analyzer::CompletionData> {
+    fn complete(
+        &self,
+        _ctx: &crate::analyzer::ProjectContext,
+    ) -> Vec<crate::analyzer::CompletionData> {
         vec![
             crate::analyzer::CompletionData {
                 label: "stub_one".to_string(),
@@ -31,7 +34,7 @@ impl crate::analyzer::Analyzer for StubAnalyzer {
         ]
     }
 
-    fn goto(&self, _text: &str, _offset: u32) -> Option<forgels_syntax::Span> {
+    fn goto(&self, _ctx: &crate::analyzer::ProjectContext) -> Option<forgels_syntax::Span> {
         Some(forgels_syntax::Span::new(13, 18))
     }
 
