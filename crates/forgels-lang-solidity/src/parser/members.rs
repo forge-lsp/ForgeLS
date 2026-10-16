@@ -256,9 +256,15 @@ pub(crate) fn parse_block(cursor: &mut Cursor, errors: &mut Vec<ParseError>) -> 
                 }
             }
             Some(kind) if is_type_start(kind) || kind == SolidityKind::Ident.as_u16() => {
-                // Type-like token without a following name: an expression
-                // statement, skipped like any other.
-                recover_statement(cursor);
+                if kind == SolidityKind::Ident.as_u16()
+                    && let Some(call) = try_parse_call(cursor)
+                {
+                    locals.push(SyntaxElement::Node(call));
+                } else {
+                    // Type-like token without a following name: an expression
+                    // statement, skipped like any other.
+                    recover_statement(cursor);
+                }
             }
             _ => {
                 recover_statement(cursor);
@@ -280,6 +286,97 @@ pub(crate) fn parse_block(cursor: &mut Cursor, errors: &mut Vec<ParseError>) -> 
         Span::new(open.span.start, close.span.end),
         locals,
     ))
+}
+
+/// Try `name(args)` at block top level. Returns the Call node on success.
+///
+/// Plain calls only: member access (`a.b()`), named args (`f({x: 1})`),
+/// and `new`/`super`/`constructor` fall back to `recover_statement`
+/// with no node and no error. Commas count at paren depth one with
+/// no open bracket; empty parens give zero args.
+pub(crate) fn try_parse_call(cursor: &mut Cursor) -> Option<SyntaxNode> {
+    let tokens = cursor.tokens;
+    let comment = SolidityKind::Comment.as_u16();
+    let next_code = |mut index: usize| -> Option<usize> {
+        while let Some(token) = tokens.get(index) {
+            if token.kind != comment {
+                return Some(index);
+            }
+            index += 1;
+        }
+        None
+    };
+    let callee_idx = next_code(cursor.pos())?;
+    let callee = tokens.get(callee_idx)?.clone();
+    if callee.kind != SolidityKind::Ident.as_u16() {
+        return None;
+    }
+    if callee.text == "super" || callee.text == "constructor" || callee.text == "new" {
+        return None;
+    }
+    let lparen_idx = next_code(callee_idx + 1)?;
+    if tokens.get(lparen_idx)?.kind != SolidityKind::LParen.as_u16() {
+        return None;
+    }
+    let mut paren_depth = 0u32;
+    let mut bracket_depth = 0u32;
+    let mut commas = Vec::new();
+    let mut rparen_idx = None;
+    let mut index = lparen_idx;
+    while let Some(token) = tokens.get(index) {
+        if token.kind == comment {
+            index += 1;
+            continue;
+        }
+        let kind = token.kind;
+        if kind == SolidityKind::LBrace.as_u16() {
+            return None;
+        }
+        if kind == SolidityKind::LParen.as_u16() {
+            paren_depth += 1;
+        } else if kind == SolidityKind::RParen.as_u16() {
+            if paren_depth == 0 {
+                return None;
+            }
+            paren_depth -= 1;
+            if paren_depth == 0 {
+                rparen_idx = Some(index);
+                break;
+            }
+        } else if kind == SolidityKind::LBracket.as_u16() {
+            bracket_depth += 1;
+        } else if kind == SolidityKind::RBracket.as_u16() {
+            if bracket_depth == 0 {
+                return None;
+            }
+            bracket_depth -= 1;
+        } else if kind == SolidityKind::Comma.as_u16() && paren_depth == 1 && bracket_depth == 0 {
+            commas.push(token.clone());
+        }
+        index += 1;
+    }
+    let rparen_idx = rparen_idx?;
+    let rparen = tokens.get(rparen_idx)?.clone();
+    let after_lparen = next_code(lparen_idx + 1)?;
+    let is_empty = after_lparen == rparen_idx;
+    let mut children = vec![token_element(callee.clone())];
+    if !is_empty {
+        children.push(token_element(tokens.get(lparen_idx)?.clone()));
+        for comma in commas {
+            children.push(token_element(comma));
+        }
+    }
+    let node = SyntaxNode::with_children(
+        SolidityNode::Call.as_u16(),
+        Span::new(callee.span.start, rparen.span.end),
+        children,
+    );
+    while cursor.pos() <= rparen_idx {
+        if cursor.bump().is_none() {
+            break;
+        }
+    }
+    Some(node)
 }
 
 /// Skip an inline assembly block without errors.
