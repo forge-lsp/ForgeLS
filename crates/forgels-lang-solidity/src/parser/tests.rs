@@ -258,3 +258,51 @@ fn experimental_pragma_parses_to_semicolon() {
     assert_eq!(file.pragmas().len(), 1);
     assert_eq!(file.pragmas()[0].name().as_deref(), Some("experimental"));
 }
+
+#[test]
+fn call_with_nested_args_counts_top_level_only() {
+    use forgels_syntax::AstNode;
+    let text = "contract C {\nfunction f() public {\ngreet(bar(1, 2), [3, 4]);\n}\nfunction greet(uint a, uint b) public {}\n}";
+    let file = parse_ok(text);
+    let body = file.contracts()[0].functions()[0].body().expect("body");
+    let calls = body.calls();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].callee().as_deref(), Some("greet"));
+    assert_eq!(calls[0].arg_count(), 2);
+    let span_text =
+        &text[calls[0].syntax().span.start as usize..calls[0].syntax().span.end as usize];
+    assert!(span_text.ends_with(')'), "span: {span_text}");
+}
+
+#[test]
+fn empty_call_has_zero_args() {
+    let text = "contract C {\nfunction f() public {\ngreet();\n}\nfunction greet() public {}\n}";
+    let file = parse_ok(text);
+    let body = file.contracts()[0].functions()[0].body().expect("body");
+    let calls = body.calls();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].arg_count(), 0);
+}
+
+#[test]
+fn member_and_named_calls_produce_no_node() {
+    let text = "contract C {\nfunction f() public {\nobj.greet(1);\ngreet({value: 1});\n}\n}";
+    let lexer = SolidityLexer;
+    let tokens = lexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let body = file.contracts()[0].functions()[0].body().expect("body");
+    assert!(body.calls().is_empty());
+}
+
+#[test]
+fn calls_do_not_change_locals() {
+    use crate::LocalVar;
+    let text =
+        "contract C {\nfunction f() public {\nuint x = 1;\ngreet(x);\nstring memory s;\n}\n}";
+    let file = parse_ok(text);
+    let body = file.contracts()[0].functions()[0].body().expect("body");
+    let names: Vec<String> = body.locals().iter().filter_map(LocalVar::name).collect();
+    assert_eq!(names, vec!["x", "s"]);
+    assert_eq!(body.calls().len(), 1);
+}

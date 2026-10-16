@@ -562,6 +562,73 @@ fn broken_dep_goto_still_works() {
     assert!(hit.span.contains(want));
 }
 
+fn diagnostics_of(text: &str) -> Vec<forgels_core::DiagnosticData> {
+    SolidityAnalyzer.diagnostics(text)
+}
+
+#[test]
+fn too_few_args_reports_exact_message() {
+    let text = "contract C {\nfunction greet(uint a, uint b) public {}\nfunction f() public {\ngreet(1);\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1);
+    assert_eq!(
+        found[0].message,
+        "this function 'greet' takes 2 arguments but 1 supplied"
+    );
+    let covered = &text[found[0].span.start as usize..found[0].span.end as usize];
+    assert!(
+        covered.starts_with("greet") && covered.ends_with(')'),
+        "span: {covered}"
+    );
+}
+
+#[test]
+fn too_many_args_reports_exact_message() {
+    let text =
+        "contract C {\nfunction greet(uint a) public {}\nfunction f() public {\ngreet(1, 2);\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1);
+    assert_eq!(
+        found[0].message,
+        "this function 'greet' takes 1 arguments but 2 supplied"
+    );
+}
+
+#[test]
+fn correct_arg_count_has_no_diagnostic() {
+    let text = "contract C {\nfunction greet(uint a, uint b) public {}\nfunction f() public {\ngreet(1, 2);\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn unknown_callee_stays_silent() {
+    let text = "contract C {\nfunction f() public {\nmissing(1, 2, 3);\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn member_call_stays_silent() {
+    let text = "contract C {\nfunction greet(uint a, uint b) public {}\nfunction f() public {\nobj.greet(1);\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn super_and_new_calls_stay_silent() {
+    let text = "contract C {\nfunction greet(uint a, uint b) public {}\nfunction f() public {\nsuper.greet(1);\nnew C(1, 2, 3);\nsuper(1);\nconstructor(1);\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn overload_uses_first_definition() {
+    let text = "contract C {\nfunction greet(uint a) public {}\nfunction greet(uint a, uint b) public {}\nfunction f() public {\ngreet(1, 2);\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1);
+    assert_eq!(
+        found[0].message,
+        "this function 'greet' takes 1 arguments but 2 supplied"
+    );
+}
+
 fn parse_recovered(text: &str) -> crate::SolidityFile {
     let tokens = SolidityLexer.tokenize(text);
     let (file, _) = SolidityParser.parse_with_errors(&tokens);

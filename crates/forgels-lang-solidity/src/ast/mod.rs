@@ -1,10 +1,12 @@
 use forgels_syntax::{SyntaxElement, SyntaxNode};
 
+mod calls;
 mod contract;
 mod file;
 mod members;
 mod types;
 
+pub use calls::CallStmt;
 pub use contract::ContractDef;
 pub use file::{ImportDirective, PragmaDirective, SolidityFile};
 pub use members::{FunctionDef, LocalVar, Param, Returns, StateVar};
@@ -26,6 +28,7 @@ pub enum SolidityNode {
     Type,
     Block,
     Returns,
+    Call,
 }
 
 impl SolidityNode {

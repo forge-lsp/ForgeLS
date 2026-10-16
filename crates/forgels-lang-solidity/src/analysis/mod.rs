@@ -6,6 +6,7 @@ use forgels_syntax::{AstNode, Lexer, Span};
 
 use crate::{ContractDef, FunctionDef, SolidityFile, SolidityLexer, SolidityParser};
 
+mod calls;
 mod completion;
 mod goto;
 mod hover;
@@ -386,14 +387,24 @@ impl Analyzer for SolidityAnalyzer {
 
     fn diagnostics(&self, text: &str) -> Vec<DiagnosticData> {
         let tokens = SolidityLexer.tokenize(text);
-        let (_, errors) = SolidityParser.parse_with_errors(&tokens);
-        errors
+        let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+        let mut out: Vec<DiagnosticData> = errors
             .iter()
             .map(|error| DiagnosticData {
                 span: error.span,
                 message: error.message.clone(),
             })
-            .collect()
+            .collect();
+        let scope = collect_symbols(&file);
+        out.extend(calls::arity_diagnostics(&file, &scope));
+        out.sort_by(|a, b| {
+            a.span
+                .start
+                .cmp(&b.span.start)
+                .then(a.span.end.cmp(&b.span.end))
+                .then(a.message.cmp(&b.message))
+        });
+        out
     }
 
     fn imports(&self, text: &str) -> Vec<ImportRef> {
