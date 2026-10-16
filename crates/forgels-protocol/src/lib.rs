@@ -5,5 +5,5 @@
 pub mod lsp;
 pub mod rpc;
 
-pub use lsp::{Diagnostic, DiagnosticSeverity, Position, Range};
+pub use lsp::{Diagnostic, DiagnosticSeverity, Location, Position, Range};
 pub use rpc::{Request, Response};

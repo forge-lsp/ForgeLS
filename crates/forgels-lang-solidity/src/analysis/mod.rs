@@ -1,5 +1,6 @@
 use forgels_core::{
-    Analyzer, CompletionData, DiagnosticData, HoverData, ProjectContext, analyzer::ImportRef,
+    Analyzer, CompletionData, DiagnosticData, GotoTarget, HoverData, ProjectContext,
+    analyzer::ImportRef,
 };
 use forgels_syntax::{AstNode, Lexer, Span};
 
@@ -14,7 +15,7 @@ mod imports;
 mod tests;
 
 pub use completion::{CompletionItem, CompletionKind, complete_at, exports_of};
-pub use goto::goto_definition;
+pub use goto::{goto_definition, resolve_in_dep};
 pub use hover::{Hover, hover_at};
 pub use imports::imports_in;
 
@@ -337,9 +338,24 @@ impl Analyzer for SolidityAnalyzer {
     }
 
     fn goto(&self, ctx: &ProjectContext) -> Option<Span> {
-        // Single file only; cross file lookup lands in FORGE-94..96.
+        // Single file only; cross file lookup uses goto_location.
         let file = Self::parse_file(ctx.text)?;
         goto::goto_definition(&file, ctx.text, ctx.offset)
+    }
+
+    fn goto_location(&self, ctx: &ProjectContext) -> Option<GotoTarget> {
+        if let Some(file) = Self::parse_file(ctx.text)
+            && let Some(span) = goto::goto_definition(&file, ctx.text, ctx.offset)
+        {
+            return Some(GotoTarget::new(ctx.path.to_path_buf(), span));
+        }
+        let (word, _) = word_at(ctx.text, ctx.offset)?;
+        for (dep_path, dep_text) in forgels_core::dep_texts(ctx, 16) {
+            if let Some(span) = goto::resolve_in_dep(&dep_text, &word) {
+                return Some(GotoTarget::new(dep_path, span));
+            }
+        }
+        None
     }
 
     fn diagnostics(&self, text: &str) -> Vec<DiagnosticData> {

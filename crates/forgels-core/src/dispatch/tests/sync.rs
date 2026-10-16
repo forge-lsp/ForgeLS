@@ -1,4 +1,4 @@
-use super::super::sync::uri_to_path;
+use super::super::sync::{path_to_uri, uri_to_path};
 use super::super::{Session, handle_message};
 use super::stub::init;
 use crate::workspace::Workspace;
@@ -255,4 +255,23 @@ fn encoded_uri_tracks_decoded_path() {
         .get(&std::path::PathBuf::from("/repo/my proj/A.sol"))
         .expect("tracked");
     assert_eq!(tracked.text, "contract A {}");
+}
+
+#[test]
+fn path_to_uri_roundtrips_through_uri_to_path() {
+    for path in ["/repo/A.sol", "/repo/my proj/A.sol", "/repo/plain.sol"] {
+        let buf = std::path::PathBuf::from(path);
+        let uri = path_to_uri(&buf);
+        assert_eq!(uri_to_path(&uri), buf);
+    }
+    assert_eq!(
+        path_to_uri(&std::path::PathBuf::from("/repo/my proj/A.sol")),
+        "file:///repo/my%20proj/A.sol"
+    );
+    let check = char::from_u32(0x2713).expect("check mark");
+    let uri = path_to_uri(&std::path::PathBuf::from(format!("/repo/{check}.sol")));
+    assert_eq!(
+        uri_to_path(&uri),
+        std::path::PathBuf::from(format!("/repo/{check}.sol"))
+    );
 }

@@ -11,6 +11,18 @@ pub struct Range {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Location {
+    pub uri: String,
+    pub range: Range,
+}
+
+impl Location {
+    pub fn new(uri: String, range: Range) -> Self {
+        Self { uri, range }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Diagnostic {
     pub range: Range,
     pub severity: Option<DiagnosticSeverity>,

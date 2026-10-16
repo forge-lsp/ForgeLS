@@ -1,7 +1,9 @@
 use super::super::handle_message;
-use super::stub::{init, open_sol, session_with_stub};
+use super::stub::{init, open_sol, session_with_cross, session_with_stub};
 use crate::workspace::Workspace;
+use forgels_syntax::Span;
 use serde_json::Value;
+use std::path::PathBuf;
 
 #[test]
 fn hover_returns_contents_and_range() {
@@ -176,7 +178,11 @@ fn definition_returns_uri_and_range() {
     );
     assert_eq!(
         result.pointer("/range/start").expect("has start"),
-        &serde_json::json!({"line": 0, "character": 13})
+        &serde_json::json!({"line": 0, "character": 9})
+    );
+    assert_eq!(
+        result.pointer("/range/end").expect("has end"),
+        &serde_json::json!({"line": 0, "character": 10})
     );
 }
 
@@ -189,6 +195,81 @@ fn definition_on_unknown_file_returns_null() {
         &mut session,
         &mut workspace,
         &definition_body(7, "file:///repo/ghost.sol", 0, 1),
+    )
+    .expect("must reply");
+    let value: Value = serde_json::from_str(&reply).expect("reply is json");
+    assert!(value.get("result").expect("has result").is_null());
+}
+
+fn open_pair(session: &mut super::super::Session, workspace: &mut Workspace, b_text: &str) {
+    init(session, workspace);
+    for (uri, text) in [
+        ("file:///repo/A.sol", "contract A {}"),
+        ("file:///repo/B.sol", b_text),
+    ] {
+        let open = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "textDocument/didOpen",
+            "params": { "textDocument": {
+                "uri": uri, "languageId": "solidity", "version": 1, "text": text,
+            } },
+        })
+        .to_string();
+        assert!(handle_message(session, workspace, &open).is_none());
+    }
+}
+
+#[test]
+fn definition_returns_cross_file_uri_and_range() {
+    let mut session = session_with_cross(PathBuf::from("/repo/B.sol"), Span::new(16, 17));
+    let mut workspace = Workspace::new();
+    open_pair(&mut session, &mut workspace, "header\ncontract B {}");
+    let reply = handle_message(
+        &mut session,
+        &mut workspace,
+        &definition_body(7, "file:///repo/A.sol", 0, 10),
+    )
+    .expect("must reply");
+    let value: Value = serde_json::from_str(&reply).expect("reply is json");
+    let result = value.get("result").expect("has result");
+    assert_eq!(
+        result.pointer("/uri").expect("has uri"),
+        &serde_json::json!("file:///repo/B.sol")
+    );
+    assert_eq!(
+        result.pointer("/range/start").expect("has start"),
+        &serde_json::json!({"line": 1, "character": 9})
+    );
+    assert_eq!(
+        result.pointer("/range/end").expect("has end"),
+        &serde_json::json!({"line": 1, "character": 10})
+    );
+}
+
+#[test]
+fn definition_with_untracked_target_returns_null() {
+    let mut session = session_with_cross(PathBuf::from("/repo/Missing.sol"), Span::new(9, 10));
+    let mut workspace = Workspace::new();
+    open_pair(&mut session, &mut workspace, "contract B {}");
+    let reply = handle_message(
+        &mut session,
+        &mut workspace,
+        &definition_body(7, "file:///repo/A.sol", 0, 10),
+    )
+    .expect("must reply");
+    let value: Value = serde_json::from_str(&reply).expect("reply is json");
+    assert!(value.get("result").expect("has result").is_null());
+}
+
+#[test]
+fn definition_with_invalid_span_returns_null() {
+    let mut session = session_with_cross(PathBuf::from("/repo/B.sol"), Span::new(500, 510));
+    let mut workspace = Workspace::new();
+    open_pair(&mut session, &mut workspace, "contract B {}");
+    let reply = handle_message(
+        &mut session,
+        &mut workspace,
+        &definition_body(7, "file:///repo/A.sol", 0, 10),
     )
     .expect("must reply");
     let value: Value = serde_json::from_str(&reply).expect("reply is json");

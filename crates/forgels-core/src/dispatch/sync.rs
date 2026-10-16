@@ -15,6 +15,26 @@ pub(crate) fn uri_to_path(uri: &str) -> std::path::PathBuf {
     std::path::PathBuf::from(decode_percent(stripped))
 }
 
+/// Turn a path into a `file://` URI. Inverse of [`uri_to_path`].
+/// Encodes bytes outside `[A-Za-z0-9-_.~/]` as `%XX` so spaces and
+/// non-ASCII roundtrip through [`uri_to_path`].
+pub(crate) fn path_to_uri(path: &std::path::Path) -> String {
+    let raw = path.to_string_lossy();
+    let mut out = String::with_capacity(raw.len() + 7);
+    out.push_str("file://");
+    for byte in raw.as_bytes() {
+        if matches!(
+            byte,
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b'/'
+        ) {
+            out.push(*byte as char);
+        } else {
+            out.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    out
+}
+
 fn decode_percent(text: &str) -> String {
     let bytes = text.as_bytes();
     let mut out: Vec<u8> = Vec::with_capacity(bytes.len());

@@ -433,3 +433,85 @@ fn broken_dep_hover_still_works() {
         hit.contents
     );
 }
+
+fn goto_multi(
+    workspace: &Workspace,
+    path: &str,
+    text: &str,
+    needle: &str,
+) -> Option<forgels_core::GotoTarget> {
+    let owned = text.to_string();
+    let buf = PathBuf::from(path);
+    let at = owned.rfind(needle).expect("needle") as u32;
+    let ctx = ProjectContext::new(buf.as_path(), &owned, at, workspace);
+    SolidityAnalyzer.goto_location(&ctx)
+}
+
+#[test]
+fn dep_goto_jumps_to_other_file() {
+    let b = "contract Vault {\nfunction withdraw(uint a) public {}\n}";
+    let a = "import \"./B.sol\";\ncontract A {\nfunction f() public {\nwithdraw;\n}\n}";
+    let mut workspace = open_workspace(&[("/A.sol", a), ("/B.sol", b)]);
+    workspace.set_file_deps(PathBuf::from("/A.sol"), vec![PathBuf::from("/B.sol")]);
+    let hit = goto_multi(&workspace, "/A.sol", a, "withdraw").expect("dep goto");
+    assert_eq!(hit.path, PathBuf::from("/B.sol"));
+    let want = b.find("withdraw").expect("decl") as u32;
+    assert!(hit.span.contains(want));
+}
+
+#[test]
+fn local_goto_shadows_dep() {
+    let b = "contract Vault {\nfunction withdraw(uint a) public {}\n}";
+    let a = "import \"./B.sol\";\ncontract A {\nfunction withdraw() public {\nwithdraw;\n}\n}";
+    let mut workspace = open_workspace(&[("/A.sol", a), ("/B.sol", b)]);
+    workspace.set_file_deps(PathBuf::from("/A.sol"), vec![PathBuf::from("/B.sol")]);
+    let hit = goto_multi(&workspace, "/A.sol", a, "withdraw").expect("local goto");
+    assert_eq!(hit.path, PathBuf::from("/A.sol"));
+}
+
+#[test]
+fn transitive_dep_goto() {
+    let c = "contract C {\nfunction settle() public {}\n}";
+    let b = "import \"./C.sol\";\ncontract B {\n}";
+    let a = "import \"./B.sol\";\ncontract A {\nfunction f() public {\nsettle;\n}\n}";
+    let mut workspace = open_workspace(&[("/A.sol", a), ("/B.sol", b), ("/C.sol", c)]);
+    workspace.set_file_deps(PathBuf::from("/A.sol"), vec![PathBuf::from("/B.sol")]);
+    workspace.set_file_deps(PathBuf::from("/B.sol"), vec![PathBuf::from("/C.sol")]);
+    let hit = goto_multi(&workspace, "/A.sol", a, "settle").expect("transitive goto");
+    assert_eq!(hit.path, PathBuf::from("/C.sol"));
+    let want = c.find("settle").expect("decl") as u32;
+    assert!(hit.span.contains(want));
+}
+
+#[test]
+fn untracked_dep_goto_returns_none() {
+    let a = "import \"./Missing.sol\";\ncontract A {\nfunction f() public {\nwithdraw;\n}\n}";
+    let mut workspace = open_workspace(&[("/A.sol", a)]);
+    workspace.set_file_deps(PathBuf::from("/A.sol"), vec![PathBuf::from("/Missing.sol")]);
+    assert!(goto_multi(&workspace, "/A.sol", a, "withdraw").is_none());
+}
+
+#[test]
+fn cyclic_dep_goto_terminates() {
+    let b = "import \"./A.sol\";\ncontract B {\nfunction beacon() public {}\n}";
+    let a = "import \"./B.sol\";\ncontract A {\nfunction f() public {\nbeacon;\n}\n}";
+    let mut workspace = open_workspace(&[("/A.sol", a), ("/B.sol", b)]);
+    workspace.set_file_deps(PathBuf::from("/A.sol"), vec![PathBuf::from("/B.sol")]);
+    workspace.set_file_deps(PathBuf::from("/B.sol"), vec![PathBuf::from("/A.sol")]);
+    let hit = goto_multi(&workspace, "/A.sol", a, "beacon").expect("cycle goto");
+    assert_eq!(hit.path, PathBuf::from("/B.sol"));
+    let want = b.find("beacon").expect("decl") as u32;
+    assert!(hit.span.contains(want));
+}
+
+#[test]
+fn broken_dep_goto_still_works() {
+    let b = "contract Vault {\nfunction withdraw(uint a) public {}\n}\n@@@ broken";
+    let a = "import \"./B.sol\";\ncontract A {\nfunction f() public {\nwithdraw;\n}\n}";
+    let mut workspace = open_workspace(&[("/A.sol", a), ("/B.sol", b)]);
+    workspace.set_file_deps(PathBuf::from("/A.sol"), vec![PathBuf::from("/B.sol")]);
+    let hit = goto_multi(&workspace, "/A.sol", a, "withdraw").expect("broken dep goto");
+    assert_eq!(hit.path, PathBuf::from("/B.sol"));
+    let want = b.find("withdraw").expect("decl") as u32;
+    assert!(hit.span.contains(want));
+}

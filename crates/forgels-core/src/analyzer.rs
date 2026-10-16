@@ -58,6 +58,19 @@ impl ImportRef {
         Self { raw, symbols, span }
     }
 }
+/// Jump target with owning file. Core uses this for cross file goto.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GotoTarget {
+    pub path: PathBuf,
+    pub span: Span,
+}
+
+impl GotoTarget {
+    pub fn new(path: PathBuf, span: Span) -> Self {
+        Self { path, span }
+    }
+}
+
 /// Request context for position based analysis.
 ///
 /// Carries the current file identity plus the workspace so later work
@@ -121,6 +134,10 @@ pub trait Analyzer: std::fmt::Debug {
     fn hover(&self, ctx: &ProjectContext) -> Option<HoverData>;
     fn complete(&self, ctx: &ProjectContext) -> Vec<CompletionData>;
     fn goto(&self, ctx: &ProjectContext) -> Option<Span>;
+    fn goto_location(&self, ctx: &ProjectContext) -> Option<GotoTarget> {
+        self.goto(ctx)
+            .map(|span| GotoTarget::new(ctx.path.to_path_buf(), span))
+    }
     fn diagnostics(&self, text: &str) -> Vec<DiagnosticData>;
     /// Import specifiers in `text`. Default is none so languages
     /// without imports keep working.

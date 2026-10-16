@@ -1,6 +1,6 @@
 use serde_json::Value;
 
-use super::sync::uri_to_path;
+use super::sync::{path_to_uri, uri_to_path};
 use super::{Session, Workspace};
 use crate::analyzer::ProjectContext;
 use crate::diagnostics::{position_to_offset, span_to_range};
@@ -110,10 +110,13 @@ fn definition_result(session: &Session, workspace: &Workspace, params: &Value) -
     let analyzer = session.analyzers.get(&doc.language)?;
     let offset = position_to_offset(&doc.text, Position { line, character });
     let ctx = ProjectContext::new(&path, &doc.text, offset, workspace);
-    let target = analyzer.goto(&ctx)?;
-    let range = span_to_range(&doc.text, target);
+    let target = analyzer.goto_location(&ctx)?;
+    let target_text = workspace.get_text(&target.path)?;
+    target_text.get(target.span.start as usize..target.span.end as usize)?;
+    let range = span_to_range(target_text, target.span);
+    let target_uri = path_to_uri(&target.path);
     Some(serde_json::json!({
-        "uri": uri,
+        "uri": target_uri,
         "range": {
             "start": { "line": range.start.line, "character": range.start.character },
             "end": { "line": range.end.line, "character": range.end.character },
