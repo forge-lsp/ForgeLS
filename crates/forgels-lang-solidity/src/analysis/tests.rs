@@ -707,3 +707,106 @@ fn analyzer_complete_prefers_paths_in_import() {
     assert!(found.iter().any(|item| item.label == "./B.sol"));
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[test]
+fn completion_suggests_contract_struct_by_prefix() {
+    let text = "contract C {\nstruct Person {\nuint age;\n}\nfunction f() public {\nPer\n}\n}";
+    let at = text.rfind("Per").expect("prefix") as u32 + 3;
+    let labels = complete_labels(text, at);
+    assert!(labels.contains(&"Person".to_string()), "labels: {labels:?}");
+}
+
+#[test]
+fn completion_suggests_contract_enum_by_prefix() {
+    let text = "contract C {\nenum Color {\nRed\n}\nfunction f() public {\nCol\n}\n}";
+    let at = text.rfind("Col").expect("prefix") as u32 + 3;
+    let labels = complete_labels(text, at);
+    assert!(labels.contains(&"Color".to_string()), "labels: {labels:?}");
+}
+
+#[test]
+fn typing_state_without_closing_brace_still_suggests_struct() {
+    let text = "contract C {\nstruct Person {\nuint age;\nPer";
+    let workspace = open_workspace(&[("/repo/C.sol", text)]);
+    let items = complete_multi(&workspace, "/repo/C.sol", text, "Per");
+    let labels: Vec<&str> = items.iter().map(|item| item.0.as_str()).collect();
+    assert!(labels.contains(&"Person"), "labels: {labels:?}");
+    let hit = items
+        .iter()
+        .find(|(label, _)| label == "Person")
+        .expect("struct hit");
+    assert_eq!(hit.1, "struct Person");
+}
+
+#[test]
+fn file_struct_visible_inside_contract() {
+    let text = "struct Person {\nuint age;\n}\ncontract C {\nfunction f() public {\nPer\n}\n}";
+    let at = text.rfind("Per").expect("prefix") as u32 + 3;
+    let labels = complete_labels(text, at);
+    assert!(labels.contains(&"Person".to_string()), "labels: {labels:?}");
+}
+
+#[test]
+fn contract_struct_stays_inside_its_contract() {
+    let text = "contract A {\nstruct Person {\nuint age;\n}\n}\ncontract B {\nfunction f() public {\nPer\n}\n}";
+    let at = text.rfind("Per").expect("prefix") as u32 + 3;
+    let labels = complete_labels(text, at);
+    assert!(
+        !labels.contains(&"Person".to_string()),
+        "labels: {labels:?}"
+    );
+}
+
+#[test]
+fn exports_include_struct_and_enum() {
+    let text = "struct Person {\nuint age;\n}\nenum Color {\nRed\n}\ncontract C {\n}";
+    let items = exports_of(text);
+    let labels: Vec<&str> = items.iter().map(|item| item.label.as_str()).collect();
+    assert!(labels.contains(&"Person"), "labels: {labels:?}");
+    assert!(labels.contains(&"Color"), "labels: {labels:?}");
+    let person = items
+        .iter()
+        .find(|item| item.label == "Person")
+        .expect("person");
+    assert_eq!(person.detail, "struct Person");
+    let color = items
+        .iter()
+        .find(|item| item.label == "Color")
+        .expect("color");
+    assert_eq!(color.detail, "enum Color");
+}
+
+#[test]
+fn dep_completion_suggests_struct_with_origin() {
+    let b = "struct Person {\nuint age;\n}\ncontract B {\n}";
+    let a = "import \"./B.sol\";\ncontract A {\nfunction f() public {\nPer\n}\n}";
+    let mut workspace = open_workspace(&[("/A.sol", a), ("/B.sol", b)]);
+    workspace.set_file_deps(PathBuf::from("/A.sol"), vec![PathBuf::from("/B.sol")]);
+    let found = complete_multi(&workspace, "/A.sol", a, "Per");
+    let hit = found
+        .iter()
+        .find(|(label, _)| label == "Person")
+        .expect("dep struct hit");
+    assert!(hit.1.contains("struct Person"), "detail: {}", hit.1);
+    assert!(hit.1.contains("from B.sol"), "detail: {}", hit.1);
+}
+
+#[test]
+fn hover_shows_struct_detail() {
+    let text = "contract C {\nstruct Person {\nuint age;\n}\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let at = text.find("Person").expect("name") as u32;
+    let hover = hover_at(&file, text, at).expect("hover");
+    assert_eq!(hover.contents, "struct Person");
+}
+
+#[test]
+fn goto_jumps_to_struct_declaration() {
+    let text = "contract C {\nstruct Person {\nuint age;\n}\nfunction f() public {\nPerson;\n}\n}";
+    let at_use = text.rfind("Person").expect("use") as u32;
+    let at_decl = text.find("Person").expect("decl") as u32;
+    let target = goto_target(text, at_use);
+    assert!(target.start <= at_decl && at_decl < target.end);
+}

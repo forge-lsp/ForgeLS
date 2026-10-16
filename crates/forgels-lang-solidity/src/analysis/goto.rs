@@ -14,8 +14,9 @@ pub fn goto_definition(file: &SolidityFile, text: &str, offset: u32) -> Option<S
 
 /// Exported declaration span for `word` inside a dependency text.
 ///
-/// Parses with recovery so broken deps still resolve. Only contracts and
-/// functions cross files; locals, params, and state vars stay local.
+/// Parses with recovery so broken deps still resolve. Only contracts,
+/// functions, structs, and enums cross files; locals, params, and
+/// state vars stay local.
 pub fn resolve_in_dep(dep_text: &str, word: &str) -> Option<Span> {
     let tokens = SolidityLexer.tokenize(dep_text);
     let (file, _) = SolidityParser.parse_with_errors(&tokens);

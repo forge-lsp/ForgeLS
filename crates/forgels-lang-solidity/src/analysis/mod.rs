@@ -4,7 +4,9 @@ use forgels_core::{
 };
 use forgels_syntax::{AstNode, Lexer, Span};
 
-use crate::{ContractDef, FunctionDef, SolidityFile, SolidityLexer, SolidityParser};
+use crate::{
+    ContractDef, EnumDef, FunctionDef, SolidityFile, SolidityLexer, SolidityParser, StructDef,
+};
 
 mod calls;
 mod completion;
@@ -50,6 +52,8 @@ fn word_at(text: &str, offset: u32) -> Option<(String, Span)> {
 pub enum SymbolKind {
     Contract,
     Function,
+    Struct,
+    Enum,
     StateVar,
     LocalVar,
     Param,
@@ -124,20 +128,29 @@ impl Scope {
         }
     }
 
-    /// Contract level symbols: contracts plus their functions.
+    /// Contract level symbols: contracts, functions, structs, and enums.
     ///
     /// Used for cross file completion. State vars, params, and locals
     /// stay local and never cross files.
     pub fn export_symbols(&self) -> Vec<&Symbol> {
         let mut out: Vec<&Symbol> = Vec::new();
         for symbol in &self.symbols {
-            if matches!(symbol.kind, SymbolKind::Contract | SymbolKind::Function) {
+            if matches!(
+                symbol.kind,
+                SymbolKind::Contract | SymbolKind::Function | SymbolKind::Struct | SymbolKind::Enum
+            ) {
                 out.push(symbol);
             }
         }
         for child in &self.children {
             for symbol in &child.symbols {
-                if matches!(symbol.kind, SymbolKind::Contract | SymbolKind::Function) {
+                if matches!(
+                    symbol.kind,
+                    SymbolKind::Contract
+                        | SymbolKind::Function
+                        | SymbolKind::Struct
+                        | SymbolKind::Enum
+                ) {
                     out.push(symbol);
                 }
             }
@@ -152,6 +165,18 @@ impl Scope {
 /// and nameless contracts are skipped so they never surface.
 pub fn collect_symbols(file: &SolidityFile) -> Scope {
     let mut root = Scope::new(file.syntax().span);
+    for item in file.structs() {
+        if item.name().is_none_or(|name| name.is_empty()) {
+            continue;
+        }
+        root.symbols.push(struct_symbol(&item));
+    }
+    for item in file.enums() {
+        if item.name().is_none_or(|name| name.is_empty()) {
+            continue;
+        }
+        root.symbols.push(enum_symbol(&item));
+    }
     for contract in file.contracts() {
         if contract.name().is_none_or(|name| name.is_empty()) {
             continue;
@@ -173,8 +198,38 @@ fn contract_symbol(contract: &ContractDef) -> Symbol {
     Symbol::new(name, SymbolKind::Contract, contract.syntax().span, detail)
 }
 
+fn struct_symbol(item: &StructDef) -> Symbol {
+    let name = item.name().unwrap_or_default();
+    let mut detail = String::from("struct ");
+    detail.push_str(&name);
+    Symbol::new(name, SymbolKind::Struct, item.syntax().span, detail)
+}
+
+fn enum_symbol(item: &EnumDef) -> Symbol {
+    let name = item.name().unwrap_or_default();
+    let mut detail = String::from("enum ");
+    detail.push_str(&name);
+    Symbol::new(name, SymbolKind::Enum, item.syntax().span, detail)
+}
+
 fn contract_scope(contract: &ContractDef) -> Scope {
     let mut scope = Scope::new(contract.syntax().span);
+    for item in contract.structs() {
+        if let Some(name) = item.name() {
+            if name.is_empty() {
+                continue;
+            }
+            scope.symbols.push(struct_symbol(&item));
+        }
+    }
+    for item in contract.enums() {
+        if let Some(name) = item.name() {
+            if name.is_empty() {
+                continue;
+            }
+            scope.symbols.push(enum_symbol(&item));
+        }
+    }
     for var in contract.state_vars() {
         if let Some(name) = var.name() {
             let mut detail = var.type_node().map(|node| node.text()).unwrap_or_default();

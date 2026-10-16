@@ -15,8 +15,8 @@ pub use analysis::{
 };
 
 pub use ast::{
-    BlockNode, CallStmt, ContractDef, FunctionDef, ImportDirective, LocalVar, Param,
-    PragmaDirective, Returns, SolidityFile, SolidityNode, StateVar, TypeNode,
+    BlockNode, CallStmt, ContractDef, EnumDef, FunctionDef, ImportDirective, LocalVar, Param,
+    PragmaDirective, Returns, SolidityFile, SolidityNode, StateVar, StructDef, TypeNode,
 };
 pub use lexer::{KEYWORDS, SolidityKind, SolidityLexer, keyword_kind, symbol_kind};
 pub use parser::SolidityParser;
