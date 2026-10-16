@@ -115,6 +115,44 @@ impl ProjectIndex {
         out
     }
 
+    /// All files that depend on `path`, direct and indirect, excluding `path`.
+    /// BFS in stored order, cycle safe, capped at `cap` entries.
+    pub fn transitive_dependents(&self, path: &Path, cap: usize) -> Vec<PathBuf> {
+        if cap == 0 {
+            return Vec::new();
+        }
+        let mut visited: HashSet<PathBuf> = HashSet::new();
+        visited.insert(path.to_path_buf());
+        let mut queue: Vec<PathBuf> = Vec::new();
+        for dep in self.dependents_of(path) {
+            if visited.insert(dep.clone()) {
+                queue.push(dep.clone());
+                if queue.len() >= cap {
+                    break;
+                }
+            }
+        }
+        let mut out = Vec::new();
+        let mut head = 0;
+        while head < queue.len() && out.len() < cap {
+            let current = queue[head].clone();
+            head += 1;
+            out.push(current.clone());
+            if out.len() >= cap {
+                break;
+            }
+            for next in self.dependents_of(&current) {
+                if queue.len() >= cap {
+                    break;
+                }
+                if visited.insert(next.clone()) {
+                    queue.push(next.clone());
+                }
+            }
+        }
+        out
+    }
+
     pub fn contains(&self, path: &Path) -> bool {
         self.files.contains_key(path)
     }
@@ -196,5 +234,49 @@ mod tests {
         assert_eq!(index.deps_of(&path("/a.sol")), &[path("/c.sol")]);
         assert!(index.dependents_of(&path("/b.sol")).is_empty());
         assert_eq!(index.dependents_of(&path("/c.sol")), &[path("/a.sol")]);
+    }
+
+    #[test]
+    fn dependents_walk_reverse_in_bfs_order() {
+        let mut index = ProjectIndex::new();
+        index.rebuild_file(path("/a.sol"), vec![path("/b.sol")]);
+        index.rebuild_file(path("/b.sol"), vec![path("/c.sol")]);
+        index.rebuild_file(path("/c.sol"), Vec::new());
+        assert_eq!(
+            index.transitive_dependents(&path("/c.sol"), 8),
+            vec![path("/b.sol"), path("/a.sol")]
+        );
+        assert_eq!(
+            index.transitive_dependents(&path("/b.sol"), 8),
+            vec![path("/a.sol")]
+        );
+        assert!(index.transitive_dependents(&path("/a.sol"), 8).is_empty());
+    }
+
+    #[test]
+    fn dependents_cycle_stays_bounded() {
+        let mut index = ProjectIndex::new();
+        index.rebuild_file(path("/a.sol"), vec![path("/b.sol")]);
+        index.rebuild_file(path("/b.sol"), vec![path("/a.sol")]);
+        assert_eq!(
+            index.transitive_dependents(&path("/a.sol"), 8),
+            vec![path("/b.sol")]
+        );
+        assert_eq!(
+            index.transitive_dependents(&path("/a.sol"), 0),
+            Vec::<PathBuf>::new()
+        );
+    }
+
+    #[test]
+    fn dependents_cap_bounds_output() {
+        let mut index = ProjectIndex::new();
+        index.rebuild_file(path("/a.sol"), vec![path("/base.sol")]);
+        index.rebuild_file(path("/b.sol"), vec![path("/base.sol")]);
+        index.rebuild_file(path("/c.sol"), vec![path("/base.sol")]);
+        let capped = index.transitive_dependents(&path("/base.sol"), 2);
+        assert_eq!(capped.len(), 2);
+        let all = index.transitive_dependents(&path("/base.sol"), 8);
+        assert_eq!(all.len(), 3);
     }
 }

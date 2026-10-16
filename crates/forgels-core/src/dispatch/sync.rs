@@ -16,23 +16,9 @@ pub(crate) fn uri_to_path(uri: &str) -> std::path::PathBuf {
 }
 
 /// Turn a path into a `file://` URI. Inverse of [`uri_to_path`].
-/// Encodes bytes outside `[A-Za-z0-9-_.~/]` as `%XX` so spaces and
-/// non-ASCII roundtrip through [`uri_to_path`].
+/// Reuses the workspace encoder so both sides roundtrip the same way.
 pub(crate) fn path_to_uri(path: &std::path::Path) -> String {
-    let raw = path.to_string_lossy();
-    let mut out = String::with_capacity(raw.len() + 7);
-    out.push_str("file://");
-    for byte in raw.as_bytes() {
-        if matches!(
-            byte,
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b'/'
-        ) {
-            out.push(*byte as char);
-        } else {
-            out.push_str(&format!("%{byte:02X}"));
-        }
-    }
-    out
+    crate::workspace::path_to_uri(path)
 }
 
 fn decode_percent(text: &str) -> String {
@@ -153,6 +139,7 @@ pub(crate) fn apply_did_open(
             .is_ok()
         {
             refresh_index(workspace, analyzers, config, &path);
+            workspace.mark_dependents_dirty(&path, std::time::Instant::now());
         }
     }
 }
@@ -187,20 +174,33 @@ pub(crate) fn apply_did_change(
             .is_ok()
     {
         refresh_index(workspace, analyzers, config, &path);
+        let now = std::time::Instant::now();
         if let Some(version) = version {
-            workspace.mark_dirty(uri, version as u64, std::time::Instant::now());
+            workspace.mark_dirty(uri, version as u64, now);
         }
+        workspace.mark_dependents_dirty(&path, now);
     }
 }
 
 /// Apply `didClose`. Unknown documents stay ignored.
+/// Dependents are marked dirty so their unresolved import returns.
 pub(crate) fn apply_did_close(workspace: &mut Workspace, params: &Value) {
-    if let Some(uri) = params
+    let Some(uri) = params
         .get("textDocument")
         .and_then(|doc| doc.get("uri"))
         .and_then(Value::as_str)
-    {
-        let _ = workspace.close(&uri_to_path(uri));
+    else {
+        return;
+    };
+    let path = uri_to_path(uri);
+    let now = std::time::Instant::now();
+    let dependents = workspace.dependents_to_refresh(&path);
+    let _ = workspace.close(&path);
+    for dep in dependents {
+        let Some(version) = workspace.get(&dep).map(|doc| doc.version as u64) else {
+            continue;
+        };
+        workspace.mark_dirty(&path_to_uri(&dep), version, now);
     }
 }
 
