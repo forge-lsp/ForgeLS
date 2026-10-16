@@ -383,3 +383,38 @@ fn unclosed_enum_still_yields_name() {
         .collect();
     assert_eq!(names, vec!["Color"]);
 }
+
+#[test]
+fn struct_fields_keep_type_and_name() {
+    let text = "struct Person {\nuint age;\nstring memory name;\n}";
+    let file = parse_ok(text);
+    let fields = file.structs()[0].fields();
+    let names: Vec<String> = fields.iter().filter_map(|field| field.name()).collect();
+    assert_eq!(names, vec!["age", "name"]);
+    let types: Vec<String> = fields
+        .iter()
+        .filter_map(|field| field.type_node().map(|node| node.text()))
+        .collect();
+    assert_eq!(types, vec!["uint", "string"]);
+}
+
+#[test]
+fn enum_variants_are_stored() {
+    let text = "enum Color {\nRed,\nBlue\n}";
+    let file = parse_ok(text);
+    assert_eq!(file.enums()[0].variants(), vec!["Red", "Blue"]);
+}
+
+#[test]
+fn block_members_collect_single_dot() {
+    let text = "contract C {\nfunction f() public {\nPerson p;\np.age;\nthis.total;\n}\n}";
+    let file = parse_ok(text);
+    let body = file.contracts()[0].functions()[0].body().expect("body");
+    let pairs: Vec<(Option<String>, Option<String>)> = body
+        .members()
+        .iter()
+        .map(|member| (member.receiver(), member.member()))
+        .collect();
+    assert!(pairs.contains(&(Some("p".to_string()), Some("age".to_string()))));
+    assert!(pairs.contains(&(Some("this".to_string()), Some("total".to_string()))));
+}

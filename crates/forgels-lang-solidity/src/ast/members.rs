@@ -223,3 +223,50 @@ impl AstNode for LocalVar {
         &self.syntax
     }
 }
+
+/// Member access with single ident receiver: `p.age`, `this.total`.
+///
+/// Children hold receiver token, dot token, then optional member token.
+/// Only one dot is stored; chained `a.b.c` keeps the first pair and the
+/// rest is skipped as statement tail.
+#[derive(Debug, Clone)]
+pub struct MemberExpr {
+    syntax: SyntaxNode,
+}
+
+impl MemberExpr {
+    pub fn receiver(&self) -> Option<String> {
+        self.syntax
+            .children
+            .iter()
+            .find_map(|element| match element {
+                SyntaxElement::Token(token) => Some(token.text.clone()),
+                _ => None,
+            })
+    }
+
+    pub fn member(&self) -> Option<String> {
+        self.syntax
+            .children
+            .iter()
+            .filter_map(|element| match element {
+                SyntaxElement::Token(token) => Some(token.text.clone()),
+                _ => None,
+            })
+            .nth(2)
+    }
+}
+
+impl AstNode for MemberExpr {
+    fn cast(node: SyntaxNode) -> Option<Self> {
+        if cast_node(&node, SolidityNode::Member) {
+            Some(Self { syntax: node })
+        } else {
+            None
+        }
+    }
+
+    fn syntax(&self) -> &SyntaxNode {
+        &self.syntax
+    }
+}

@@ -21,8 +21,12 @@ pub enum CompletionKind {
 /// Suggest symbols visible at `offset`, filtered by the typed prefix.
 ///
 /// Shadowed names appear once with the innermost detail. Keywords whose
-/// spelling matches the prefix follow the symbols.
+/// spelling matches the prefix follow the symbols. Positions after a dot
+/// suggest members of the receiver type instead of scope symbols.
 pub fn complete_at(file: &SolidityFile, text: &str, offset: u32) -> Vec<CompletionItem> {
+    if let Some(ctx) = super::members::member_context_at(text, offset) {
+        return complete_members(file, offset, &ctx);
+    }
     let prefix = prefix_at(text, offset);
     let scope = collect_symbols(file);
     let mut seen: Vec<String> = Vec::new();
@@ -53,6 +57,26 @@ pub fn complete_at(file: &SolidityFile, text: &str, offset: u32) -> Vec<Completi
             kind: CompletionKind::Keyword,
         });
     }
+    items
+}
+
+fn complete_members(
+    file: &SolidityFile,
+    offset: u32,
+    ctx: &super::members::MemberContext,
+) -> Vec<CompletionItem> {
+    let scope = collect_symbols(file);
+    let kind = super::members::receiver_type(file, &scope, offset, &ctx.receiver);
+    let mut items: Vec<CompletionItem> = super::members::members_of(file, &kind)
+        .into_iter()
+        .filter(|member| member.name.starts_with(ctx.member.as_str()))
+        .map(|member| CompletionItem {
+            label: member.name,
+            detail: member.detail,
+            kind: CompletionKind::Symbol(member.kind),
+        })
+        .collect();
+    items.sort_by(|left, right| left.label.cmp(&right.label));
     items
 }
 

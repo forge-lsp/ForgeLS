@@ -1,10 +1,12 @@
+use super::members::Param;
 use super::{SolidityNode, cast_node};
 use crate::lexer::SolidityKind;
-use forgels_syntax::{AstNode, SyntaxElement, SyntaxNode};
+use forgels_syntax::{AstNode, Span, SyntaxElement, SyntaxNode};
 
-/// Struct definition: name only, body is skipped during parsing.
+/// Struct definition: name plus field list.
 ///
-/// Children hold the name token so heritage lists never see it.
+/// Children hold the name token first, then one Param node per field.
+/// Param reuses type plus data location parsing from function params.
 #[derive(Debug, Clone)]
 pub struct StructDef {
     syntax: SyntaxNode,
@@ -22,6 +24,19 @@ impl StructDef {
                 _ => None,
             })
     }
+
+    pub fn fields(&self) -> Vec<Param> {
+        self.syntax
+            .children
+            .iter()
+            .filter_map(|element| match element {
+                SyntaxElement::Node(node) if node.kind == SolidityNode::Param.as_u16() => {
+                    Param::cast(node.clone())
+                }
+                _ => None,
+            })
+            .collect()
+    }
 }
 
 impl AstNode for StructDef {
@@ -38,9 +53,9 @@ impl AstNode for StructDef {
     }
 }
 
-/// Enum definition: name only, body is skipped during parsing.
+/// Enum definition: name plus variant names.
 ///
-/// Children hold the name token so heritage lists never see it.
+/// Children hold the name token first, then one Ident token per variant.
 #[derive(Debug, Clone)]
 pub struct EnumDef {
     syntax: SyntaxNode,
@@ -57,6 +72,34 @@ impl EnumDef {
                 }
                 _ => None,
             })
+    }
+
+    pub fn variants(&self) -> Vec<String> {
+        self.syntax
+            .children
+            .iter()
+            .filter_map(|element| match element {
+                SyntaxElement::Token(token) if token.kind == SolidityKind::Ident.as_u16() => {
+                    Some(token.text.clone())
+                }
+                _ => None,
+            })
+            .skip(1)
+            .collect()
+    }
+
+    pub fn variant_spans(&self) -> Vec<Span> {
+        self.syntax
+            .children
+            .iter()
+            .filter_map(|element| match element {
+                SyntaxElement::Token(token) if token.kind == SolidityKind::Ident.as_u16() => {
+                    Some(token.span)
+                }
+                _ => None,
+            })
+            .skip(1)
+            .collect()
     }
 }
 

@@ -228,7 +228,7 @@ pub(crate) fn parse_block(cursor: &mut Cursor, errors: &mut Vec<ParseError>) -> 
             return None;
         }
     };
-    let mut locals: Vec<SyntaxElement> = Vec::new();
+    let mut items: Vec<SyntaxElement> = Vec::new();
     loop {
         match cursor.peek_kind() {
             None => {
@@ -236,7 +236,7 @@ pub(crate) fn parse_block(cursor: &mut Cursor, errors: &mut Vec<ParseError>) -> 
                 return Some(SyntaxNode::with_children(
                     SolidityNode::Block.as_u16(),
                     Span::new(open.span.start, cursor.peek_span().end),
-                    locals,
+                    items,
                 ));
             }
             Some(kind) if kind == SolidityKind::RBrace.as_u16() => break,
@@ -248,7 +248,7 @@ pub(crate) fn parse_block(cursor: &mut Cursor, errors: &mut Vec<ParseError>) -> 
                     && is_local_decl_ahead(cursor) =>
             {
                 match parse_local_var(cursor) {
-                    Ok(node) => locals.push(SyntaxElement::Node(node)),
+                    Ok(node) => items.push(SyntaxElement::Node(node)),
                     Err(error) => {
                         errors.push(error);
                         recover_statement(cursor);
@@ -257,9 +257,13 @@ pub(crate) fn parse_block(cursor: &mut Cursor, errors: &mut Vec<ParseError>) -> 
             }
             Some(kind) if is_type_start(kind) || kind == SolidityKind::Ident.as_u16() => {
                 if kind == SolidityKind::Ident.as_u16()
+                    && let Some(member) = try_parse_member(cursor)
+                {
+                    items.push(SyntaxElement::Node(member));
+                } else if kind == SolidityKind::Ident.as_u16()
                     && let Some(call) = try_parse_call(cursor)
                 {
-                    locals.push(SyntaxElement::Node(call));
+                    items.push(SyntaxElement::Node(call));
                 } else {
                     // Type-like token without a following name: an expression
                     // statement, skipped like any other.
@@ -278,13 +282,67 @@ pub(crate) fn parse_block(cursor: &mut Cursor, errors: &mut Vec<ParseError>) -> 
         return Some(SyntaxNode::with_children(
             SolidityNode::Block.as_u16(),
             Span::new(open.span.start, cursor.peek_span().end),
-            locals,
+            items,
         ));
     };
     Some(SyntaxNode::with_children(
         SolidityNode::Block.as_u16(),
         Span::new(open.span.start, close.span.end),
-        locals,
+        items,
+    ))
+}
+
+/// Try `recv.member` with single ident receiver, including `this`/`super`.
+///
+/// Returns the Member node and consumes through the member name (or dot
+/// when the name is still missing). Only the first dot is stored; chained
+/// tails like `.c` in `a.b.c` stay for `recover_statement`.
+pub(crate) fn try_parse_member(cursor: &mut Cursor) -> Option<SyntaxNode> {
+    let tokens = cursor.tokens;
+    let comment = SolidityKind::Comment.as_u16();
+    let next_code = |mut index: usize| -> Option<usize> {
+        while let Some(token) = tokens.get(index) {
+            if token.kind != comment {
+                return Some(index);
+            }
+            index += 1;
+        }
+        None
+    };
+    let recv_idx = next_code(cursor.pos())?;
+    let recv = tokens.get(recv_idx)?.clone();
+    if recv.kind != SolidityKind::Ident.as_u16() {
+        return None;
+    }
+    let dot_idx = next_code(recv_idx + 1)?;
+    let dot = tokens.get(dot_idx)?.clone();
+    if dot.kind != SolidityKind::Dot.as_u16() {
+        return None;
+    }
+    let member_idx = next_code(dot_idx + 1);
+    let member = member_idx
+        .and_then(|index| tokens.get(index))
+        .filter(|token| token.kind == SolidityKind::Ident.as_u16())
+        .cloned();
+    let start = recv.span.start;
+    let mut children = vec![token_element(recv), token_element(dot.clone())];
+    let (end, target) = match member {
+        Some(ref name) => {
+            let end = name.span.end;
+            children.push(token_element(name.clone()));
+            (end, member_idx.unwrap_or(dot_idx))
+        }
+        None => (dot.span.end, dot_idx),
+    };
+    while cursor.pos() <= target {
+        if cursor.bump().is_none() {
+            break;
+        }
+    }
+    Some(SyntaxNode::with_children(
+        SolidityNode::Member.as_u16(),
+        Span::new(start, end),
+        children,
     ))
 }
 

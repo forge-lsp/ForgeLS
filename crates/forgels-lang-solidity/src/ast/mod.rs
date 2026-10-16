@@ -10,7 +10,7 @@ mod user_types;
 pub use calls::CallStmt;
 pub use contract::ContractDef;
 pub use file::{ImportDirective, PragmaDirective, SolidityFile};
-pub use members::{FunctionDef, LocalVar, Param, Returns, StateVar};
+pub use members::{FunctionDef, LocalVar, MemberExpr, Param, Returns, StateVar};
 pub use types::{BlockNode, TypeNode};
 pub use user_types::{EnumDef, StructDef};
 
@@ -33,6 +33,7 @@ pub enum SolidityNode {
     Call,
     Struct,
     Enum,
+    Member,
 }
 
 impl SolidityNode {

@@ -1,4 +1,4 @@
-use super::members::LocalVar;
+use super::members::{LocalVar, MemberExpr};
 use super::{CallStmt, SolidityNode, cast_node};
 use forgels_syntax::{AstNode, SyntaxElement, SyntaxNode};
 
@@ -63,7 +63,7 @@ fn join_type_text(parts: &[&str]) -> String {
     out
 }
 
-/// Function or lone block body. Children hold LocalVar and Call nodes;
+/// Function or lone block body. Children hold LocalVar, Call, and Member nodes;
 /// other statements are skipped but stay inside the node span.
 #[derive(Debug, Clone)]
 pub struct BlockNode {
@@ -91,6 +91,19 @@ impl BlockNode {
             .filter_map(|element| match element {
                 SyntaxElement::Node(node) if node.kind == SolidityNode::Call.as_u16() => {
                     CallStmt::cast(node.clone())
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    pub fn members(&self) -> Vec<MemberExpr> {
+        self.syntax
+            .children
+            .iter()
+            .filter_map(|element| match element {
+                SyntaxElement::Node(node) if node.kind == SolidityNode::Member.as_u16() => {
+                    MemberExpr::cast(node.clone())
                 }
                 _ => None,
             })
