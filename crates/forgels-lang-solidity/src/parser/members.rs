@@ -27,6 +27,25 @@ pub(crate) fn parse_var(cursor: &mut Cursor, kind: SolidityNode) -> Result<Synta
     ) {
         cursor.bump();
     }
+    // State modifiers sit between type and name: `uint public constant x`.
+    // Consumed, not stored: the name stays the first word token, so
+    // `StateVar::name` keeps working without modifier filtering.
+    loop {
+        match cursor.peek_kind() {
+            Some(kind)
+                if kind == SolidityKind::Public.as_u16()
+                    || kind == SolidityKind::Private.as_u16()
+                    || kind == SolidityKind::Internal.as_u16()
+                    || kind == SolidityKind::Constant.as_u16()
+                    || kind == SolidityKind::Immutable.as_u16()
+                    || kind == SolidityKind::Override.as_u16()
+                    || kind == SolidityKind::Transient.as_u16() =>
+            {
+                cursor.bump();
+            }
+            _ => break,
+        }
+    }
     let name = cursor.expect(SolidityKind::Ident, "variable name")?;
     let mut end = name.span.end.max(type_end);
     if cursor.peek_kind() == Some(SolidityKind::Assign.as_u16()) {

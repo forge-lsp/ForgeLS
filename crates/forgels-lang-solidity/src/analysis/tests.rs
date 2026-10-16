@@ -250,6 +250,41 @@ fn complete_multi(
 }
 
 #[test]
+fn completion_suggests_state_var_with_modifiers() {
+    // Modifiers between type and name must not drop the declaration.
+    for modifier in [
+        "public",
+        "private",
+        "internal",
+        "constant",
+        "immutable",
+        "override",
+        "transient",
+    ] {
+        let text = format!(
+            "contract HelloWorld {{\nPerson[] {modifier} people;\nfunction greet2(string memory a) public {{\npeo"
+        );
+        let workspace = open_workspace(&[("/repo/C.sol", text.as_str())]);
+        let items = complete_multi(&workspace, "/repo/C.sol", &text, "peo");
+        let labels: Vec<&str> = items.iter().map(|item| item.0.as_str()).collect();
+        assert!(labels.contains(&"people"), "{modifier}: {labels:?}");
+    }
+}
+
+#[test]
+fn state_var_name_skips_modifiers() {
+    let text = "contract C {\nPerson[] public constant people;\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let contracts = file.contracts();
+    assert_eq!(contracts.len(), 1);
+    let vars = contracts[0].state_vars();
+    assert_eq!(vars.len(), 1);
+    assert_eq!(vars[0].name().as_deref(), Some("people"));
+}
+
+#[test]
 fn completion_suggests_symbols_when_file_has_errors() {
     // Typing state: incomplete contract, partial word, no closing brace.
     let text = "contract C {\nuint256 total;\ntot";
