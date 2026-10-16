@@ -51,6 +51,14 @@ Status: token kinds defined. Real lexer and parser are planned.
 - Hover: local `hover_at` first. Else scan `exports_of` for the word at cursor and show `<detail> - from <file>`.
 - Goto: `goto_definition` for same file. `goto_location` falls back to `resolve_in_dep` over `dep_texts(ctx, 16)` and returns `GotoTarget { path, span }`.
 - Exports: `Scope::export_symbols` returns contracts plus their functions only.
+- Members: `this` plus inherited members resolve across `dep_texts(ctx, 16)` with ` - from <Base> in <file>` origin and correct `GotoTarget` path. Receiver types in deps resolve the same way.
+
+## Inheritance
+
+- Scope: eager merge into `contract_scope` and `members_of`, no `Symbol` schema change. Origin uses detail suffix ` - from <Base>` same file and ` - from <Base> in <file>` cross file.
+- Order: heritage order DFS with visited set, transitive bases before direct ones. Derived wins, first base wins. This is not C3.
+- Arity: `calls::arity_diagnostics` follows the same chain, derived wins.
+- Exports: `exports_of` stays own members only, no flatten.
 
 ## V1 limits
 
@@ -59,3 +67,4 @@ Status: token kinds defined. Real lexer and parser are planned.
 - Symbols: `Contract` and `Function` cross files. `StateVar`, `Param`, and `LocalVar` stay local.
 - Imports: union without alias precision. `{B as C}` records both `B` and `C`, no alias mapping.
 - Parse: parse on each call, no incremental cache.
+- Inheritance: no C3, no `super`, no chained `a.b.c`, unknown bases ignored, cycles end via visited set, `exports_of` stays own members.

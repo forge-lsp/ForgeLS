@@ -993,3 +993,321 @@ fn chained_member_returns_scope_fallback() {
     let at = text.rfind("a.b.c").expect("chain") as u32 + 4;
     assert!(hover_at(&file, text, at).is_none());
 }
+
+#[test]
+fn inherited_plain_completion_shows_base_function() {
+    let text = "contract B {\nfunction greet(uint a) public {}\n}\ncontract D is B {\nfunction f() public {\ngre\n}\n}";
+    let at = text.rfind("gre").expect("prefix") as u32 + 3;
+    let labels = complete_labels(text, at);
+    assert!(labels.contains(&"greet".to_string()), "labels: {labels:?}");
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, _) = SolidityParser.parse_with_errors(&tokens);
+    let items = complete_at(&file, text, at);
+    let hit = items
+        .iter()
+        .find(|item| item.label == "greet")
+        .expect("hit");
+    assert!(hit.detail.contains("from B"), "detail: {}", hit.detail);
+}
+
+#[test]
+fn inherited_plain_hover_shows_origin() {
+    let text = "contract B {\nfunction greet(uint a) public {}\n}\ncontract D is B {\nfunction f() public {\ngreet;\n}\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let at = text.rfind("greet;").expect("use") as u32;
+    let found = hover_at(&file, text, at).expect("hover");
+    assert!(
+        found.contents.contains("function greet"),
+        "contents: {}",
+        found.contents
+    );
+    assert!(
+        found.contents.contains("from B"),
+        "contents: {}",
+        found.contents
+    );
+}
+
+#[test]
+fn inherited_plain_goto_jumps_to_base() {
+    let text = "contract B {\nfunction greet(uint a) public {}\n}\ncontract D is B {\nfunction f() public {\ngreet;\n}\n}";
+    let at_use = text.rfind("greet;").expect("use") as u32;
+    let at_decl = text.find("greet").expect("decl") as u32;
+    let target = goto_target(text, at_use);
+    assert!(target.start <= at_decl && at_decl < target.end);
+}
+
+#[test]
+fn inherited_this_completion_shows_base_members() {
+    let text = "contract B {\nuint total;\nfunction foo() public {}\n}\ncontract D is B {\nfunction f() public {\nthis.\n}\n}";
+    let at = text.rfind("this.").expect("dot") as u32 + 5;
+    let labels = complete_labels(text, at);
+    assert!(labels.contains(&"total".to_string()), "labels: {labels:?}");
+    assert!(labels.contains(&"foo".to_string()), "labels: {labels:?}");
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, _) = SolidityParser.parse_with_errors(&tokens);
+    let items = complete_at(&file, text, at);
+    let hit = items.iter().find(|item| item.label == "foo").expect("hit");
+    assert!(hit.detail.contains("from B"), "detail: {}", hit.detail);
+}
+
+#[test]
+fn inherited_diamond_keeps_first_origin_once() {
+    let text = "contract A {\nfunction settle() public {}\n}\ncontract B is A {\n}\ncontract C is A {\n}\ncontract D is B, C {\nfunction f() public {\nthis.\n}\n}";
+    let at = text.rfind("this.").expect("dot") as u32 + 5;
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let items = complete_at(&file, text, at);
+    let hits: Vec<&CompletionItem> = items.iter().filter(|item| item.label == "settle").collect();
+    assert_eq!(hits.len(), 1, "hits: {}", hits.len());
+    assert!(
+        hits[0].detail.contains("from A"),
+        "detail: {}",
+        hits[0].detail
+    );
+}
+
+#[test]
+fn inherited_shadow_derived_wins_without_suffix() {
+    let text = "contract B {\nfunction greet(uint a) public {}\n}\ncontract D is B {\nfunction greet() public {}\nfunction f() public {\ngreet;\n}\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let at = text.rfind("greet;").expect("use") as u32;
+    let found = hover_at(&file, text, at).expect("hover");
+    assert_eq!(found.contents, "function greet()");
+    let target = goto_target(text, at);
+    let own_decl = text.rfind("function greet()").expect("own") as u32 + 9;
+    assert!(target.start <= own_decl && own_decl < target.end);
+    let at_complete = text.rfind("greet;").expect("prefix") as u32 + 3;
+    let items = complete_at(&file, text, at_complete);
+    let hits: Vec<&CompletionItem> = items.iter().filter(|item| item.label == "greet").collect();
+    assert_eq!(hits.len(), 1);
+    assert!(
+        !hits[0].detail.contains("from"),
+        "detail: {}",
+        hits[0].detail
+    );
+}
+
+#[test]
+fn inherited_unknown_base_is_ignored() {
+    let text = "contract D is Missing {\nfunction foo() public {}\nfunction f() public {\nfoo;\nthis.foo;\n}\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, _) = SolidityParser.parse_with_errors(&tokens);
+    let at = text.rfind("foo;").expect("use") as u32;
+    assert!(hover_at(&file, text, at).is_some());
+    let at_member = text.rfind("this.foo").expect("member") as u32 + 5;
+    assert!(hover_at(&file, text, at_member).is_some());
+}
+
+#[test]
+fn inherited_cycle_terminates() {
+    let text = "contract A is B {\nfunction fa() public {}\n}\ncontract B is A {\nfunction fb() public {}\nfunction f() public {\nthis.fa;\n}\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, _) = SolidityParser.parse_with_errors(&tokens);
+    let at = text.rfind("this.fa").expect("use") as u32 + 5;
+    let found = hover_at(&file, text, at).expect("hover");
+    assert!(
+        found.contents.contains("fa"),
+        "contents: {}",
+        found.contents
+    );
+    assert!(
+        found.contents.contains("from A"),
+        "contents: {}",
+        found.contents
+    );
+}
+
+#[test]
+fn inherited_arity_uses_base_signature() {
+    let text = "contract B {\nfunction greet(uint a, uint b) public {}\n}\ncontract D is B {\nfunction f() public {\ngreet(1);\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "this function 'greet' takes 2 arguments but 1 supplied"
+    );
+}
+
+#[test]
+fn inherited_arity_shadow_uses_derived_signature() {
+    let text = "contract B {\nfunction greet(uint a, uint b) public {}\n}\ncontract D is B {\nfunction greet(uint a) public {}\nfunction f() public {\ngreet(1, 2);\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "this function 'greet' takes 1 arguments but 2 supplied"
+    );
+}
+
+fn member_complete_multi(
+    workspace: &Workspace,
+    path: &str,
+    text: &str,
+    needle: &str,
+) -> Vec<(String, String)> {
+    let owned = text.to_string();
+    let buf = PathBuf::from(path);
+    let at = owned.rfind(needle).expect("needle") as u32 + needle.len() as u32;
+    let ctx = ProjectContext::new(buf.as_path(), &owned, at, workspace);
+    SolidityAnalyzer
+        .complete(&ctx)
+        .into_iter()
+        .map(|item| (item.label, item.detail))
+        .collect()
+}
+
+#[test]
+fn cross_file_member_completion_hello_world() {
+    let dep = "contract Hello {\nfunction greet(string memory name) public {}\nuint total;\n}";
+    let cur =
+        "import \"./a.sol\";\ncontract HelloWorld is Hello {\nfunction f() public {\nthis.\n}\n}";
+    let mut workspace = open_workspace(&[("/a.sol", dep), ("/hello.sol", cur)]);
+    workspace.set_file_deps(PathBuf::from("/hello.sol"), vec![PathBuf::from("/a.sol")]);
+    let found = member_complete_multi(&workspace, "/hello.sol", cur, "this.");
+    let greet = found
+        .iter()
+        .find(|(label, _)| label == "greet")
+        .expect("greet hit");
+    assert!(
+        greet.1.contains("from Hello in a.sol"),
+        "detail: {}",
+        greet.1
+    );
+    let total = found
+        .iter()
+        .find(|(label, _)| label == "total")
+        .expect("total hit");
+    assert!(
+        total.1.contains("from Hello in a.sol"),
+        "detail: {}",
+        total.1
+    );
+}
+
+#[test]
+fn cross_file_member_hover_hello_world() {
+    let dep = "contract Hello {\nfunction greet(string memory name) public {}\n}";
+    let cur = "import \"./a.sol\";\ncontract HelloWorld is Hello {\nfunction f() public {\nthis.greet;\n}\n}";
+    let mut workspace = open_workspace(&[("/a.sol", dep), ("/hello.sol", cur)]);
+    workspace.set_file_deps(PathBuf::from("/hello.sol"), vec![PathBuf::from("/a.sol")]);
+    let hit = hover_multi(&workspace, "/hello.sol", cur, "greet").expect("hover");
+    assert!(
+        hit.contents.contains("function greet"),
+        "contents: {}",
+        hit.contents
+    );
+    assert!(
+        hit.contents.contains("from Hello in a.sol"),
+        "contents: {}",
+        hit.contents
+    );
+}
+
+#[test]
+fn cross_file_member_goto_hello_world() {
+    let dep = "contract Hello {\nfunction greet(string memory name) public {}\n}";
+    let cur = "import \"./a.sol\";\ncontract HelloWorld is Hello {\nfunction f() public {\nthis.greet;\n}\n}";
+    let mut workspace = open_workspace(&[("/a.sol", dep), ("/hello.sol", cur)]);
+    workspace.set_file_deps(PathBuf::from("/hello.sol"), vec![PathBuf::from("/a.sol")]);
+    let hit = goto_multi(&workspace, "/hello.sol", cur, "greet").expect("goto");
+    assert_eq!(hit.path, PathBuf::from("/a.sol"));
+    let want = dep.find("greet").expect("decl") as u32;
+    assert!(hit.span.contains(want));
+}
+
+#[test]
+fn cross_file_member_receiver_type_in_dep() {
+    let dep = "contract Hello {\nfunction greet() public {}\n}";
+    let cur =
+        "import \"./a.sol\";\ncontract HelloWorld {\nfunction f() public {\nHello h;\nh.\n}\n}";
+    let mut workspace = open_workspace(&[("/a.sol", dep), ("/hello.sol", cur)]);
+    workspace.set_file_deps(PathBuf::from("/hello.sol"), vec![PathBuf::from("/a.sol")]);
+    let found = member_complete_multi(&workspace, "/hello.sol", cur, "h.");
+    let hit = found
+        .iter()
+        .find(|(label, _)| label == "greet")
+        .expect("greet hit");
+    assert!(hit.1.contains("from Hello in a.sol"), "detail: {}", hit.1);
+}
+
+#[test]
+fn cross_file_member_shadow_local_wins() {
+    let dep = "contract Hello {\nfunction greet(uint a) public {}\n}";
+    let cur = "import \"./a.sol\";\ncontract HelloWorld is Hello {\nfunction greet() public {}\nfunction f() public {\nthis.greet;\nthis.\n}\n}";
+    let mut workspace = open_workspace(&[("/a.sol", dep), ("/hello.sol", cur)]);
+    workspace.set_file_deps(PathBuf::from("/hello.sol"), vec![PathBuf::from("/a.sol")]);
+    let found = member_complete_multi(&workspace, "/hello.sol", cur, "this.");
+    let hits: Vec<&(String, String)> = found.iter().filter(|(label, _)| label == "greet").collect();
+    assert_eq!(hits.len(), 1);
+    assert!(!hits[0].1.contains("from"), "local wins: {}", hits[0].1);
+    let goto_hit = goto_multi(&workspace, "/hello.sol", cur, "greet");
+    if let Some(target) = goto_hit {
+        assert_eq!(target.path, PathBuf::from("/hello.sol"));
+    }
+}
+
+#[test]
+fn cross_file_member_transitive_chain() {
+    let c = "contract Hello {\nfunction greet() public {}\n}";
+    let b = "import \"./C.sol\";\ncontract Mid is Hello {\n}";
+    let a = "import \"./B.sol\";\ncontract HelloWorld is Mid {\nfunction f() public {\nthis.greet;\nthis.\n}\n}";
+    let mut workspace = open_workspace(&[("/A.sol", a), ("/B.sol", b), ("/C.sol", c)]);
+    workspace.set_file_deps(PathBuf::from("/A.sol"), vec![PathBuf::from("/B.sol")]);
+    workspace.set_file_deps(PathBuf::from("/B.sol"), vec![PathBuf::from("/C.sol")]);
+    let found = member_complete_multi(&workspace, "/A.sol", a, "this.");
+    let hit = found
+        .iter()
+        .find(|(label, _)| label == "greet")
+        .expect("transitive hit");
+    assert!(hit.1.contains("from Hello in C.sol"), "detail: {}", hit.1);
+    let goto_hit = goto_multi(&workspace, "/A.sol", a, "greet").expect("goto");
+    assert_eq!(goto_hit.path, PathBuf::from("/C.sol"));
+}
+
+#[test]
+fn cross_file_member_untracked_is_skipped() {
+    let cur = "import \"./Missing.sol\";\ncontract HelloWorld is Hello {\nfunction f() public {\nthis.greet;\nthis.\n}\n}";
+    let mut workspace = open_workspace(&[("/hello.sol", cur)]);
+    workspace.set_file_deps(
+        PathBuf::from("/hello.sol"),
+        vec![PathBuf::from("/Missing.sol")],
+    );
+    let found = member_complete_multi(&workspace, "/hello.sol", cur, "this.");
+    assert!(!found.iter().any(|(label, _)| label == "greet"));
+    assert!(hover_multi(&workspace, "/hello.sol", cur, "greet").is_none());
+    assert!(goto_multi(&workspace, "/hello.sol", cur, "greet").is_none());
+}
+
+#[test]
+fn cross_file_member_cycle_terminates() {
+    let b = "import \"./A.sol\";\ncontract Hello {\nfunction greet() public {}\n}";
+    let a =
+        "import \"./B.sol\";\ncontract HelloWorld is Hello {\nfunction f() public {\nthis.\n}\n}";
+    let mut workspace = open_workspace(&[("/A.sol", a), ("/B.sol", b)]);
+    workspace.set_file_deps(PathBuf::from("/A.sol"), vec![PathBuf::from("/B.sol")]);
+    workspace.set_file_deps(PathBuf::from("/B.sol"), vec![PathBuf::from("/A.sol")]);
+    let found = member_complete_multi(&workspace, "/A.sol", a, "this.");
+    assert!(found.iter().any(|(label, _)| label == "greet"));
+}
+
+#[test]
+fn cross_file_member_broken_dep_still_works() {
+    let b = "contract Hello {\nfunction greet() public {}\n}\n@@@ broken";
+    let a = "import \"./B.sol\";\ncontract HelloWorld is Hello {\nfunction f() public {\nthis.greet;\n}\n}";
+    let mut workspace = open_workspace(&[("/A.sol", a), ("/B.sol", b)]);
+    workspace.set_file_deps(PathBuf::from("/A.sol"), vec![PathBuf::from("/B.sol")]);
+    let found = member_complete_multi(&workspace, "/A.sol", a, "this.");
+    let hit = found
+        .iter()
+        .find(|(label, _)| label == "greet")
+        .expect("broken dep hit");
+    assert!(hit.1.contains("from Hello in B.sol"), "detail: {}", hit.1);
+    let goto_hit = goto_multi(&workspace, "/A.sol", a, "greet").expect("goto");
+    assert_eq!(goto_hit.path, PathBuf::from("/B.sol"));
+}
