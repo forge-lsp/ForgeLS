@@ -220,7 +220,7 @@ pub fn complete_import_paths(
     items
 }
 
-/// Contract level exports of `text`: contracts and their functions.
+/// Contract level exports of `text`: contracts, functions, structs, and enums.
 ///
 /// Parses with recovery so broken deps still contribute. Locals, params,
 /// and state vars stay local and never cross files. Caller filters by

@@ -306,3 +306,80 @@ fn calls_do_not_change_locals() {
     assert_eq!(names, vec!["x", "s"]);
     assert_eq!(body.calls().len(), 1);
 }
+
+#[test]
+fn file_struct_and_enum_parse() {
+    let text = "struct Person {\nuint age;\n}\nenum Color {\nRed,\nBlue\n}\ncontract C {\n}";
+    let file = parse_ok(text);
+    let structs: Vec<String> = file
+        .structs()
+        .iter()
+        .filter_map(|item| item.name())
+        .collect();
+    assert_eq!(structs, vec!["Person"]);
+    let enums: Vec<String> = file.enums().iter().filter_map(|item| item.name()).collect();
+    assert_eq!(enums, vec!["Color"]);
+}
+
+#[test]
+fn contract_struct_and_enum_are_members() {
+    let text = "contract C is A {\nstruct Person {\nuint age;\n}\nenum Color {\nRed\n}\nuint x;\n}";
+    let file = parse_ok(text);
+    let contract = &file.contracts()[0];
+    assert_eq!(contract.heritage(), vec!["A"]);
+    let structs: Vec<String> = contract
+        .structs()
+        .iter()
+        .filter_map(|item| item.name())
+        .collect();
+    assert_eq!(structs, vec!["Person"]);
+    let enums: Vec<String> = contract
+        .enums()
+        .iter()
+        .filter_map(|item| item.name())
+        .collect();
+    assert_eq!(enums, vec!["Color"]);
+    assert_eq!(contract.state_vars().len(), 1);
+}
+
+#[test]
+fn unclosed_struct_still_yields_name() {
+    let text = "contract C {\nstruct Person {\nuint age;\n";
+    let lexer = SolidityLexer;
+    let tokens = lexer.tokenize(text);
+    let (file, _) = SolidityParser.parse_with_errors(&tokens);
+    let names: Vec<String> = file.contracts()[0]
+        .structs()
+        .iter()
+        .filter_map(|item| item.name())
+        .collect();
+    assert_eq!(names, vec!["Person"]);
+}
+
+#[test]
+fn unclosed_file_struct_still_yields_name() {
+    let text = "struct Person {\nuint age;\n";
+    let lexer = SolidityLexer;
+    let tokens = lexer.tokenize(text);
+    let (file, _) = SolidityParser.parse_with_errors(&tokens);
+    let names: Vec<String> = file
+        .structs()
+        .iter()
+        .filter_map(|item| item.name())
+        .collect();
+    assert_eq!(names, vec!["Person"]);
+}
+
+#[test]
+fn unclosed_enum_still_yields_name() {
+    let text = "contract C {\nenum Color {\nRed,\n";
+    let lexer = SolidityLexer;
+    let tokens = lexer.tokenize(text);
+    let (file, _) = SolidityParser.parse_with_errors(&tokens);
+    let names: Vec<String> = file.contracts()[0]
+        .enums()
+        .iter()
+        .filter_map(|item| item.name())
+        .collect();
+    assert_eq!(names, vec!["Color"]);
+}

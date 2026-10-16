@@ -11,6 +11,7 @@ mod cursor;
 mod items;
 mod members;
 mod types;
+mod user_types;
 
 #[cfg(test)]
 mod tests;
@@ -18,6 +19,7 @@ mod tests;
 use contract::parse_contract;
 use cursor::Cursor;
 use items::{parse_import, parse_pragma};
+use user_types::{parse_enum, parse_struct};
 
 #[derive(Debug, Default)]
 pub struct SolidityParser;
@@ -81,6 +83,18 @@ impl SolidityParser {
                         None => cursor.recover(),
                     }
                 }
+                Some(kind) if kind == SolidityKind::Struct.as_u16() => {
+                    match parse_struct(&mut cursor, &mut errors) {
+                        Some(node) => items.push(SyntaxElement::Node(node)),
+                        None => cursor.recover(),
+                    }
+                }
+                Some(kind) if kind == SolidityKind::Enum.as_u16() => {
+                    match parse_enum(&mut cursor, &mut errors) {
+                        Some(node) => items.push(SyntaxElement::Node(node)),
+                        None => cursor.recover(),
+                    }
+                }
                 Some(kind) if kind == SolidityKind::Error.as_u16() => {
                     if let Some(token) = cursor.bump() {
                         errors.push(ParseError::new(token.span, "unexpected character"));
@@ -90,7 +104,7 @@ impl SolidityParser {
                     let span = cursor.peek_span();
                     errors.push(ParseError::new(
                         span,
-                        "expected pragma, import, or contract",
+                        "expected pragma, import, contract, struct, or enum",
                     ));
                     cursor.recover();
                 }

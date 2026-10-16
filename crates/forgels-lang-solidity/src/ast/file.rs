@@ -1,4 +1,5 @@
 use super::contract::ContractDef;
+use super::user_types::{EnumDef, StructDef};
 use super::{SolidityNode, cast_node, first_ident_text};
 use forgels_syntax::{AstNode, Span, SyntaxElement, SyntaxNode};
 
@@ -41,6 +42,20 @@ impl SolidityFile {
         self.children_of(SolidityNode::Contract)
             .into_iter()
             .filter_map(ContractDef::cast)
+            .collect()
+    }
+
+    pub fn structs(&self) -> Vec<StructDef> {
+        self.children_of(SolidityNode::Struct)
+            .into_iter()
+            .filter_map(StructDef::cast)
+            .collect()
+    }
+
+    pub fn enums(&self) -> Vec<EnumDef> {
+        self.children_of(SolidityNode::Enum)
+            .into_iter()
+            .filter_map(EnumDef::cast)
             .collect()
     }
 }
