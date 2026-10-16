@@ -149,11 +149,11 @@ pub fn handle_message(
     }
     match method {
         "textDocument/didOpen" => {
-            apply_did_open(workspace, &params);
+            apply_did_open(workspace, &session.analyzers, &params);
             return None;
         }
         "textDocument/didChange" => {
-            apply_did_change(workspace, &params);
+            apply_did_change(workspace, &session.analyzers, &params);
             return None;
         }
         "textDocument/didClose" => {

@@ -1,4 +1,4 @@
-use forgels_core::{Analyzer, CompletionData, DiagnosticData, HoverData};
+use forgels_core::{Analyzer, CompletionData, DiagnosticData, HoverData, analyzer::ImportRef};
 use forgels_syntax::{AstNode, Lexer, Span};
 
 use crate::{ContractDef, FunctionDef, SolidityFile, SolidityLexer, SolidityParser};
@@ -6,6 +6,7 @@ use crate::{ContractDef, FunctionDef, SolidityFile, SolidityLexer, SolidityParse
 mod completion;
 mod goto;
 mod hover;
+mod imports;
 
 #[cfg(test)]
 mod tests;
@@ -13,6 +14,7 @@ mod tests;
 pub use completion::{CompletionItem, CompletionKind, complete_at};
 pub use goto::goto_definition;
 pub use hover::{Hover, hover_at};
+pub use imports::imports_in;
 
 fn is_word_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'$'
@@ -283,5 +285,9 @@ impl Analyzer for SolidityAnalyzer {
                 message: error.message.clone(),
             })
             .collect()
+    }
+
+    fn imports(&self, text: &str) -> Vec<ImportRef> {
+        imports::imports_in(text)
     }
 }

@@ -25,6 +25,26 @@ pub struct DiagnosticData {
     pub message: String,
 }
 
+/// One import reference found in a file. `raw` keeps the literal
+/// specifier from source; core resolves it against the importing file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportRef {
+    pub raw: String,
+    pub symbols: Vec<String>,
+}
+
+impl ImportRef {
+    pub fn new(raw: String) -> Self {
+        Self {
+            raw,
+            symbols: Vec::new(),
+        }
+    }
+
+    pub fn with_symbols(raw: String, symbols: Vec<String>) -> Self {
+        Self { raw, symbols }
+    }
+}
 /// Language analyzer: pure analysis behind one trait.
 ///
 /// Core owns this trait and calls it; each `forgels-lang-*` crate
@@ -35,6 +55,11 @@ pub trait Analyzer: std::fmt::Debug {
     fn complete(&self, text: &str, offset: u32) -> Vec<CompletionData>;
     fn goto(&self, text: &str, offset: u32) -> Option<Span>;
     fn diagnostics(&self, text: &str) -> Vec<DiagnosticData>;
+    /// Import specifiers in `text`. Default is none so languages
+    /// without imports keep working.
+    fn imports(&self, _text: &str) -> Vec<ImportRef> {
+        Vec::new()
+    }
 }
 
 /// Registered analyzers by language. Empty when the binary wires none.

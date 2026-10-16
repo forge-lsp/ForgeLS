@@ -1,6 +1,9 @@
 use serde_json::Value;
 
+use forgels_common::paths::resolve_import;
+
 use super::Workspace;
+use crate::analyzer::AnalyzerMap;
 use crate::routing::route_file;
 
 /// Turn a `file://` URI into a path. Plain paths pass through.
@@ -55,9 +58,28 @@ pub(crate) fn apply_initialize_roots(workspace: &mut Workspace, params: &Value) 
     }
 }
 
+/// Rebuild the index entry for one tracked file from its imports.
+/// Missing analyzers and unresolvable imports yield no deps.
+fn refresh_index(workspace: &mut Workspace, analyzers: &AnalyzerMap, path: &std::path::Path) {
+    let (language, text) = match workspace.get(path) {
+        Some(doc) => (doc.language, doc.text.clone()),
+        None => return,
+    };
+    let Some(analyzer) = analyzers.get(&language) else {
+        workspace.set_file_deps(path.to_path_buf(), Vec::new());
+        return;
+    };
+    let deps: Vec<std::path::PathBuf> = analyzer
+        .imports(&text)
+        .iter()
+        .filter_map(|item| resolve_import(path, &item.raw))
+        .collect();
+    workspace.set_file_deps(path.to_path_buf(), deps);
+}
+
 /// Apply `didOpen`: route, then track. Unknown language or out-of-root
 /// files stay untracked without noise.
-pub(crate) fn apply_did_open(workspace: &mut Workspace, params: &Value) {
+pub(crate) fn apply_did_open(workspace: &mut Workspace, analyzers: &AnalyzerMap, params: &Value) {
     let doc = params.get("textDocument");
     let (Some(uri), Some(language_id), Some(text)) = (
         doc.and_then(|doc| doc.get("uri")).and_then(Value::as_str),
@@ -76,13 +98,18 @@ pub(crate) fn apply_did_open(workspace: &mut Workspace, params: &Value) {
             .and_then(|doc| doc.get("version"))
             .and_then(Value::as_i64)
             .unwrap_or(0) as i32;
-        let _ = workspace.open(path, language, text.to_string(), version);
+        if workspace
+            .open(path.clone(), language, text.to_string(), version)
+            .is_ok()
+        {
+            refresh_index(workspace, analyzers, &path);
+        }
     }
 }
 
 /// Apply `didChange` with full text. Unknown documents stay ignored.
 /// Successful changes mark the URI dirty for debounced publish.
-pub(crate) fn apply_did_change(workspace: &mut Workspace, params: &Value) {
+pub(crate) fn apply_did_change(workspace: &mut Workspace, analyzers: &AnalyzerMap, params: &Value) {
     let doc = params.get("textDocument");
     let (Some(uri), Some(changes)) = (
         doc.and_then(|doc| doc.get("uri")).and_then(Value::as_str),
@@ -103,9 +130,11 @@ pub(crate) fn apply_did_change(workspace: &mut Workspace, params: &Value) {
         && workspace
             .change(&path, last.to_string(), version.unwrap_or(current))
             .is_ok()
-        && let Some(version) = version
     {
-        workspace.mark_dirty(uri, version as u64, std::time::Instant::now());
+        refresh_index(workspace, analyzers, &path);
+        if let Some(version) = version {
+            workspace.mark_dirty(uri, version as u64, std::time::Instant::now());
+        }
     }
 }
 
