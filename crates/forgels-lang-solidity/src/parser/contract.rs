@@ -1,7 +1,7 @@
 use super::cursor::{Cursor, token_element};
 use super::members::{parse_function, parse_state_var, skip_balanced, skip_parens};
 use super::types::is_type_start;
-use super::user_types::{parse_enum, parse_struct};
+use super::user_types::{parse_enum, parse_error, parse_struct, parse_user_type};
 use crate::SolidityNode;
 use crate::lexer::SolidityKind;
 use forgels_syntax::{ParseError, Span, SyntaxElement, SyntaxNode};
@@ -78,6 +78,8 @@ pub(crate) fn parse_contract(
                         || kind == SolidityKind::Abstract.as_u16()
                         || kind == SolidityKind::Struct.as_u16()
                         || kind == SolidityKind::Enum.as_u16()
+                        || kind == SolidityKind::ErrorKw.as_u16()
+                        || kind == SolidityKind::Type.as_u16()
                     {
                         break;
                     }
@@ -124,6 +126,18 @@ pub(crate) fn parse_contract(
                 Some(node) => members.push(SyntaxElement::Node(node)),
                 None => recover_member(cursor),
             },
+            Some(kind) if kind == SolidityKind::ErrorKw.as_u16() => {
+                match parse_error(cursor, errors) {
+                    Some(node) => members.push(SyntaxElement::Node(node)),
+                    None => recover_member(cursor),
+                }
+            }
+            Some(kind) if kind == SolidityKind::Type.as_u16() => {
+                match parse_user_type(cursor, errors) {
+                    Some(node) => members.push(SyntaxElement::Node(node)),
+                    None => recover_member(cursor),
+                }
+            }
             Some(kind) if is_type_start(kind) || kind == SolidityKind::Ident.as_u16() => {
                 match parse_state_var(cursor) {
                     Ok(node) => members.push(SyntaxElement::Node(node)),
@@ -180,6 +194,8 @@ pub(crate) fn recover_member(cursor: &mut Cursor) {
                 || kind == SolidityKind::Constructor.as_u16()
                 || kind == SolidityKind::Struct.as_u16()
                 || kind == SolidityKind::Enum.as_u16()
+                || kind == SolidityKind::ErrorKw.as_u16()
+                || kind == SolidityKind::Type.as_u16()
                 || is_type_start(kind)
                 || kind == SolidityKind::Ident.as_u16()
             {

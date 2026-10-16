@@ -1,5 +1,5 @@
 use super::members::{FunctionDef, StateVar};
-use super::user_types::{EnumDef, StructDef};
+use super::user_types::{EnumDef, ErrorDef, StructDef, UserTypeDef};
 use super::{SolidityNode, cast_node};
 use crate::lexer::SolidityKind;
 use forgels_syntax::{AstNode, SyntaxElement, SyntaxNode};
@@ -85,6 +85,20 @@ impl ContractDef {
         self.members_of(SolidityNode::Enum)
             .into_iter()
             .filter_map(EnumDef::cast)
+            .collect()
+    }
+
+    pub fn errors(&self) -> Vec<ErrorDef> {
+        self.members_of(SolidityNode::Error)
+            .into_iter()
+            .filter_map(ErrorDef::cast)
+            .collect()
+    }
+
+    pub fn user_types(&self) -> Vec<UserTypeDef> {
+        self.members_of(SolidityNode::UserType)
+            .into_iter()
+            .filter_map(UserTypeDef::cast)
             .collect()
     }
 }

@@ -1,4 +1,6 @@
-use forgels_lang_solidity::{SolidityLexer, SolidityParser, TypeNode};
+use forgels_lang_solidity::{
+    SolidityLexer, SolidityParser, TypeNode, complete_at, goto_definition, hover_at,
+};
 use forgels_syntax::Lexer;
 
 fn load(name: &str) -> String {
@@ -119,4 +121,415 @@ fn cross_pair_links_router_to_vault() {
     );
     let text = load("cross_a.sol");
     assert!(text.rfind("withdraw").is_some(), "usage present");
+}
+
+fn parse_sbe(name: &str) -> (String, forgels_lang_solidity::SolidityFile) {
+    let path = format!("sbe/{name}");
+    let text = load(&path);
+    let file = parse_fixture(&path);
+    let has_nodes = !file.contracts().is_empty()
+        || !file.structs().is_empty()
+        || !file.enums().is_empty()
+        || !file.errors().is_empty()
+        || !file.user_types().is_empty();
+    assert!(has_nodes, "{name} must keep at least one node");
+    (text, file)
+}
+
+#[test]
+fn sbe_hello_world_hover_greet() {
+    let (text, file) = parse_sbe("HelloWorld.sol");
+    assert_eq!(file.contracts()[0].name().as_deref(), Some("HelloWorld"));
+    let at = text.find("greet").expect("decl") as u32;
+    let hover = hover_at(&file, &text, at).expect("hover");
+    assert!(
+        hover.contents.contains("greet"),
+        "contents: {}",
+        hover.contents
+    );
+}
+
+#[test]
+fn sbe_first_app_goto_count() {
+    let (text, file) = parse_sbe("FirstApp.sol");
+    let contract = &file.contracts()[0];
+    assert_eq!(contract.name().as_deref(), Some("FirstApp"));
+    let names: Vec<String> = contract
+        .functions()
+        .iter()
+        .filter_map(|f| f.name())
+        .collect();
+    assert!(names.contains(&"inc".to_string()));
+    assert!(names.contains(&"dec".to_string()));
+    let at_use = text.find("return count").expect("use") as u32 + 7;
+    let target = goto_definition(&file, &text, at_use).expect("goto");
+    let at_decl = text.find("uint public count").expect("decl") as u32 + 12;
+    assert!(target.start <= at_decl && at_decl < target.end);
+}
+
+#[test]
+fn sbe_primitives_hover_bool() {
+    let (text, file) = parse_sbe("Primitives.sol");
+    let vars = file.contracts()[0].state_vars();
+    assert!(vars.len() >= 8);
+    let at = text.find("boo =").expect("decl") as u32;
+    let hover = hover_at(&file, &text, at).expect("hover");
+    assert_eq!(hover.contents, "bool boo");
+}
+
+#[test]
+fn sbe_variables_locals_and_hover() {
+    let (text, file) = parse_sbe("Variables.sol");
+    let func = file.contracts()[0]
+        .functions()
+        .into_iter()
+        .find(|f| f.name().as_deref() == Some("doSomething"))
+        .expect("func");
+    let locals: Vec<String> = func
+        .body()
+        .expect("body")
+        .locals()
+        .iter()
+        .filter_map(|l| l.name())
+        .collect();
+    assert!(locals.contains(&"i".to_string()), "locals: {locals:?}");
+    assert!(locals.contains(&"foo".to_string()), "locals: {locals:?}");
+    assert!(locals.contains(&"sender".to_string()), "locals: {locals:?}");
+    let at = text.find("stored").expect("decl") as u32;
+    let hover = hover_at(&file, &text, at).expect("hover");
+    assert!(
+        hover.contents.contains("stored"),
+        "contents: {}",
+        hover.contents
+    );
+}
+
+#[test]
+fn sbe_constants_hover_greet() {
+    let (text, file) = parse_sbe("Constants.sol");
+    assert_eq!(file.contracts()[0].state_vars().len(), 3);
+    let at = text.find("GREET").expect("decl") as u32;
+    let hover = hover_at(&file, &text, at).expect("hover");
+    assert!(
+        hover.contents.contains("GREET"),
+        "contents: {}",
+        hover.contents
+    );
+}
+
+#[test]
+fn sbe_immutable_hover_addr() {
+    let (text, file) = parse_sbe("Immutable.sol");
+    let names: Vec<String> = file.contracts()[0]
+        .state_vars()
+        .iter()
+        .filter_map(|v| v.name())
+        .collect();
+    assert!(names.contains(&"MY_ADDR".to_string()));
+    assert!(names.contains(&"MY_UINT".to_string()));
+    let at = text.find("MY_ADDR").expect("decl") as u32;
+    let hover = hover_at(&file, &text, at).expect("hover");
+    assert!(
+        hover.contents.contains("MY_ADDR"),
+        "contents: {}",
+        hover.contents
+    );
+}
+
+#[test]
+fn sbe_state_variables_goto_text() {
+    let (text, file) = parse_sbe("StateVariables.sol");
+    let at_use = text.find("text = _text").expect("use") as u32;
+    let target = goto_definition(&file, &text, at_use).expect("goto");
+    let at_decl = text.find("string public text").expect("decl") as u32 + 14;
+    assert!(target.start <= at_decl && at_decl < target.end);
+}
+
+#[test]
+fn sbe_ether_units_completion_one() {
+    let (text, file) = parse_sbe("EtherUnits.sol");
+    assert_eq!(file.contracts()[0].state_vars().len(), 6);
+    let at = text.find("oneEther").expect("name") as u32 + 3;
+    let labels: Vec<String> = complete_at(&file, &text, at)
+        .iter()
+        .map(|item| item.label.clone())
+        .collect();
+    assert!(
+        labels.contains(&"oneEther".to_string()),
+        "labels: {labels:?}"
+    );
+    assert!(labels.contains(&"oneWei".to_string()), "labels: {labels:?}");
+}
+
+#[test]
+fn sbe_gas_locals_include_start() {
+    let (text, file) = parse_sbe("Gas.sol");
+    let func = file.contracts()[0]
+        .functions()
+        .into_iter()
+        .find(|f| f.name().as_deref() == Some("spendGas"))
+        .expect("func");
+    let locals: Vec<String> = func
+        .body()
+        .expect("body")
+        .locals()
+        .iter()
+        .filter_map(|l| l.name())
+        .collect();
+    assert!(locals.contains(&"start".to_string()), "locals: {locals:?}");
+    assert!(locals.contains(&"spent".to_string()), "locals: {locals:?}");
+    let at = text.find("uint public i").expect("decl") as u32 + 12;
+    let hover = hover_at(&file, &text, at).expect("hover");
+    assert!(hover.contents.contains('i'), "contents: {}", hover.contents);
+}
+
+#[test]
+fn sbe_if_else_hover_foo() {
+    let (text, file) = parse_sbe("IfElse.sol");
+    let names: Vec<String> = file.contracts()[0]
+        .functions()
+        .iter()
+        .filter_map(|f| f.name())
+        .collect();
+    assert!(names.contains(&"foo".to_string()));
+    assert!(names.contains(&"ternary".to_string()));
+    let at = text.find("function foo").expect("decl") as u32 + 9;
+    let hover = hover_at(&file, &text, at).expect("hover");
+    assert!(
+        hover.contents.contains("function foo"),
+        "contents: {}",
+        hover.contents
+    );
+}
+
+#[test]
+fn sbe_loop_hover_j() {
+    let (text, file) = parse_sbe("Loop.sol");
+    let func = file.contracts()[0]
+        .functions()
+        .into_iter()
+        .find(|f| f.name().as_deref() == Some("loop"))
+        .expect("func");
+    let locals: Vec<String> = func
+        .body()
+        .expect("body")
+        .locals()
+        .iter()
+        .filter_map(|l| l.name())
+        .collect();
+    // For header is skipped statement by statement, `j` stays as local.
+    // `i` lives inside the skipped for header, so only `j` is expected.
+    assert!(locals.contains(&"j".to_string()), "locals: {locals:?}");
+    let at = text.find("uint j").expect("decl") as u32 + 5;
+    let hover = hover_at(&file, &text, at).expect("hover");
+    assert_eq!(hover.contents, "uint j");
+}
+
+#[test]
+fn sbe_mapping_hover_my_map() {
+    let (text, file) = parse_sbe("Mapping.sol");
+    let types: Vec<String> = file.contracts()[0]
+        .state_vars()
+        .iter()
+        .filter_map(|v| v.type_node().map(|n| TypeNode::text(&n)))
+        .collect();
+    assert!(
+        types.contains(&"mapping(address => uint)".to_string()),
+        "types: {types:?}"
+    );
+    let at = text.find("myMap").expect("decl") as u32;
+    let hover = hover_at(&file, &text, at).expect("hover");
+    assert!(
+        hover.contents.contains("myMap"),
+        "contents: {}",
+        hover.contents
+    );
+}
+
+#[test]
+fn sbe_array_hover_arr() {
+    let (text, file) = parse_sbe("Array.sol");
+    let types: Vec<String> = file.contracts()[0]
+        .state_vars()
+        .iter()
+        .filter_map(|v| v.type_node().map(|n| TypeNode::text(&n)))
+        .collect();
+    assert!(types.contains(&"uint[]".to_string()), "types: {types:?}");
+    assert!(types.contains(&"uint[3]".to_string()), "types: {types:?}");
+    let at = text.find("arr;").expect("decl") as u32;
+    let hover = hover_at(&file, &text, at).expect("hover");
+    assert!(
+        hover.contents.contains("arr"),
+        "contents: {}",
+        hover.contents
+    );
+}
+
+#[test]
+fn sbe_enum_hover_status() {
+    let (text, file) = parse_sbe("Enum.sol");
+    let contract = &file.contracts()[0];
+    assert_eq!(contract.enums().len(), 1);
+    assert_eq!(
+        contract.enums()[0].variants(),
+        vec![
+            "Pending".to_string(),
+            "Shipped".to_string(),
+            "Accepted".to_string(),
+            "Rejected".to_string(),
+            "Canceled".to_string(),
+        ]
+    );
+    // `Status` also prefixes the contract name, so anchor on the enum keyword.
+    let at = text.find("enum Status").expect("decl") as u32 + 5;
+    let hover = hover_at(&file, &text, at).expect("hover");
+    assert_eq!(hover.contents, "enum Status");
+}
+
+#[test]
+fn sbe_udvt_hover_and_completion() {
+    let (text, file) = parse_sbe("UserDefinedValueTypes.sol");
+    assert_eq!(file.user_types().len(), 1);
+    assert_eq!(file.user_types()[0].name().as_deref(), Some("MyNumber"));
+    let at = text.find("MyNumber").expect("decl") as u32;
+    let hover = hover_at(&file, &text, at).expect("hover");
+    assert!(
+        hover.contents.contains("type MyNumber is uint256"),
+        "contents: {}",
+        hover.contents
+    );
+    let at_complete = text.find("MyNumber").expect("name") as u32 + 3;
+    let labels: Vec<String> = complete_at(&file, &text, at_complete)
+        .iter()
+        .map(|item| item.label.clone())
+        .collect();
+    assert!(
+        labels.contains(&"MyNumber".to_string()),
+        "labels: {labels:?}"
+    );
+}
+
+#[test]
+fn sbe_structs_member_completion_todo() {
+    let (text, file) = parse_sbe("Structs.sol");
+    let contract = &file.contracts()[0];
+    assert_eq!(contract.structs().len(), 1);
+    assert_eq!(contract.structs()[0].name().as_deref(), Some("Todo"));
+    // Member lookup uses the full word under the cursor, so check each
+    // field at its own use site.
+    let at_text = text.find("todo.text").expect("use") as u32 + 6;
+    let labels_text: Vec<String> = complete_at(&file, &text, at_text)
+        .iter()
+        .map(|item| item.label.clone())
+        .collect();
+    assert!(
+        labels_text.contains(&"text".to_string()),
+        "labels: {labels_text:?}"
+    );
+    let at_done = text.find("todo.completed").expect("use") as u32 + 6;
+    let labels_done: Vec<String> = complete_at(&file, &text, at_done)
+        .iter()
+        .map(|item| item.label.clone())
+        .collect();
+    assert!(
+        labels_done.contains(&"completed".to_string()),
+        "labels: {labels_done:?}"
+    );
+}
+
+#[test]
+fn sbe_data_locations_params_cover_storage() {
+    let (text, file) = parse_sbe("DataLocations.sol");
+    let contract = &file.contracts()[0];
+    let func_f = contract
+        .functions()
+        .into_iter()
+        .find(|f| f.name().as_deref() == Some("f"))
+        .expect("f");
+    assert_eq!(func_f.params().len(), 2);
+    let at = text.find("_arr").expect("param") as u32;
+    let hover = hover_at(&file, &text, at).expect("hover");
+    assert!(
+        hover.contents.contains("_arr"),
+        "contents: {}",
+        hover.contents
+    );
+}
+
+#[test]
+fn sbe_transient_storage_hover_stored() {
+    let (text, file) = parse_sbe("TransientStorage.sol");
+    let names: Vec<String> = file.contracts()[0]
+        .state_vars()
+        .iter()
+        .filter_map(|v| v.name())
+        .collect();
+    assert!(names.contains(&"stored".to_string()));
+    assert!(names.contains(&"counter".to_string()));
+    let at = text.find("stored").expect("decl") as u32;
+    let hover = hover_at(&file, &text, at).expect("hover");
+    assert_eq!(hover.contents, "uint stored");
+}
+
+#[test]
+fn sbe_function_hover_return_many() {
+    let (text, file) = parse_sbe("Function.sol");
+    let contract = &file.contracts()[0];
+    let many = contract
+        .functions()
+        .into_iter()
+        .find(|f| f.name().as_deref() == Some("returnMany"))
+        .expect("many");
+    assert_eq!(many.return_types().len(), 3);
+    let named = contract
+        .functions()
+        .into_iter()
+        .find(|f| f.name().as_deref() == Some("named"))
+        .expect("named");
+    assert_eq!(named.return_types().len(), 3);
+    let at = text.find("returnMany").expect("decl") as u32;
+    let hover = hover_at(&file, &text, at).expect("hover");
+    assert!(
+        hover.contents.contains("function returnMany"),
+        "contents: {}",
+        hover.contents
+    );
+}
+
+#[test]
+fn sbe_view_pure_hover_x() {
+    let (text, file) = parse_sbe("ViewPure.sol");
+    let names: Vec<String> = file.contracts()[0]
+        .functions()
+        .iter()
+        .filter_map(|f| f.name())
+        .collect();
+    assert!(names.contains(&"addToX".to_string()));
+    assert!(names.contains(&"add".to_string()));
+    let at = text.find("uint public x").expect("decl") as u32 + 12;
+    let hover = hover_at(&file, &text, at).expect("hover");
+    assert_eq!(hover.contents, "uint x");
+}
+
+#[test]
+fn sbe_error_hover_and_completion() {
+    let (text, file) = parse_sbe("Error.sol");
+    let contract = &file.contracts()[0];
+    assert_eq!(contract.errors().len(), 1);
+    assert_eq!(
+        contract.errors()[0].name().as_deref(),
+        Some("InsufficientBalance")
+    );
+    let at = text.find("InsufficientBalance").expect("decl") as u32;
+    let hover = hover_at(&file, &text, at).expect("hover");
+    assert_eq!(hover.contents, "error InsufficientBalance");
+    let at_complete = text.rfind("InsufficientBalance").expect("use") as u32 + 5;
+    let labels: Vec<String> = complete_at(&file, &text, at_complete)
+        .iter()
+        .map(|item| item.label.clone())
+        .collect();
+    assert!(
+        labels.contains(&"InsufficientBalance".to_string()),
+        "labels: {labels:?}"
+    );
 }

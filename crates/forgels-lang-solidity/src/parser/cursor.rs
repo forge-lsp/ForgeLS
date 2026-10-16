@@ -84,6 +84,8 @@ impl<'a> Cursor<'a> {
                     || k == SolidityKind::Abstract.as_u16()
                     || k == SolidityKind::Struct.as_u16()
                     || k == SolidityKind::Enum.as_u16()
+                    || k == SolidityKind::ErrorKw.as_u16()
+                    || k == SolidityKind::Type.as_u16()
                     || k == SolidityKind::RBrace.as_u16()
             ) {
                 return;

@@ -30,6 +30,8 @@ pub(crate) fn parse_var(cursor: &mut Cursor, kind: SolidityNode) -> Result<Synta
     // State modifiers sit between type and name: `uint public constant x`.
     // Consumed, not stored: the name stays the first word token, so
     // `StateVar::name` keeps working without modifier filtering.
+    // `payable` covers `address payable owner`: part of the type in
+    // the grammar, consumed here so the name still resolves.
     loop {
         match cursor.peek_kind() {
             Some(kind)
@@ -39,7 +41,8 @@ pub(crate) fn parse_var(cursor: &mut Cursor, kind: SolidityNode) -> Result<Synta
                     || kind == SolidityKind::Constant.as_u16()
                     || kind == SolidityKind::Immutable.as_u16()
                     || kind == SolidityKind::Override.as_u16()
-                    || kind == SolidityKind::Transient.as_u16() =>
+                    || kind == SolidityKind::Transient.as_u16()
+                    || kind == SolidityKind::Payable.as_u16() =>
             {
                 cursor.bump();
             }
@@ -214,6 +217,11 @@ pub(crate) fn parse_param(cursor: &mut Cursor) -> Result<SyntaxNode, ParseError>
                 || kind == SolidityKind::Storage.as_u16()
                 || kind == SolidityKind::Calldata.as_u16()
     ) {
+        cursor.bump();
+    }
+    // `address payable holder`: payable is part of the type, skip it
+    // so the trailing name still parses.
+    if cursor.peek_kind() == Some(SolidityKind::Payable.as_u16()) {
         cursor.bump();
     }
     let mut end = children

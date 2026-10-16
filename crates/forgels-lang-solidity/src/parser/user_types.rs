@@ -1,5 +1,6 @@
 use super::cursor::{Cursor, token_element};
-use super::members::parse_param;
+use super::members::{parse_param, skip_parens};
+use super::types::parse_type;
 use crate::SolidityNode;
 use crate::lexer::SolidityKind;
 use forgels_syntax::{ParseError, Span, SyntaxElement, SyntaxNode};
@@ -215,4 +216,93 @@ fn recover_field(cursor: &mut Cursor) {
             return;
         }
     }
+}
+
+/// Parse `error Name(uint a);`, keeping the name only.
+///
+/// Params are skipped with paren balance so malformed rows still
+/// yield the name for hover and goto. Missing `;` is one error.
+pub(crate) fn parse_error(cursor: &mut Cursor, errors: &mut Vec<ParseError>) -> Option<SyntaxNode> {
+    let Some(head) = cursor.bump() else {
+        errors.push(ParseError::new(cursor.peek_span(), "expected error name"));
+        return None;
+    };
+    if head.kind != SolidityKind::ErrorKw.as_u16() {
+        errors.push(ParseError::new(head.span, "expected error name"));
+        return None;
+    }
+    let start = head.span.start;
+    let name = match cursor.expect(SolidityKind::Ident, "error name") {
+        Ok(name) => name,
+        Err(error) => {
+            errors.push(error);
+            return None;
+        }
+    };
+    if cursor.peek_kind() == Some(SolidityKind::LParen.as_u16()) {
+        skip_parens(cursor);
+    }
+    let end = match cursor.expect(SolidityKind::Semicolon, "`;`") {
+        Ok(semi) => semi.span.end,
+        Err(error) => {
+            errors.push(error);
+            name.span.end
+        }
+    };
+    let node_children = vec![token_element(name)];
+    Some(SyntaxNode::with_children(
+        SolidityNode::Error.as_u16(),
+        Span::new(start, end),
+        node_children,
+    ))
+}
+
+/// Parse `type Name is uint;`, keeping name plus underlying type.
+///
+/// Only the `is Type ;` shape is supported. Anything else is one
+/// error with no node so the file keeps parsing.
+pub(crate) fn parse_user_type(
+    cursor: &mut Cursor,
+    errors: &mut Vec<ParseError>,
+) -> Option<SyntaxNode> {
+    let Some(head) = cursor.bump() else {
+        errors.push(ParseError::new(cursor.peek_span(), "expected type name"));
+        return None;
+    };
+    if head.kind != SolidityKind::Type.as_u16() {
+        errors.push(ParseError::new(head.span, "expected type name"));
+        return None;
+    }
+    let start = head.span.start;
+    let name = match cursor.expect(SolidityKind::Ident, "type name") {
+        Ok(name) => name,
+        Err(error) => {
+            errors.push(error);
+            return None;
+        }
+    };
+    if cursor.peek_kind() != Some(SolidityKind::Is.as_u16()) {
+        errors.push(ParseError::new(cursor.peek_span(), "expected `is`"));
+        return None;
+    }
+    cursor.bump();
+    let underlying = match parse_type(cursor) {
+        Ok(node) => node,
+        Err(error) => {
+            errors.push(error);
+            return None;
+        }
+    };
+    let end = match cursor.expect(SolidityKind::Semicolon, "`;`") {
+        Ok(semi) => semi.span.end,
+        Err(error) => {
+            errors.push(error);
+            underlying.span.end.max(name.span.end)
+        }
+    };
+    Some(SyntaxNode::with_children(
+        SolidityNode::UserType.as_u16(),
+        Span::new(start, end),
+        vec![token_element(name), SyntaxElement::Node(underlying)],
+    ))
 }

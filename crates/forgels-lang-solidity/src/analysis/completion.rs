@@ -38,6 +38,8 @@ pub fn completion_item_kind(kind: CompletionKind) -> CompletionItemKind {
             SymbolKind::Field => CompletionItemKind::FIELD,
             SymbolKind::Struct => CompletionItemKind::STRUCT,
             SymbolKind::Enum => CompletionItemKind::ENUM,
+            SymbolKind::Error => CompletionItemKind::EVENT,
+            SymbolKind::UserType => CompletionItemKind::TYPE_PARAMETER,
         },
     }
 }
