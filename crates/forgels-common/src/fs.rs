@@ -88,6 +88,43 @@ pub fn list_dir_entries(dir: &Path, cap: usize) -> Vec<(String, bool)> {
     out
 }
 
+/// Names in `dir` starting with `prefix`: `(name, is_dir)`, sorted.
+///
+/// Same filters as `list_dir_entries` (skips dots, symlinks, non-utf8)
+/// but the prefix applies during collection so filesystem order never
+/// hides a match. Sorts, then truncates to `cap`.
+pub fn list_dir_entries_matching(dir: &Path, prefix: &str, cap: usize) -> Vec<(String, bool)> {
+    if cap == 0 {
+        return Vec::new();
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut out: Vec<(String, bool)> = Vec::new();
+    for entry in entries.flatten() {
+        let Ok(kind) = entry.file_type() else {
+            continue;
+        };
+        if kind.is_symlink() {
+            continue;
+        }
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        if name.is_empty() || name.starts_with('.') {
+            continue;
+        }
+        if !name.starts_with(prefix) {
+            continue;
+        }
+        out.push((name.to_string(), kind.is_dir()));
+    }
+    out.sort_by(|left, right| left.0.cmp(&right.0));
+    out.truncate(cap);
+    out
+}
+
 /// List files with `extension` under `root`, recursively.
 ///
 /// Skips dot dirs, never follows symlinks, sorts output. Stops at
@@ -268,6 +305,20 @@ mod tests {
         assert_eq!(list_dir_entries(&root, 2).len(), 2);
         assert!(list_dir_entries(&root, 0).is_empty());
         assert!(list_dir_entries(&root.join("nope"), 128).is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn entries_matching_filters_before_cap() {
+        let root = fresh_dir("forgels-fs-matching");
+        for index in 0..200 {
+            std::fs::create_dir_all(root.join(format!("pkg{index:03}"))).expect("dir");
+        }
+        std::fs::create_dir_all(root.join("@openzeppelin")).expect("dir");
+        let found = list_dir_entries_matching(&root, "@open", 128);
+        assert_eq!(found, vec![("@openzeppelin".to_string(), true)]);
+        assert!(list_dir_entries_matching(&root, "@open", 0).is_empty());
+        assert!(list_dir_entries_matching(&root.join("nope"), "@open", 128).is_empty());
         let _ = std::fs::remove_dir_all(&root);
     }
 }

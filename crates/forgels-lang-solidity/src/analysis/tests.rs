@@ -1487,6 +1487,67 @@ fn bare_results_cap_at_32() {
 }
 
 #[test]
+fn bare_finds_scoped_package_beyond_dir_cap() {
+    let root = std::env::temp_dir().join("forgels-sol-bare-beyond-cap");
+    let _ = std::fs::remove_dir_all(&root);
+    for index in 0..200 {
+        let dir = root.join(format!("node_modules/pkg{index:03}"));
+        std::fs::create_dir_all(&dir).expect("dir");
+    }
+    let target = root.join("node_modules/@openzeppelin/contracts");
+    std::fs::create_dir_all(&target).expect("dir");
+    std::fs::write(target.join("Token.sol"), "contract X {}").expect("write");
+    let contracts = root.join("contracts");
+    std::fs::create_dir_all(&contracts).expect("dir");
+    let importer = contracts.join("A.sol");
+    let found = complete_bare_imports(&importer, std::slice::from_ref(&root), "@open");
+    let labels: Vec<&str> = found.iter().map(|item| item.label.as_str()).collect();
+    assert!(
+        labels.contains(&"@openzeppelin/contracts/"),
+        "labels: {labels:?}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn bare_finds_scope_subprefix_beyond_scope_cap() {
+    let root = std::env::temp_dir().join("forgels-sol-bare-scope-cap");
+    let _ = std::fs::remove_dir_all(&root);
+    for index in 0..150 {
+        let dir = root.join(format!("node_modules/@types/lib{index:03}"));
+        std::fs::create_dir_all(&dir).expect("dir");
+    }
+    let target = root.join("node_modules/@types/wanted-pkg");
+    std::fs::create_dir_all(&target).expect("dir");
+    let contracts = root.join("contracts");
+    std::fs::create_dir_all(&contracts).expect("dir");
+    let importer = contracts.join("A.sol");
+    let found = complete_bare_imports(&importer, std::slice::from_ref(&root), "@types/want");
+    let labels: Vec<&str> = found.iter().map(|item| item.label.as_str()).collect();
+    assert_eq!(labels, vec!["@types/wanted-pkg/"]);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn bare_finds_subpath_beyond_walk_cap() {
+    let root = std::env::temp_dir().join("forgels-sol-bare-walk-cap");
+    let _ = std::fs::remove_dir_all(&root);
+    let pkg = root.join("node_modules/bigpkg");
+    std::fs::create_dir_all(&pkg).expect("dir");
+    for index in 0..250 {
+        std::fs::write(pkg.join(format!("Filler{index:03}.sol")), "contract X {}").expect("write");
+    }
+    std::fs::write(pkg.join("Wanted.sol"), "contract X {}").expect("write");
+    let contracts = root.join("contracts");
+    std::fs::create_dir_all(&contracts).expect("dir");
+    let importer = contracts.join("A.sol");
+    let found = complete_bare_imports(&importer, std::slice::from_ref(&root), "bigpkg/Want");
+    let labels: Vec<&str> = found.iter().map(|item| item.label.as_str()).collect();
+    assert_eq!(labels, vec!["bigpkg/Wanted.sol"]);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn path_prefix_keeps_scoped_bare_prefix() {
     let text = "import \"@scope/p";
     let prefix = super::completion::path_prefix_at(text, text.len() as u32);

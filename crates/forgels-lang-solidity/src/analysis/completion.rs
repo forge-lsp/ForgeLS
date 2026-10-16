@@ -327,16 +327,39 @@ fn nearest_node_modules(importer: &Path) -> Option<PathBuf> {
 /// Top level package scaffolds: `name/` plus one `@scope/` level.
 ///
 /// Dirs only, filtered by `prefix`, detail `package`. Trailing slash
-/// marks a hint, not a resolvable import.
+/// marks a hint, not a resolvable import. Both levels filter by the
+/// typed fragment before the cap so readdir order never hides a match.
 fn bare_package_scaffolds(modules: &Path, prefix: &str) -> Vec<CompletionItem> {
     let mut items = Vec::new();
-    for (name, is_dir) in forgels_common::fs::list_dir_entries(modules, NODE_ENTRIES_CAP) {
+    let scoped = prefix.starts_with('@');
+    let top_filter = prefix.split('/').next().unwrap_or(prefix);
+    let scope_part = if scoped && prefix.contains('/') {
+        prefix.split('/').next().unwrap_or("")
+    } else {
+        ""
+    };
+    for (name, is_dir) in
+        forgels_common::fs::list_dir_entries_matching(modules, top_filter, NODE_ENTRIES_CAP)
+    {
         if !is_dir {
             continue;
         }
         if name.starts_with('@') {
+            if !scoped && !prefix.is_empty() {
+                continue;
+            }
+            if !scope_part.is_empty() && name != scope_part {
+                continue;
+            }
+            let sub_filter = if scoped && prefix.contains('/') {
+                let rest = prefix.split_once('/').map(|pair| pair.1).unwrap_or("");
+                rest.split_once('/').map(|pair| pair.0).unwrap_or(rest)
+            } else {
+                ""
+            };
             let scope = modules.join(&name);
-            for (pkg, pkg_is_dir) in forgels_common::fs::list_dir_entries(&scope, NODE_ENTRIES_CAP)
+            for (pkg, pkg_is_dir) in
+                forgels_common::fs::list_dir_entries_matching(&scope, sub_filter, NODE_ENTRIES_CAP)
             {
                 if !pkg_is_dir {
                     continue;
@@ -390,7 +413,10 @@ fn bare_package_files(
     } else {
         base.join(below)
     };
-    let caps = forgels_common::fs::WalkCaps::default();
+    // Match cap covers the visited budget so the `prefix` filter below
+    // runs before any truncation. Caller caps the sorted result at 32.
+    let visit = forgels_common::fs::WalkCaps::default().max_visited;
+    let caps = forgels_common::fs::WalkCaps::new(visit, visit);
     let mut items = Vec::new();
     for found in forgels_common::fs::list_files_with_extension(&dir, "sol", caps) {
         let Ok(rel) = found.strip_prefix(&base) else {
