@@ -1,7 +1,7 @@
 use super::{
     CompletionItem, CompletionKind, Scope, SolidityAnalyzer, SymbolKind, collect_symbols,
-    complete_at, complete_import_paths, completion_item_kind, exports_of, goto_definition,
-    hover_at, import_path_at,
+    complete_at, complete_bare_imports, complete_import_paths, completion_item_kind, exports_of,
+    goto_definition, hover_at, import_path_at,
 };
 use crate::{SolidityLexer, SolidityParser};
 use forgels_core::{Analyzer, ProjectContext, Workspace, routing::Language};
@@ -1310,4 +1310,210 @@ fn cross_file_member_broken_dep_still_works() {
     assert!(hit.1.contains("from Hello in B.sol"), "detail: {}", hit.1);
     let goto_hit = goto_multi(&workspace, "/A.sol", a, "greet").expect("goto");
     assert_eq!(goto_hit.path, PathBuf::from("/B.sol"));
+}
+
+fn fresh_node_root(name: &str) -> PathBuf {
+    let root = std::env::temp_dir().join(name);
+    let _ = std::fs::remove_dir_all(&root);
+    for rel in [
+        "contracts/A.sol",
+        "node_modules/beta/Token.sol",
+        "node_modules/beta/sub/Deep.sol",
+        "node_modules/@scope/pkg/contracts/T.sol",
+        "node_modules/@scope/pkg/nested/Deep.sol",
+        "node_modules/@scope/other/Token.sol",
+        "node_modules/empty-pkg/README.txt",
+        "node_modules/@scope/empty-pkg/README.txt",
+    ] {
+        let path = root.join(rel);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("parent");
+        }
+        std::fs::write(&path, "contract X {}").expect("write");
+    }
+    root
+}
+
+#[test]
+fn bare_scaffolds_top_level_packages() {
+    let root = fresh_node_root("forgels-sol-bare-scaffold");
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(
+        root.join("node_modules/beta"),
+        root.join("node_modules/link-pkg"),
+    )
+    .expect("symlink");
+    let importer = root.join("contracts/A.sol");
+    let found = complete_bare_imports(&importer, std::slice::from_ref(&root), "");
+    let labels: Vec<&str> = found.iter().map(|item| item.label.as_str()).collect();
+    for want in [
+        "beta/",
+        "empty-pkg/",
+        "@scope/pkg/",
+        "@scope/other/",
+        "@scope/empty-pkg/",
+    ] {
+        assert!(labels.contains(&want), "labels: {labels:?}");
+    }
+    assert!(
+        !labels.iter().any(|label| label.starts_with("link-pkg")),
+        "labels: {labels:?}"
+    );
+    assert!(found.iter().all(|item| item.detail == "package"));
+    assert!(
+        found
+            .iter()
+            .all(|item| completion_item_kind(item.kind).value() == 17)
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn bare_filters_by_typed_prefix() {
+    let root = fresh_node_root("forgels-sol-bare-filter");
+    let importer = root.join("contracts/A.sol");
+    let scoped = complete_bare_imports(&importer, std::slice::from_ref(&root), "@scope/p");
+    let labels: Vec<&str> = scoped.iter().map(|item| item.label.as_str()).collect();
+    assert_eq!(labels, vec!["@scope/pkg/"]);
+    let plain = complete_bare_imports(&importer, std::slice::from_ref(&root), "bet");
+    let plain_labels: Vec<&str> = plain.iter().map(|item| item.label.as_str()).collect();
+    assert_eq!(plain_labels, vec!["beta/"]);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn bare_subpath_lists_package_files() {
+    let root = fresh_node_root("forgels-sol-bare-files");
+    let importer = root.join("contracts/A.sol");
+    let scoped = complete_bare_imports(&importer, std::slice::from_ref(&root), "@scope/pkg/");
+    let labels: Vec<&str> = scoped.iter().map(|item| item.label.as_str()).collect();
+    assert!(
+        labels.contains(&"@scope/pkg/contracts/T.sol"),
+        "labels: {labels:?}"
+    );
+    assert!(
+        labels.contains(&"@scope/pkg/nested/Deep.sol"),
+        "labels: {labels:?}"
+    );
+    assert!(scoped.iter().all(|item| item.detail == "file"));
+    let nested = complete_bare_imports(&importer, std::slice::from_ref(&root), "beta/sub/");
+    let nested_labels: Vec<&str> = nested.iter().map(|item| item.label.as_str()).collect();
+    assert_eq!(nested_labels, vec!["beta/sub/Deep.sol"]);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn bare_file_labels_roundtrip_resolve() {
+    let root = fresh_node_root("forgels-sol-bare-roundtrip");
+    let importer = root.join("contracts/A.sol");
+    let roots = vec![root.clone()];
+    let mut files = 0;
+    for prefix in [
+        "",
+        "bet",
+        "beta/",
+        "beta/sub/",
+        "@scope/",
+        "@scope/p",
+        "@scope/pkg/",
+        "@scope/pkg/nested/",
+    ] {
+        for item in complete_bare_imports(&importer, &roots, prefix) {
+            assert_eq!(
+                completion_item_kind(item.kind).value(),
+                17,
+                "kind: {}",
+                item.label
+            );
+            if item.detail == "file" {
+                files += 1;
+                let hit = forgels_common::paths::resolve_import_full(
+                    &importer,
+                    &item.label,
+                    &root,
+                    &[],
+                    forgels_common::fs::is_trackable_file,
+                );
+                assert!(hit.is_some(), "unresolvable: {}", item.label);
+            } else {
+                assert_eq!(item.detail, "package");
+            }
+        }
+    }
+    assert!(files > 0, "expected file labels");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn bare_dot_prefix_stays_empty() {
+    let root = fresh_node_root("forgels-sol-bare-dot");
+    let importer = root.join("contracts/A.sol");
+    assert!(complete_bare_imports(&importer, std::slice::from_ref(&root), ".").is_empty());
+    assert!(complete_bare_imports(&importer, std::slice::from_ref(&root), "./").is_empty());
+    assert!(complete_bare_imports(&importer, std::slice::from_ref(&root), "../").is_empty());
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn bare_package_without_sol_has_no_file_labels() {
+    let root = fresh_node_root("forgels-sol-bare-empty");
+    let importer = root.join("contracts/A.sol");
+    assert!(complete_bare_imports(&importer, std::slice::from_ref(&root), "empty-pkg/").is_empty());
+    assert!(
+        complete_bare_imports(&importer, std::slice::from_ref(&root), "@scope/empty-pkg/")
+            .is_empty()
+    );
+    let top = complete_bare_imports(&importer, std::slice::from_ref(&root), "");
+    let labels: Vec<&str> = top.iter().map(|item| item.label.as_str()).collect();
+    assert!(labels.contains(&"empty-pkg/"), "labels: {labels:?}");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn bare_results_cap_at_32() {
+    let root = std::env::temp_dir().join("forgels-sol-bare-cap");
+    let _ = std::fs::remove_dir_all(&root);
+    for index in 0..40 {
+        let dir = root.join(format!("node_modules/pkg{index:02}"));
+        std::fs::create_dir_all(&dir).expect("dir");
+        std::fs::write(dir.join("T.sol"), "contract X {}").expect("write");
+    }
+    let contracts = root.join("contracts");
+    std::fs::create_dir_all(&contracts).expect("dir");
+    let importer = contracts.join("A.sol");
+    let found = complete_bare_imports(&importer, std::slice::from_ref(&root), "");
+    assert_eq!(found.len(), 32);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn path_prefix_keeps_scoped_bare_prefix() {
+    let text = "import \"@scope/p";
+    let prefix = super::completion::path_prefix_at(text, text.len() as u32);
+    assert_eq!(prefix, "@scope/p");
+    let relative = "import \"./B";
+    let rel_prefix = super::completion::path_prefix_at(relative, relative.len() as u32);
+    assert_eq!(rel_prefix, "./B");
+}
+
+#[test]
+fn analyzer_complete_merges_bare_node_imports() {
+    let root = fresh_node_root("forgels-sol-bare-branch");
+    let current = root.join("contracts/A.sol");
+    let text = "import \"beta/";
+    let mut workspace = Workspace::new();
+    workspace.set_roots(vec![root.clone()]);
+    workspace
+        .open(current.clone(), Language::Solidity, text.to_string(), 1)
+        .expect("open works");
+    let owned = text.to_string();
+    let ctx = ProjectContext::new(&current, &owned, owned.len() as u32, &workspace);
+    let found = SolidityAnalyzer.complete(&ctx);
+    let hit = found
+        .iter()
+        .find(|item| item.label == "beta/Token.sol")
+        .expect("bare hit");
+    assert_eq!(hit.detail, "file");
+    assert_eq!(hit.kind.value(), 17);
+    let _ = std::fs::remove_dir_all(&root);
 }

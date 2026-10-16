@@ -52,6 +52,42 @@ impl WalkCaps {
     }
 }
 
+/// Names directly inside `dir`: `(name, is_dir)`, sorted by name.
+///
+/// Skips dot entries, never follows symlinks, stops at `cap`.
+/// Missing or unreadable dirs yield an empty list.
+pub fn list_dir_entries(dir: &Path, cap: usize) -> Vec<(String, bool)> {
+    if cap == 0 {
+        return Vec::new();
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut out: Vec<(String, bool)> = Vec::new();
+    for entry in entries.flatten() {
+        if out.len() >= cap {
+            break;
+        }
+        let Ok(kind) = entry.file_type() else {
+            continue;
+        };
+        if kind.is_symlink() {
+            continue;
+        }
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        if name.is_empty() || name.starts_with('.') {
+            continue;
+        }
+        out.push((name.to_string(), kind.is_dir()));
+    }
+    out.sort_by(|left, right| left.0.cmp(&right.0));
+    out.truncate(cap);
+    out
+}
+
 /// List files with `extension` under `root`, recursively.
 ///
 /// Skips dot dirs, never follows symlinks, sorts output. Stops at
@@ -208,6 +244,30 @@ mod tests {
         assert!(!is_trackable_file(&link));
         #[cfg(unix)]
         assert!(is_trackable_file(&root.join("Real.sol")));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn entries_list_sorted_skip_dots_symlinks_and_cap() {
+        let root = fresh_dir("forgels-fs-entries");
+        write(&root, "B.sol");
+        write(&root, "A.sol");
+        write(&root, ".hidden");
+        std::fs::create_dir_all(root.join("pkg")).expect("dir");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(root.join("A.sol"), root.join("Link.sol")).expect("symlink");
+        let found = list_dir_entries(&root, 128);
+        assert_eq!(
+            found,
+            vec![
+                ("A.sol".to_string(), false),
+                ("B.sol".to_string(), false),
+                ("pkg".to_string(), true),
+            ]
+        );
+        assert_eq!(list_dir_entries(&root, 2).len(), 2);
+        assert!(list_dir_entries(&root, 0).is_empty());
+        assert!(list_dir_entries(&root.join("nope"), 128).is_empty());
         let _ = std::fs::remove_dir_all(&root);
     }
 }

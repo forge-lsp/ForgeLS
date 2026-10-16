@@ -153,6 +153,23 @@ pub fn relative_path(from_file: &Path, target: &Path) -> Option<String> {
 /// Max ancestor dirs to probe for `node_modules`. Bounds disk checks.
 pub const MAX_NODE_MODULES_DEPTH: usize = 8;
 
+/// Candidate `node_modules` dirs for `from_file`, nearest first.
+///
+/// Lexical only, no disk access. The caller tries each dir in order
+/// and keeps the first one it can read.
+pub fn node_modules_dirs(from_file: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let mut dir = from_file.parent().map(|parent| parent.to_path_buf());
+    for _ in 0..MAX_NODE_MODULES_DEPTH {
+        let Some(current) = dir else {
+            break;
+        };
+        out.push(normalize_lexically(&current.join("node_modules")));
+        dir = current.parent().map(|parent| parent.to_path_buf());
+    }
+    out
+}
+
 /// Candidate `node_modules` paths for a bare specifier, nearest first.
 ///
 /// Lexical only, no disk access. Relative, absolute, and empty
@@ -409,5 +426,19 @@ mod tests {
             resolve_import_full(Path::new("/repo/A.sol"), "pkg/M.sol", root, &[], never).is_none()
         );
         assert!(resolve_import_full(Path::new("/repo/A.sol"), "", root, &[], never).is_none());
+    }
+
+    #[test]
+    fn node_dirs_walk_up_nearest_first() {
+        let found = node_modules_dirs(Path::new("/repo/contracts/A.sol"));
+        assert!(found.len() >= 2);
+        assert_eq!(found[0], PathBuf::from("/repo/contracts/node_modules"));
+        assert_eq!(found[1], PathBuf::from("/repo/node_modules"));
+    }
+
+    #[test]
+    fn node_dirs_cap_at_depth() {
+        let found = node_modules_dirs(Path::new("/a/b/c/d/e/f/g/h/i/A.sol"));
+        assert_eq!(found.len(), MAX_NODE_MODULES_DEPTH);
     }
 }
