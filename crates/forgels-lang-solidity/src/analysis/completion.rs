@@ -17,6 +17,7 @@ pub enum CompletionKind {
     Symbol(SymbolKind),
     Keyword,
     Path,
+    Package,
 }
 
 /// Map a completion origin to its LSP number.
@@ -27,6 +28,7 @@ pub fn completion_item_kind(kind: CompletionKind) -> CompletionItemKind {
     match kind {
         CompletionKind::Keyword => CompletionItemKind::KEYWORD,
         CompletionKind::Path => CompletionItemKind::FILE,
+        CompletionKind::Package => CompletionItemKind::FOLDER,
         CompletionKind::Symbol(symbol) => match symbol {
             SymbolKind::Contract => CompletionItemKind::CLASS,
             SymbolKind::Function => CompletionItemKind::FUNCTION,
@@ -268,11 +270,17 @@ pub fn complete_import_paths(
     items
 }
 
-/// Cap for bare `node_modules` suggestions per request.
+/// Cap for file labels per request. Recursive walk is costly.
 const MAX_BARE_ITEMS: usize = 32;
 
+/// Loose guard for package scaffolds. Scaffolds are one readdir
+/// plus one per `@scope`, cheap, and clients fuzzy-filter what we send.
+const MAX_SCAFFOLD_ITEMS: usize = 512;
+
 /// Single `read_dir` budget for one `node_modules` or scope level.
-const NODE_ENTRIES_CAP: usize = 128;
+/// Matches the scaffold guard so empty-prefix listing keeps late
+/// names like `@openzeppelin` visible.
+const NODE_ENTRIES_CAP: usize = 512;
 
 /// Bare `node_modules` completions for an import string.
 ///
@@ -297,15 +305,22 @@ pub fn complete_bare_imports(
         .first()
         .map(PathBuf::as_path)
         .unwrap_or_else(|| importer.parent().unwrap_or(Path::new("")));
-    let mut items = match split_bare_prefix(prefix) {
-        BarePrefix::Packages => bare_package_scaffolds(&modules, prefix),
-        BarePrefix::Files { head, sub } => {
-            bare_package_files(importer, &modules, root, head, sub, prefix)
+    match split_bare_prefix(prefix) {
+        BarePrefix::Packages => {
+            let mut items = bare_package_scaffolds(&modules, prefix);
+            items.sort_by(|left, right| left.label.cmp(&right.label));
+            // Scaffolds are cheap names; keep the full list so clients
+            // can fuzzy-filter late scopes like `@openzeppelin`.
+            items.truncate(MAX_SCAFFOLD_ITEMS);
+            items
         }
-    };
-    items.sort_by(|left, right| left.label.cmp(&right.label));
-    items.truncate(MAX_BARE_ITEMS);
-    items
+        BarePrefix::Files { head, sub } => {
+            let mut items = bare_package_files(importer, &modules, root, head, sub, prefix);
+            items.sort_by(|left, right| left.label.cmp(&right.label));
+            items.truncate(MAX_BARE_ITEMS);
+            items
+        }
+    }
 }
 
 /// Nearest `node_modules` the disk can read, walking up from `importer`.
@@ -369,7 +384,7 @@ fn bare_package_scaffolds(modules: &Path, prefix: &str) -> Vec<CompletionItem> {
                     items.push(CompletionItem {
                         label,
                         detail: "package".to_string(),
-                        kind: CompletionKind::Path,
+                        kind: CompletionKind::Package,
                     });
                 }
             }
@@ -380,7 +395,7 @@ fn bare_package_scaffolds(modules: &Path, prefix: &str) -> Vec<CompletionItem> {
             items.push(CompletionItem {
                 label,
                 detail: "package".to_string(),
-                kind: CompletionKind::Path,
+                kind: CompletionKind::Package,
             });
         }
     }
