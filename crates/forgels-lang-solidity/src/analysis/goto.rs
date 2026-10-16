@@ -4,9 +4,20 @@ use forgels_syntax::{Lexer, Span};
 
 /// Jump target for the word at `offset`: the declaration span.
 ///
+/// Member positions after a dot jump to the field or contract member.
 /// Positions on whitespace, operators, or undeclared words return `None`.
 /// The caller attaches the document URI; the span alone locates the jump.
 pub fn goto_definition(file: &SolidityFile, text: &str, offset: u32) -> Option<Span> {
+    if let Some(ctx) = super::members::member_context_at(text, offset)
+        && (ctx.member_span.contains(offset) || ctx.member_span.end == offset)
+    {
+        let scope = collect_symbols(file);
+        let kind = super::members::receiver_type(file, &scope, offset, &ctx.receiver);
+        let found = super::members::members_of(file, &kind)
+            .into_iter()
+            .find(|member| member.name == ctx.member)?;
+        return Some(found.span);
+    }
     let (word, _) = word_at(text, offset)?;
     let scope = collect_symbols(file);
     scope.resolve(&word, offset).map(|symbol| symbol.span)

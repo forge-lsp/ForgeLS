@@ -13,6 +13,7 @@ mod completion;
 mod goto;
 mod hover;
 mod imports;
+pub(crate) mod members;
 
 #[cfg(test)]
 mod tests;
@@ -57,6 +58,7 @@ pub enum SymbolKind {
     StateVar,
     LocalVar,
     Param,
+    Field,
 }
 
 /// One declaration: name, kind, node span, and hover-ready detail.

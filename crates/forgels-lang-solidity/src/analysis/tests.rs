@@ -810,3 +810,90 @@ fn goto_jumps_to_struct_declaration() {
     let target = goto_target(text, at_use);
     assert!(target.start <= at_decl && at_decl < target.end);
 }
+
+#[test]
+fn struct_field_completion_suggests_fields() {
+    let text = "struct Person {\nuint age;\nstring name;\n}\ncontract C {\nfunction f() public {\nPerson p;\np.\n}\n}";
+    let at = text.rfind("p.").expect("dot") as u32 + 2;
+    let labels = complete_labels(text, at);
+    assert!(labels.contains(&"age".to_string()), "labels: {labels:?}");
+    assert!(labels.contains(&"name".to_string()), "labels: {labels:?}");
+    assert!(!labels.contains(&"p".to_string()), "labels: {labels:?}");
+}
+
+#[test]
+fn struct_field_completion_filters_by_prefix() {
+    let text = "struct Person {\nuint age;\nstring name;\n}\ncontract C {\nfunction f() public {\nPerson p;\np.a\n}\n}";
+    let at = text.rfind("p.a").expect("dot") as u32 + 3;
+    let labels = complete_labels(text, at);
+    assert!(labels.contains(&"age".to_string()), "labels: {labels:?}");
+    assert!(!labels.contains(&"name".to_string()), "labels: {labels:?}");
+}
+
+#[test]
+fn contract_member_completion_via_this() {
+    let text =
+        "contract C {\nuint total;\nfunction foo() public {}\nfunction f() public {\nthis.\n}\n}";
+    let at = text.rfind("this.").expect("dot") as u32 + 5;
+    let labels = complete_labels(text, at);
+    assert!(labels.contains(&"total".to_string()), "labels: {labels:?}");
+    assert!(labels.contains(&"foo".to_string()), "labels: {labels:?}");
+}
+
+#[test]
+fn member_hover_shows_field_detail() {
+    let text = "struct Person {\nuint age;\n}\ncontract C {\nfunction f() public {\nPerson p;\np.age;\n}\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let at = text.rfind("p.age").expect("use") as u32 + 2;
+    let hover = hover_at(&file, text, at).expect("hover");
+    assert_eq!(hover.contents, "uint age");
+}
+
+#[test]
+fn member_goto_jumps_to_field() {
+    let text = "struct Person {\nuint age;\n}\ncontract C {\nfunction f() public {\nPerson p;\np.age;\n}\n}";
+    let at_use = text.rfind("p.age").expect("use") as u32 + 2;
+    let at_decl = text.find("age").expect("decl") as u32;
+    let target = goto_target(text, at_use);
+    assert!(target.start <= at_decl && at_decl < target.end);
+}
+
+#[test]
+fn member_hover_shows_contract_state() {
+    let text = "contract C {\nuint total;\nfunction f() public {\nthis.total;\n}\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let at = text.rfind("this.total").expect("use") as u32 + 5;
+    let hover = hover_at(&file, text, at).expect("hover");
+    assert_eq!(hover.contents, "uint total");
+}
+
+#[test]
+fn member_goto_jumps_to_contract_state() {
+    let text = "contract C {\nuint total;\nfunction f() public {\nthis.total;\n}\n}";
+    let at_use = text.rfind("this.total").expect("use") as u32 + 5;
+    let at_decl = text.find("total").expect("decl") as u32;
+    let target = goto_target(text, at_use);
+    assert!(target.start <= at_decl && at_decl < target.end);
+}
+
+#[test]
+fn unknown_receiver_member_has_no_items() {
+    let text = "contract C {\nfunction f() public {\nunknown.\n}\n}";
+    let at = text.rfind("unknown.").expect("dot") as u32 + 8;
+    let labels = complete_labels(text, at);
+    assert!(labels.is_empty(), "labels: {labels:?}");
+}
+
+#[test]
+fn chained_member_returns_scope_fallback() {
+    let text = "struct Person {\nuint age;\n}\ncontract C {\nfunction f() public {\nPerson p;\na.b.c\n}\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let at = text.rfind("a.b.c").expect("chain") as u32 + 4;
+    assert!(hover_at(&file, text, at).is_none());
+}
