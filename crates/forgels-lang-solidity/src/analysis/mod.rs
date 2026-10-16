@@ -13,6 +13,7 @@ mod completion;
 mod goto;
 mod hover;
 mod imports;
+pub(crate) mod inheritance;
 pub(crate) mod members;
 
 #[cfg(test)]
@@ -185,7 +186,7 @@ pub fn collect_symbols(file: &SolidityFile) -> Scope {
             continue;
         }
         root.symbols.push(contract_symbol(&contract));
-        root.children.push(contract_scope(&contract));
+        root.children.push(contract_scope(file, &contract));
     }
     root
 }
@@ -215,7 +216,7 @@ fn enum_symbol(item: &EnumDef) -> Symbol {
     Symbol::new(name, SymbolKind::Enum, item.syntax().span, detail)
 }
 
-fn contract_scope(contract: &ContractDef) -> Scope {
+fn contract_scope(file: &SolidityFile, contract: &ContractDef) -> Scope {
     let mut scope = Scope::new(contract.syntax().span);
     for item in contract.structs() {
         if let Some(name) = item.name() {
@@ -252,6 +253,12 @@ fn contract_scope(contract: &ContractDef) -> Scope {
         }
         scope.symbols.push(function_symbol(&function));
         scope.children.push(function_scope(&function));
+    }
+    for inherited in inheritance::inherited_symbols(file, contract) {
+        if scope.symbols.iter().any(|own| own.name == inherited.name) {
+            continue;
+        }
+        scope.symbols.push(inherited);
     }
     scope
 }
@@ -346,16 +353,96 @@ impl SolidityAnalyzer {
         let (file, _) = SolidityParser.parse_with_errors(&tokens);
         file
     }
+
+    fn dep_files(ctx: &ProjectContext) -> Vec<(std::path::PathBuf, SolidityFile)> {
+        let mut out = Vec::new();
+        for (path, text) in forgels_core::dep_texts(ctx, 16) {
+            out.push((path.clone(), Self::parse_file(&text)));
+            if out.len() >= 16 {
+                break;
+            }
+        }
+        out
+    }
+
+    fn member_completion(
+        file: &SolidityFile,
+        ctx_text: &str,
+        offset: u32,
+        member: &members::MemberContext,
+        deps: &[(std::path::PathBuf, SolidityFile)],
+    ) -> Vec<CompletionData> {
+        let scope = collect_symbols(file);
+        let kind = members::receiver_type_with_deps(file, &scope, offset, &member.receiver, deps);
+        let mut seen: Vec<String> = Vec::new();
+        let mut out: Vec<CompletionData> = Vec::new();
+        for item in members::members_of(file, &kind) {
+            if !item.name.starts_with(member.member.as_str()) {
+                continue;
+            }
+            if seen.contains(&item.name) {
+                continue;
+            }
+            seen.push(item.name.clone());
+            out.push(CompletionData {
+                label: item.name.clone(),
+                detail: item.detail.clone(),
+                kind: completion::completion_item_kind(completion::CompletionKind::Symbol(
+                    item.kind,
+                )),
+            });
+        }
+        for (info, _) in members::collect_cross_file_members(file, &kind, deps) {
+            if !info.name.starts_with(member.member.as_str()) {
+                continue;
+            }
+            if seen.contains(&info.name) {
+                continue;
+            }
+            seen.push(info.name.clone());
+            out.push(CompletionData {
+                label: info.name.clone(),
+                detail: info.detail.clone(),
+                kind: completion::completion_item_kind(completion::CompletionKind::Symbol(
+                    info.kind,
+                )),
+            });
+        }
+        out.sort_by(|left, right| left.label.cmp(&right.label));
+        let _ = ctx_text;
+        out
+    }
 }
 
 impl Analyzer for SolidityAnalyzer {
     fn hover(&self, ctx: &ProjectContext) -> Option<HoverData> {
-        let local = hover::hover_at(&Self::parse_file(ctx.text), ctx.text, ctx.offset);
-        if let Some(found) = local {
+        let file = Self::parse_file(ctx.text);
+        if let Some(found) = hover::hover_at(&file, ctx.text, ctx.offset) {
             return Some(HoverData {
                 contents: found.contents,
                 span: found.span,
             });
+        }
+        if let Some(member) = members::member_context_at(ctx.text, ctx.offset)
+            && (member.member_span.contains(ctx.offset) || member.member_span.end == ctx.offset)
+        {
+            let deps = Self::dep_files(ctx);
+            let scope = collect_symbols(&file);
+            let kind = members::receiver_type_with_deps(
+                &file,
+                &scope,
+                ctx.offset,
+                &member.receiver,
+                &deps,
+            );
+            if let Some((info, _)) =
+                members::resolve_member_cross_file(&file, &kind, &member.member, &deps)
+            {
+                return Some(HoverData {
+                    contents: info.detail,
+                    span: member.member_span,
+                });
+            }
         }
         let (word, span) = word_at(ctx.text, ctx.offset)?;
         for (dep_path, dep_text) in forgels_core::dep_texts(ctx, 16) {
@@ -388,10 +475,14 @@ impl Analyzer for SolidityAnalyzer {
                 })
                 .collect();
         }
+        let file = Self::parse_file(ctx.text);
+        if let Some(member) = members::member_context_at(ctx.text, ctx.offset) {
+            let deps = Self::dep_files(ctx);
+            return Self::member_completion(&file, ctx.text, ctx.offset, &member, &deps);
+        }
         let prefix = completion::prefix_at(ctx.text, ctx.offset);
         let mut seen: Vec<String> = Vec::new();
         let mut out: Vec<CompletionData> = Vec::new();
-        let file = Self::parse_file(ctx.text);
         for item in completion::complete_at(&file, ctx.text, ctx.offset) {
             if seen.contains(&item.label) {
                 continue;
@@ -433,9 +524,27 @@ impl Analyzer for SolidityAnalyzer {
     }
 
     fn goto_location(&self, ctx: &ProjectContext) -> Option<GotoTarget> {
-        if let Some(span) = goto::goto_definition(&Self::parse_file(ctx.text), ctx.text, ctx.offset)
-        {
+        let file = Self::parse_file(ctx.text);
+        if let Some(span) = goto::goto_definition(&file, ctx.text, ctx.offset) {
             return Some(GotoTarget::new(ctx.path.to_path_buf(), span));
+        }
+        if let Some(member) = members::member_context_at(ctx.text, ctx.offset)
+            && (member.member_span.contains(ctx.offset) || member.member_span.end == ctx.offset)
+        {
+            let deps = Self::dep_files(ctx);
+            let scope = collect_symbols(&file);
+            let kind = members::receiver_type_with_deps(
+                &file,
+                &scope,
+                ctx.offset,
+                &member.receiver,
+                &deps,
+            );
+            if let Some((info, path)) =
+                members::resolve_member_cross_file(&file, &kind, &member.member, &deps)
+            {
+                return Some(GotoTarget::new(path, info.span));
+            }
         }
         let (word, _) = word_at(ctx.text, ctx.offset)?;
         for (dep_path, dep_text) in forgels_core::dep_texts(ctx, 16) {

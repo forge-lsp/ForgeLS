@@ -1,6 +1,9 @@
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
+
 use forgels_syntax::{AstNode, Span};
 
-use super::{Scope, SymbolKind};
+use super::{Scope, SymbolKind, inheritance};
 use crate::{SolidityFile, TypeNode};
 
 /// Receiver type for member access V1.
@@ -128,28 +131,6 @@ fn is_single_word(text: &str) -> bool {
     text.as_bytes().iter().all(|byte| is_word_byte(*byte))
 }
 
-fn find_contract(file: &SolidityFile, name: &str) -> Option<crate::ContractDef> {
-    file.contracts()
-        .into_iter()
-        .find(|contract| contract.name().as_deref() == Some(name))
-}
-
-fn find_struct(file: &SolidityFile, name: &str) -> Option<crate::StructDef> {
-    for item in file.structs() {
-        if item.name().as_deref() == Some(name) {
-            return Some(item);
-        }
-    }
-    for contract in file.contracts() {
-        for item in contract.structs() {
-            if item.name().as_deref() == Some(name) {
-                return Some(item);
-            }
-        }
-    }
-    None
-}
-
 fn var_type_of_detail(detail: &str) -> Option<String> {
     let index = detail.rfind(' ')?;
     let left = detail.get(..index)?.trim();
@@ -192,23 +173,65 @@ pub fn receiver_type(file: &SolidityFile, scope: &Scope, offset: u32, receiver: 
     if !is_single_word(&type_text) {
         return TypeKind::Unknown;
     }
-    if find_contract(file, &type_text).is_some() {
+    if inheritance::find_contract(file, &type_text).is_some() {
         return TypeKind::Contract(type_text);
     }
-    if find_struct(file, &type_text).is_some() {
+    if inheritance::find_struct(file, &type_text).is_some() {
+        return TypeKind::Struct(type_text);
+    }
+    TypeKind::Unknown
+}
+
+/// Classify the receiver with deps: same file first, then dep files.
+///
+/// `super` stays unknown and chained receivers stay unknown. Dep lookup
+/// lets `Hello h; h.greet` resolve when `Hello` lives in an import.
+pub(crate) fn receiver_type_with_deps(
+    file: &SolidityFile,
+    scope: &Scope,
+    offset: u32,
+    receiver: &str,
+    deps: &[(PathBuf, SolidityFile)],
+) -> TypeKind {
+    let local = receiver_type(file, scope, offset, receiver);
+    if local != TypeKind::Unknown {
+        return local;
+    }
+    if receiver == "this" || receiver == "super" {
+        return TypeKind::Unknown;
+    }
+    let Some(symbol) = scope.resolve(receiver, offset) else {
+        return TypeKind::Unknown;
+    };
+    if !matches!(
+        symbol.kind,
+        SymbolKind::StateVar | SymbolKind::LocalVar | SymbolKind::Param
+    ) {
+        return TypeKind::Unknown;
+    }
+    let Some(type_text) = var_type_of_detail(&symbol.detail) else {
+        return TypeKind::Unknown;
+    };
+    if !is_single_word(&type_text) {
+        return TypeKind::Unknown;
+    }
+    if inheritance::find_contract_across(&type_text, file, deps).is_some() {
+        return TypeKind::Contract(type_text);
+    }
+    if inheritance::find_struct_across(&type_text, file, deps).is_some() {
         return TypeKind::Struct(type_text);
     }
     TypeKind::Unknown
 }
 
 /// Members of a contract (state vars plus functions) or struct (fields).
-/// Unknown types yield no members. Only the current file is searched.
-/// Cross-file member lookup is follow-up work.
+/// Unknown types yield no members. Contract members include same file
+/// inheritance with ` - from Base` origin, derived wins.
 pub fn members_of(file: &SolidityFile, kind: &TypeKind) -> Vec<MemberInfo> {
     match kind {
         TypeKind::Unknown => Vec::new(),
         TypeKind::Contract(name) => {
-            let Some(contract) = find_contract(file, name) else {
+            let Some(contract) = inheritance::find_contract(file, name) else {
                 return Vec::new();
             };
             let mut out = Vec::new();
@@ -269,10 +292,16 @@ pub fn members_of(file: &SolidityFile, kind: &TypeKind) -> Vec<MemberInfo> {
                     span: function.syntax().span,
                 });
             }
+            for inherited in inheritance::inherited_members(file, name) {
+                if out.iter().any(|own| own.name == inherited.name) {
+                    continue;
+                }
+                out.push(inherited);
+            }
             out
         }
         TypeKind::Struct(name) => {
-            let Some(item) = find_struct(file, name) else {
+            let Some(item) = inheritance::find_struct(file, name) else {
                 return Vec::new();
             };
             let mut out = Vec::new();
@@ -299,4 +328,271 @@ pub fn members_of(file: &SolidityFile, kind: &TypeKind) -> Vec<MemberInfo> {
             out
         }
     }
+}
+
+fn file_label(path: &Path) -> String {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("unknown.sol")
+        .to_string()
+}
+
+fn own_member_info(
+    base_name: &str,
+    file_name: &str,
+    var_name: String,
+    var_detail: String,
+    kind: SymbolKind,
+    span: forgels_syntax::Span,
+) -> MemberInfo {
+    let mut detail = var_detail;
+    detail.push_str(" - from ");
+    detail.push_str(base_name);
+    detail.push_str(" in ");
+    detail.push_str(file_name);
+    MemberInfo {
+        name: var_name,
+        detail,
+        kind,
+        span,
+    }
+}
+
+/// All dep members for `kind` with ` - from Base in file` origin.
+///
+/// Skips names already present locally so derived wins. Used for member
+/// completion across imports. Deps come from `dep_texts` in index order.
+pub(crate) fn collect_cross_file_members(
+    primary: &SolidityFile,
+    kind: &TypeKind,
+    deps: &[(PathBuf, SolidityFile)],
+) -> Vec<(MemberInfo, PathBuf)> {
+    let local = members_of(primary, kind);
+    let mut seen: HashSet<String> = local.iter().map(|item| item.name.clone()).collect();
+    let mut out: Vec<(MemberInfo, PathBuf)> = Vec::new();
+    match kind {
+        TypeKind::Unknown => Vec::new(),
+        TypeKind::Contract(name) => {
+            if let Some((direct, Some(path))) =
+                inheritance::find_contract_across(name, primary, deps)
+            {
+                let file_name = file_label(&path);
+                let Some(base_name) = direct.name() else {
+                    return out;
+                };
+                for var in direct.state_vars() {
+                    let Some(var_name) = var.name() else {
+                        continue;
+                    };
+                    if var_name.is_empty() || !seen.insert(var_name.clone()) {
+                        continue;
+                    }
+                    let mut base_detail =
+                        var.type_node().map(|node| node.text()).unwrap_or_default();
+                    base_detail.push(' ');
+                    base_detail.push_str(&var_name);
+                    out.push((
+                        own_member_info(
+                            &base_name,
+                            &file_name,
+                            var_name,
+                            base_detail,
+                            SymbolKind::StateVar,
+                            var.syntax().span,
+                        ),
+                        path.clone(),
+                    ));
+                }
+                for function in direct.functions() {
+                    let Some(func_name) = function.name() else {
+                        continue;
+                    };
+                    if func_name.is_empty() || !seen.insert(func_name.clone()) {
+                        continue;
+                    }
+                    let params: Vec<String> = function
+                        .params()
+                        .iter()
+                        .map(|param| {
+                            let mut text = param
+                                .type_node()
+                                .map(|node| node.text())
+                                .unwrap_or_default();
+                            if let Some(param_name) = param.name() {
+                                text.push(' ');
+                                text.push_str(&param_name);
+                            }
+                            text
+                        })
+                        .collect();
+                    let mut base_detail = format!("function {func_name}({})", params.join(", "));
+                    let returns: Vec<String> = function
+                        .return_types()
+                        .iter()
+                        .map(|node| node.text())
+                        .collect();
+                    if !returns.is_empty() {
+                        base_detail.push_str(" returns (");
+                        base_detail.push_str(&returns.join(", "));
+                        base_detail.push(')');
+                    }
+                    out.push((
+                        own_member_info(
+                            &base_name,
+                            &file_name,
+                            func_name,
+                            base_detail,
+                            SymbolKind::Function,
+                            function.syntax().span,
+                        ),
+                        path.clone(),
+                    ));
+                }
+            }
+            for (base, path) in inheritance::linearize_across(primary, name, deps) {
+                let Some(path) = path else {
+                    continue;
+                };
+                let file_name = file_label(&path);
+                let Some(base_name) = base.name() else {
+                    continue;
+                };
+                if base_name.is_empty() {
+                    continue;
+                }
+                for var in base.state_vars() {
+                    let Some(var_name) = var.name() else {
+                        continue;
+                    };
+                    if var_name.is_empty() || !seen.insert(var_name.clone()) {
+                        continue;
+                    }
+                    let mut base_detail =
+                        var.type_node().map(|node| node.text()).unwrap_or_default();
+                    base_detail.push(' ');
+                    base_detail.push_str(&var_name);
+                    out.push((
+                        own_member_info(
+                            &base_name,
+                            &file_name,
+                            var_name,
+                            base_detail,
+                            SymbolKind::StateVar,
+                            var.syntax().span,
+                        ),
+                        path.clone(),
+                    ));
+                }
+                for function in base.functions() {
+                    let Some(func_name) = function.name() else {
+                        continue;
+                    };
+                    if func_name.is_empty() || !seen.insert(func_name.clone()) {
+                        continue;
+                    }
+                    let params: Vec<String> = function
+                        .params()
+                        .iter()
+                        .map(|param| {
+                            let mut text = param
+                                .type_node()
+                                .map(|node| node.text())
+                                .unwrap_or_default();
+                            if let Some(param_name) = param.name() {
+                                text.push(' ');
+                                text.push_str(&param_name);
+                            }
+                            text
+                        })
+                        .collect();
+                    let mut base_detail = format!("function {func_name}({})", params.join(", "));
+                    let returns: Vec<String> = function
+                        .return_types()
+                        .iter()
+                        .map(|node| node.text())
+                        .collect();
+                    if !returns.is_empty() {
+                        base_detail.push_str(" returns (");
+                        base_detail.push_str(&returns.join(", "));
+                        base_detail.push(')');
+                    }
+                    out.push((
+                        own_member_info(
+                            &base_name,
+                            &file_name,
+                            func_name,
+                            base_detail,
+                            SymbolKind::Function,
+                            function.syntax().span,
+                        ),
+                        path.clone(),
+                    ));
+                }
+            }
+            out
+        }
+        TypeKind::Struct(name) => {
+            if local.iter().any(|item| item.name == *name) {
+                return out;
+            }
+            let Some((item, Some(path))) = inheritance::find_struct_across(name, primary, deps)
+            else {
+                return out;
+            };
+            let file_name = file_label(&path);
+            let Some(struct_name) = item.name() else {
+                return out;
+            };
+            for field in item.fields() {
+                let Some(field_name) = field.name() else {
+                    continue;
+                };
+                if field_name.is_empty() || !seen.insert(field_name.clone()) {
+                    continue;
+                }
+                let mut base_detail = field
+                    .type_node()
+                    .map(|node| node.text())
+                    .unwrap_or_default();
+                base_detail.push(' ');
+                base_detail.push_str(&field_name);
+                out.push((
+                    own_member_info(
+                        &struct_name,
+                        &file_name,
+                        field_name,
+                        base_detail,
+                        SymbolKind::Field,
+                        field.syntax().span,
+                    ),
+                    path.clone(),
+                ));
+            }
+            out
+        }
+    }
+}
+
+/// One dep member by exact name with its owning path.
+///
+/// Returns `None` when the member lives locally so the caller keeps the
+/// same file target. Powers cross file hover and goto.
+pub(crate) fn resolve_member_cross_file(
+    primary: &SolidityFile,
+    kind: &TypeKind,
+    member: &str,
+    deps: &[(PathBuf, SolidityFile)],
+) -> Option<(MemberInfo, PathBuf)> {
+    if member.is_empty() {
+        return None;
+    }
+    if members_of(primary, kind)
+        .iter()
+        .any(|own| own.name == member)
+    {
+        return None;
+    }
+    collect_cross_file_members(primary, kind, deps)
+        .into_iter()
+        .find(|(info, _)| info.name == member)
 }
