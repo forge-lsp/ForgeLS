@@ -17,6 +17,7 @@ pub enum CompletionKind {
     Symbol(SymbolKind),
     Keyword,
     Path,
+    Package,
 }
 
 /// Map a completion origin to its LSP number.
@@ -27,6 +28,7 @@ pub fn completion_item_kind(kind: CompletionKind) -> CompletionItemKind {
     match kind {
         CompletionKind::Keyword => CompletionItemKind::KEYWORD,
         CompletionKind::Path => CompletionItemKind::FILE,
+        CompletionKind::Package => CompletionItemKind::FOLDER,
         CompletionKind::Symbol(symbol) => match symbol {
             SymbolKind::Contract => CompletionItemKind::CLASS,
             SymbolKind::Function => CompletionItemKind::FUNCTION,
@@ -268,11 +270,17 @@ pub fn complete_import_paths(
     items
 }
 
-/// Cap for bare `node_modules` suggestions per request.
+/// Cap for file labels per request. Recursive walk is costly.
 const MAX_BARE_ITEMS: usize = 32;
 
+/// Loose guard for package scaffolds. Scaffolds are one readdir
+/// plus one per `@scope`, cheap, and clients fuzzy-filter what we send.
+const MAX_SCAFFOLD_ITEMS: usize = 512;
+
 /// Single `read_dir` budget for one `node_modules` or scope level.
-const NODE_ENTRIES_CAP: usize = 128;
+/// Matches the scaffold guard so empty-prefix listing keeps late
+/// names like `@openzeppelin` visible.
+const NODE_ENTRIES_CAP: usize = 512;
 
 /// Bare `node_modules` completions for an import string.
 ///
@@ -297,15 +305,22 @@ pub fn complete_bare_imports(
         .first()
         .map(PathBuf::as_path)
         .unwrap_or_else(|| importer.parent().unwrap_or(Path::new("")));
-    let mut items = match split_bare_prefix(prefix) {
-        BarePrefix::Packages => bare_package_scaffolds(&modules, prefix),
-        BarePrefix::Files { head, sub } => {
-            bare_package_files(importer, &modules, root, head, sub, prefix)
+    match split_bare_prefix(prefix) {
+        BarePrefix::Packages => {
+            let mut items = bare_package_scaffolds(&modules, prefix);
+            items.sort_by(|left, right| left.label.cmp(&right.label));
+            // Scaffolds are cheap names; keep the full list so clients
+            // can fuzzy-filter late scopes like `@openzeppelin`.
+            items.truncate(MAX_SCAFFOLD_ITEMS);
+            items
         }
-    };
-    items.sort_by(|left, right| left.label.cmp(&right.label));
-    items.truncate(MAX_BARE_ITEMS);
-    items
+        BarePrefix::Files { head, sub } => {
+            let mut items = bare_package_files(importer, &modules, root, head, sub, prefix);
+            items.sort_by(|left, right| left.label.cmp(&right.label));
+            items.truncate(MAX_BARE_ITEMS);
+            items
+        }
+    }
 }
 
 /// Nearest `node_modules` the disk can read, walking up from `importer`.
@@ -327,16 +342,39 @@ fn nearest_node_modules(importer: &Path) -> Option<PathBuf> {
 /// Top level package scaffolds: `name/` plus one `@scope/` level.
 ///
 /// Dirs only, filtered by `prefix`, detail `package`. Trailing slash
-/// marks a hint, not a resolvable import.
+/// marks a hint, not a resolvable import. Both levels filter by the
+/// typed fragment before the cap so readdir order never hides a match.
 fn bare_package_scaffolds(modules: &Path, prefix: &str) -> Vec<CompletionItem> {
     let mut items = Vec::new();
-    for (name, is_dir) in forgels_common::fs::list_dir_entries(modules, NODE_ENTRIES_CAP) {
+    let scoped = prefix.starts_with('@');
+    let top_filter = prefix.split('/').next().unwrap_or(prefix);
+    let scope_part = if scoped && prefix.contains('/') {
+        prefix.split('/').next().unwrap_or("")
+    } else {
+        ""
+    };
+    for (name, is_dir) in
+        forgels_common::fs::list_dir_entries_matching(modules, top_filter, NODE_ENTRIES_CAP)
+    {
         if !is_dir {
             continue;
         }
         if name.starts_with('@') {
+            if !scoped && !prefix.is_empty() {
+                continue;
+            }
+            if !scope_part.is_empty() && name != scope_part {
+                continue;
+            }
+            let sub_filter = if scoped && prefix.contains('/') {
+                let rest = prefix.split_once('/').map(|pair| pair.1).unwrap_or("");
+                rest.split_once('/').map(|pair| pair.0).unwrap_or(rest)
+            } else {
+                ""
+            };
             let scope = modules.join(&name);
-            for (pkg, pkg_is_dir) in forgels_common::fs::list_dir_entries(&scope, NODE_ENTRIES_CAP)
+            for (pkg, pkg_is_dir) in
+                forgels_common::fs::list_dir_entries_matching(&scope, sub_filter, NODE_ENTRIES_CAP)
             {
                 if !pkg_is_dir {
                     continue;
@@ -346,7 +384,7 @@ fn bare_package_scaffolds(modules: &Path, prefix: &str) -> Vec<CompletionItem> {
                     items.push(CompletionItem {
                         label,
                         detail: "package".to_string(),
-                        kind: CompletionKind::Path,
+                        kind: CompletionKind::Package,
                     });
                 }
             }
@@ -357,7 +395,7 @@ fn bare_package_scaffolds(modules: &Path, prefix: &str) -> Vec<CompletionItem> {
             items.push(CompletionItem {
                 label,
                 detail: "package".to_string(),
-                kind: CompletionKind::Path,
+                kind: CompletionKind::Package,
             });
         }
     }
@@ -390,7 +428,10 @@ fn bare_package_files(
     } else {
         base.join(below)
     };
-    let caps = forgels_common::fs::WalkCaps::default();
+    // Match cap covers the visited budget so the `prefix` filter below
+    // runs before any truncation. Caller caps the sorted result at 32.
+    let visit = forgels_common::fs::WalkCaps::default().max_visited;
+    let caps = forgels_common::fs::WalkCaps::new(visit, visit);
     let mut items = Vec::new();
     for found in forgels_common::fs::list_files_with_extension(&dir, "sol", caps) {
         let Ok(rel) = found.strip_prefix(&base) else {

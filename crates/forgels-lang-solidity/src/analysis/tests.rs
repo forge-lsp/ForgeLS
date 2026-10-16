@@ -372,6 +372,7 @@ fn completion_kind_maps_to_lsp_numbers() {
         (CompletionKind::Symbol(Kind::Enum), 13),
         (CompletionKind::Keyword, 14),
         (CompletionKind::Path, 17),
+        (CompletionKind::Package, 19),
     ];
     for (kind, want) in cases {
         assert_eq!(completion_item_kind(kind).value(), want);
@@ -1363,6 +1364,27 @@ fn bare_scaffolds_top_level_packages() {
     assert!(
         found
             .iter()
+            .all(|item| completion_item_kind(item.kind).value() == 19)
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn bare_scaffold_kind_is_folder_file_kind_is_file() {
+    let root = fresh_node_root("forgels-sol-bare-kinds");
+    let importer = root.join("contracts/A.sol");
+    let top = complete_bare_imports(&importer, std::slice::from_ref(&root), "");
+    assert!(!top.is_empty());
+    assert!(
+        top.iter()
+            .all(|item| completion_item_kind(item.kind).value() == 19)
+    );
+    let files = complete_bare_imports(&importer, std::slice::from_ref(&root), "beta/");
+    assert!(!files.is_empty());
+    assert!(files.iter().all(|item| item.detail == "file"));
+    assert!(
+        files
+            .iter()
             .all(|item| completion_item_kind(item.kind).value() == 17)
     );
     let _ = std::fs::remove_dir_all(&root);
@@ -1419,13 +1441,13 @@ fn bare_file_labels_roundtrip_resolve() {
         "@scope/pkg/nested/",
     ] {
         for item in complete_bare_imports(&importer, &roots, prefix) {
-            assert_eq!(
-                completion_item_kind(item.kind).value(),
-                17,
-                "kind: {}",
-                item.label
-            );
             if item.detail == "file" {
+                assert_eq!(
+                    completion_item_kind(item.kind).value(),
+                    17,
+                    "kind: {}",
+                    item.label
+                );
                 files += 1;
                 let hit = forgels_common::paths::resolve_import_full(
                     &importer,
@@ -1437,6 +1459,12 @@ fn bare_file_labels_roundtrip_resolve() {
                 assert!(hit.is_some(), "unresolvable: {}", item.label);
             } else {
                 assert_eq!(item.detail, "package");
+                assert_eq!(
+                    completion_item_kind(item.kind).value(),
+                    19,
+                    "kind: {}",
+                    item.label
+                );
             }
         }
     }
@@ -1470,7 +1498,7 @@ fn bare_package_without_sol_has_no_file_labels() {
 }
 
 #[test]
-fn bare_results_cap_at_32() {
+fn bare_scaffolds_skip_result_cap() {
     let root = std::env::temp_dir().join("forgels-sol-bare-cap");
     let _ = std::fs::remove_dir_all(&root);
     for index in 0..40 {
@@ -1482,7 +1510,138 @@ fn bare_results_cap_at_32() {
     std::fs::create_dir_all(&contracts).expect("dir");
     let importer = contracts.join("A.sol");
     let found = complete_bare_imports(&importer, std::slice::from_ref(&root), "");
+    assert_eq!(found.len(), 40);
+    assert!(found.iter().all(|item| item.detail == "package"));
+    assert!(
+        found
+            .iter()
+            .all(|item| completion_item_kind(item.kind).value() == 19)
+    );
+    let mut sorted = found
+        .iter()
+        .map(|item| item.label.clone())
+        .collect::<Vec<_>>();
+    sorted.sort();
+    let labels: Vec<&str> = found.iter().map(|item| item.label.as_str()).collect();
+    assert_eq!(labels, sorted);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn bare_scaffolds_return_all_200_packages() {
+    let root = std::env::temp_dir().join("forgels-sol-bare-200");
+    let _ = std::fs::remove_dir_all(&root);
+    for index in 0..200 {
+        let dir = root.join(format!("node_modules/pkg{index:03}"));
+        std::fs::create_dir_all(&dir).expect("dir");
+    }
+    let target = root.join("node_modules/@openzeppelin/contracts");
+    std::fs::create_dir_all(&target).expect("dir");
+    let contracts = root.join("contracts");
+    std::fs::create_dir_all(&contracts).expect("dir");
+    let importer = contracts.join("A.sol");
+    let found = complete_bare_imports(&importer, std::slice::from_ref(&root), "");
+    assert_eq!(found.len(), 201);
+    let labels: Vec<&str> = found.iter().map(|item| item.label.as_str()).collect();
+    assert!(
+        labels.contains(&"@openzeppelin/contracts/"),
+        "labels: {labels:?}"
+    );
+    assert!(
+        found
+            .iter()
+            .all(|item| completion_item_kind(item.kind).value() == 19)
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn bare_file_labels_cap_at_32() {
+    let root = std::env::temp_dir().join("forgels-sol-bare-file-cap");
+    let _ = std::fs::remove_dir_all(&root);
+    let pkg = root.join("node_modules/bigpkg");
+    std::fs::create_dir_all(&pkg).expect("dir");
+    for index in 0..40 {
+        std::fs::write(pkg.join(format!("File{index:02}.sol")), "contract X {}").expect("write");
+    }
+    let contracts = root.join("contracts");
+    std::fs::create_dir_all(&contracts).expect("dir");
+    let importer = contracts.join("A.sol");
+    let found = complete_bare_imports(&importer, std::slice::from_ref(&root), "bigpkg/");
     assert_eq!(found.len(), 32);
+    assert!(found.iter().all(|item| item.detail == "file"));
+    assert!(
+        found
+            .iter()
+            .all(|item| completion_item_kind(item.kind).value() == 17)
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn bare_finds_scoped_package_beyond_dir_cap() {
+    let root = std::env::temp_dir().join("forgels-sol-bare-beyond-cap");
+    let _ = std::fs::remove_dir_all(&root);
+    for index in 0..200 {
+        let dir = root.join(format!("node_modules/pkg{index:03}"));
+        std::fs::create_dir_all(&dir).expect("dir");
+    }
+    let target = root.join("node_modules/@openzeppelin/contracts");
+    std::fs::create_dir_all(&target).expect("dir");
+    std::fs::write(target.join("Token.sol"), "contract X {}").expect("write");
+    let contracts = root.join("contracts");
+    std::fs::create_dir_all(&contracts).expect("dir");
+    let importer = contracts.join("A.sol");
+    let found = complete_bare_imports(&importer, std::slice::from_ref(&root), "@open");
+    let labels: Vec<&str> = found.iter().map(|item| item.label.as_str()).collect();
+    assert!(
+        labels.contains(&"@openzeppelin/contracts/"),
+        "labels: {labels:?}"
+    );
+    let hit = found
+        .iter()
+        .find(|item| item.label == "@openzeppelin/contracts/")
+        .expect("oz hit");
+    assert_eq!(hit.detail, "package");
+    assert_eq!(completion_item_kind(hit.kind).value(), 19);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn bare_finds_scope_subprefix_beyond_scope_cap() {
+    let root = std::env::temp_dir().join("forgels-sol-bare-scope-cap");
+    let _ = std::fs::remove_dir_all(&root);
+    for index in 0..150 {
+        let dir = root.join(format!("node_modules/@types/lib{index:03}"));
+        std::fs::create_dir_all(&dir).expect("dir");
+    }
+    let target = root.join("node_modules/@types/wanted-pkg");
+    std::fs::create_dir_all(&target).expect("dir");
+    let contracts = root.join("contracts");
+    std::fs::create_dir_all(&contracts).expect("dir");
+    let importer = contracts.join("A.sol");
+    let found = complete_bare_imports(&importer, std::slice::from_ref(&root), "@types/want");
+    let labels: Vec<&str> = found.iter().map(|item| item.label.as_str()).collect();
+    assert_eq!(labels, vec!["@types/wanted-pkg/"]);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn bare_finds_subpath_beyond_walk_cap() {
+    let root = std::env::temp_dir().join("forgels-sol-bare-walk-cap");
+    let _ = std::fs::remove_dir_all(&root);
+    let pkg = root.join("node_modules/bigpkg");
+    std::fs::create_dir_all(&pkg).expect("dir");
+    for index in 0..250 {
+        std::fs::write(pkg.join(format!("Filler{index:03}.sol")), "contract X {}").expect("write");
+    }
+    std::fs::write(pkg.join("Wanted.sol"), "contract X {}").expect("write");
+    let contracts = root.join("contracts");
+    std::fs::create_dir_all(&contracts).expect("dir");
+    let importer = contracts.join("A.sol");
+    let found = complete_bare_imports(&importer, std::slice::from_ref(&root), "bigpkg/Want");
+    let labels: Vec<&str> = found.iter().map(|item| item.label.as_str()).collect();
+    assert_eq!(labels, vec!["bigpkg/Wanted.sol"]);
     let _ = std::fs::remove_dir_all(&root);
 }
 
