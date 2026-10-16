@@ -19,7 +19,8 @@ pub(crate) mod members;
 mod tests;
 
 pub use completion::{
-    CompletionItem, CompletionKind, complete_at, complete_import_paths, exports_of, import_path_at,
+    CompletionItem, CompletionKind, complete_at, complete_import_paths, completion_item_kind,
+    exports_of, import_path_at,
 };
 pub use goto::{goto_definition, resolve_in_dep};
 pub use hover::{Hover, hover_at};
@@ -383,6 +384,7 @@ impl Analyzer for SolidityAnalyzer {
                 .map(|item| CompletionData {
                     label: item.label,
                     detail: item.detail,
+                    kind: completion::completion_item_kind(item.kind),
                 })
                 .collect();
         }
@@ -398,6 +400,7 @@ impl Analyzer for SolidityAnalyzer {
             out.push(CompletionData {
                 label: item.label,
                 detail: item.detail,
+                kind: completion::completion_item_kind(item.kind),
             });
         }
         for (dep_path, dep_text) in forgels_core::dep_texts(ctx, 16) {
@@ -416,6 +419,7 @@ impl Analyzer for SolidityAnalyzer {
                 out.push(CompletionData {
                     label: item.label.clone(),
                     detail: format!("{} - from {}", item.detail, origin),
+                    kind: completion::completion_item_kind(item.kind),
                 });
             }
         }

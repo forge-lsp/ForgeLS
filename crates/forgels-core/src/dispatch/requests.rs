@@ -77,7 +77,9 @@ fn completion_result(session: &Session, workspace: &Workspace, params: &Value) -
     let items: Vec<Value> = analyzer
         .complete(&ctx)
         .iter()
-        .map(|item| serde_json::json!({ "label": item.label, "detail": item.detail }))
+        .map(|item| {
+            serde_json::json!({ "label": item.label, "detail": item.detail, "kind": item.kind.value() })
+        })
         .collect();
     Some(serde_json::json!({ "isIncomplete": false, "items": items }))
 }

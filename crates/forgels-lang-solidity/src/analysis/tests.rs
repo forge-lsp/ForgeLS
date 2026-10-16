@@ -1,6 +1,7 @@
 use super::{
-    CompletionItem, Scope, SolidityAnalyzer, SymbolKind, collect_symbols, complete_at,
-    complete_import_paths, exports_of, goto_definition, hover_at, import_path_at,
+    CompletionItem, CompletionKind, Scope, SolidityAnalyzer, SymbolKind, collect_symbols,
+    complete_at, complete_import_paths, completion_item_kind, exports_of, goto_definition,
+    hover_at, import_path_at,
 };
 use crate::{SolidityLexer, SolidityParser};
 use forgels_core::{Analyzer, ProjectContext, Workspace, routing::Language};
@@ -320,6 +321,65 @@ fn dep_completion_includes_origin() {
         .find(|(label, _)| label == "withdraw")
         .expect("dep hit");
     assert!(hit.1.contains("from B.sol"), "detail: {}", hit.1);
+}
+
+#[test]
+fn completion_kind_maps_to_lsp_numbers() {
+    use super::SymbolKind as Kind;
+    let cases = [
+        (CompletionKind::Symbol(Kind::Contract), 7),
+        (CompletionKind::Symbol(Kind::Function), 3),
+        (CompletionKind::Symbol(Kind::StateVar), 6),
+        (CompletionKind::Symbol(Kind::LocalVar), 6),
+        (CompletionKind::Symbol(Kind::Param), 6),
+        (CompletionKind::Symbol(Kind::Field), 5),
+        (CompletionKind::Symbol(Kind::Struct), 22),
+        (CompletionKind::Symbol(Kind::Enum), 13),
+        (CompletionKind::Keyword, 14),
+        (CompletionKind::Path, 17),
+    ];
+    for (kind, want) in cases {
+        assert_eq!(completion_item_kind(kind).value(), want);
+    }
+    // Follow-up: wire EnumMember to 20 once SymbolKind gains it.
+    assert_eq!(
+        forgels_protocol::CompletionItemKind::ENUM_MEMBER.value(),
+        20
+    );
+}
+
+#[test]
+fn dep_completion_withdraw_carries_function_kind() {
+    let b = "contract Vault {\nfunction withdraw(uint a) public {}\n}";
+    let a = "import \"./B.sol\";\ncontract A {\nfunction f() public {\nwith\n}\n}";
+    let mut workspace = open_workspace(&[("/A.sol", a), ("/B.sol", b)]);
+    workspace.set_file_deps(PathBuf::from("/A.sol"), vec![PathBuf::from("/B.sol")]);
+    let owned = a.to_string();
+    let buf = PathBuf::from("/A.sol");
+    let at = owned.rfind("with").expect("prefix") as u32 + 4;
+    let ctx = ProjectContext::new(buf.as_path(), &owned, at, &workspace);
+    let hit = SolidityAnalyzer
+        .complete(&ctx)
+        .into_iter()
+        .find(|item| item.label == "withdraw")
+        .expect("dep hit");
+    assert_eq!(hit.kind.value(), 3);
+}
+
+#[test]
+fn scope_completion_carries_kind() {
+    let text = "contract C {\nuint256 total;\nfunction withdraw() public {}\nwith\n}";
+    let workspace = open_workspace(&[("/repo/C.sol", text)]);
+    let owned = text.to_string();
+    let buf = PathBuf::from("/repo/C.sol");
+    let at = owned.rfind("with").expect("prefix") as u32 + 4;
+    let ctx = ProjectContext::new(buf.as_path(), &owned, at, &workspace);
+    let hit = SolidityAnalyzer
+        .complete(&ctx)
+        .into_iter()
+        .find(|item| item.label == "withdraw")
+        .expect("scope hit");
+    assert_eq!(hit.kind.value(), 3);
 }
 
 #[test]
@@ -704,6 +764,7 @@ fn analyzer_complete_prefers_paths_in_import() {
     let found = SolidityAnalyzer.complete(&ctx);
     assert!(!found.is_empty());
     assert!(found.iter().all(|item| item.detail == "file"));
+    assert!(found.iter().all(|item| item.kind.value() == 17));
     assert!(found.iter().any(|item| item.label == "./B.sol"));
     let _ = std::fs::remove_dir_all(&root);
 }
