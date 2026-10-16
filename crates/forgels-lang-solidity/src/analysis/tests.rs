@@ -1,6 +1,6 @@
 use super::{
-    CompletionItem, Scope, SolidityAnalyzer, SymbolKind, collect_symbols, complete_at, exports_of,
-    goto_definition, hover_at,
+    CompletionItem, Scope, SolidityAnalyzer, SymbolKind, collect_symbols, complete_at,
+    complete_import_paths, exports_of, goto_definition, hover_at, import_path_at,
 };
 use crate::{SolidityLexer, SolidityParser};
 use forgels_core::{Analyzer, ProjectContext, Workspace, routing::Language};
@@ -627,4 +627,81 @@ fn overload_uses_first_definition() {
         found[0].message,
         "this function 'greet' takes 1 arguments but 2 supplied"
     );
+fn parse_recovered(text: &str) -> crate::SolidityFile {
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, _) = SolidityParser.parse_with_errors(&tokens);
+    file
+}
+
+#[test]
+fn import_path_hits_inside_quotes() {
+    let text = "import \"./B.sol\";\ncontract A {}";
+    let file = parse_recovered(text);
+    let at = text.find("./B").expect("path") as u32 + 1;
+    assert!(import_path_at(&file, text, at).is_some());
+}
+
+#[test]
+fn import_path_fallback_covers_incomplete_row() {
+    let text = "import \"./B";
+    let file = parse_recovered(text);
+    let at = text.len() as u32;
+    assert!(import_path_at(&file, text, at).is_some());
+}
+
+#[test]
+fn import_path_misses_code_position() {
+    let text = "import \"./B.sol\";\ncontract A {}";
+    let file = parse_recovered(text);
+    let at = text.find("contract").expect("code") as u32;
+    assert!(import_path_at(&file, text, at).is_none());
+}
+
+fn fresh_sol_root(name: &str) -> PathBuf {
+    let root = std::env::temp_dir().join(name);
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("temp root");
+    for rel in ["A.sol", "B.sol", "sub/C.sol", "skip.txt"] {
+        let path = root.join(rel);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("parent");
+        }
+        std::fs::write(&path, "contract X {}").expect("write");
+    }
+    root
+}
+
+#[test]
+fn import_paths_list_relative_and_filter_prefix() {
+    let root = fresh_sol_root("forgels-sol-import-list");
+    let current = root.join("A.sol");
+    let all = complete_import_paths(&current, std::slice::from_ref(&root), "");
+    let labels: Vec<&str> = all.iter().map(|item| item.label.as_str()).collect();
+    assert!(labels.contains(&"./B.sol"));
+    assert!(labels.contains(&"./sub/C.sol"));
+    assert!(!labels.iter().any(|label| label.contains("A.sol")));
+    assert!(all.iter().all(|item| item.detail == "file"));
+    let filtered = complete_import_paths(&current, std::slice::from_ref(&root), "./B");
+    assert_eq!(filtered.len(), 1);
+    assert_eq!(filtered[0].label, "./B.sol");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn analyzer_complete_prefers_paths_in_import() {
+    let root = fresh_sol_root("forgels-sol-import-branch");
+    let current = root.join("A.sol");
+    let text = "import \"./B";
+    let mut workspace = Workspace::new();
+    workspace.set_roots(vec![root.clone()]);
+    workspace
+        .open(current.clone(), Language::Solidity, text.to_string(), 1)
+        .expect("open works");
+    let owned = text.to_string();
+    let ctx = ProjectContext::new(&current, &owned, owned.len() as u32, &workspace);
+    let found = SolidityAnalyzer.complete(&ctx);
+    assert!(!found.is_empty());
+    assert!(found.iter().all(|item| item.detail == "file"));
+    assert!(found.iter().any(|item| item.label == "./B.sol"));
+    let _ = std::fs::remove_dir_all(&root);
 }
