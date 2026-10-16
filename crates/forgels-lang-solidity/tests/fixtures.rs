@@ -2719,3 +2719,522 @@ fn sbe_defi_discrete_rewards_update() {
     let hover = hover_at(&file, &text, at).expect("hover");
     assert_eq!(hover.contents, "event Updated");
 }
+
+#[test]
+fn sbe_defi_vault_erc4626_deposit() {
+    let (text, file) = parse_sbe("DeFiVaultERC4626.sol");
+    assert_eq!(file.contracts().len(), 2);
+    assert_eq!(file.contracts()[0].kind_label(), "interface");
+    let vault = file
+        .contracts()
+        .into_iter()
+        .find(|c| c.name().as_deref() == Some("Vault"))
+        .expect("Vault");
+    let vars: Vec<String> = vault.state_vars().iter().filter_map(|v| v.name()).collect();
+    assert!(vars.contains(&"shares".to_string()), "vars: {vars:?}");
+    assert!(vars.contains(&"total".to_string()), "vars: {vars:?}");
+    let deposit = vault
+        .functions()
+        .into_iter()
+        .find(|f| f.name().as_deref() == Some("deposit"))
+        .expect("deposit");
+    let locals: Vec<String> = deposit
+        .body()
+        .expect("body")
+        .locals()
+        .iter()
+        .filter_map(|l| l.name())
+        .collect();
+    assert!(locals.contains(&"kept".to_string()), "locals: {locals:?}");
+    let at = text.find("Deposited").expect("decl") as u32;
+    let hover = hover_at(&file, &text, at).expect("hover");
+    assert_eq!(hover.contents, "event Deposited");
+}
+
+#[test]
+fn sbe_defi_token_lock_release() {
+    let (text, file) = parse_sbe("DeFiTokenLock.sol");
+    let contract = &file.contracts()[0];
+    let vars: Vec<String> = contract
+        .state_vars()
+        .iter()
+        .filter_map(|v| v.name())
+        .collect();
+    assert!(vars.contains(&"locked".to_string()), "vars: {vars:?}");
+    assert!(vars.contains(&"release".to_string()), "vars: {vars:?}");
+    let release = contract
+        .functions()
+        .into_iter()
+        .find(|f| f.name().as_deref() == Some("releaseTo"))
+        .expect("releaseTo");
+    let locals: Vec<String> = release
+        .body()
+        .expect("body")
+        .locals()
+        .iter()
+        .filter_map(|l| l.name())
+        .collect();
+    assert!(locals.contains(&"got".to_string()), "locals: {locals:?}");
+    assert!(
+        locals.contains(&"receiver".to_string()),
+        "locals: {locals:?}"
+    );
+    let at = text.find("Locked").expect("decl") as u32;
+    let hover = hover_at(&file, &text, at).expect("hover");
+    assert_eq!(hover.contents, "event Locked");
+}
+
+#[test]
+fn sbe_defi_csamm_add() {
+    let (text, file) = parse_sbe("DeFiCSAMM.sol");
+    let contract = &file.contracts()[0];
+    let vars: Vec<String> = contract
+        .state_vars()
+        .iter()
+        .filter_map(|v| v.name())
+        .collect();
+    assert!(vars.contains(&"reserve0".to_string()), "vars: {vars:?}");
+    assert!(vars.contains(&"reserve1".to_string()), "vars: {vars:?}");
+    let add = contract
+        .functions()
+        .into_iter()
+        .find(|f| f.name().as_deref() == Some("add"))
+        .expect("add");
+    assert_eq!(add.params().len(), 2);
+    let locals: Vec<String> = add
+        .body()
+        .expect("body")
+        .locals()
+        .iter()
+        .filter_map(|l| l.name())
+        .collect();
+    assert!(locals.contains(&"kept".to_string()), "locals: {locals:?}");
+    let at = text.find("Added").expect("decl") as u32;
+    let hover = hover_at(&file, &text, at).expect("hover");
+    assert_eq!(hover.contents, "event Added");
+}
+
+#[test]
+fn sbe_defi_cpamm_add() {
+    let (text, file) = parse_sbe("DeFiCPAMM.sol");
+    assert_eq!(file.contracts()[0].kind_label(), "interface");
+    let target = file
+        .contracts()
+        .into_iter()
+        .find(|c| c.name().as_deref() == Some("CPAMM"))
+        .expect("CPAMM");
+    let vars: Vec<String> = target
+        .state_vars()
+        .iter()
+        .filter_map(|v| v.name())
+        .collect();
+    assert!(vars.contains(&"reserve0".to_string()), "vars: {vars:?}");
+    assert!(vars.contains(&"shares".to_string()), "vars: {vars:?}");
+    let add = target
+        .functions()
+        .into_iter()
+        .find(|f| f.name().as_deref() == Some("add"))
+        .expect("add");
+    let locals: Vec<String> = add
+        .body()
+        .expect("body")
+        .locals()
+        .iter()
+        .filter_map(|l| l.name())
+        .collect();
+    assert!(locals.contains(&"kept".to_string()), "locals: {locals:?}");
+    let at = text.find("Added").expect("decl") as u32;
+    let hover = hover_at(&file, &text, at).expect("hover");
+    assert_eq!(hover.contents, "event Added");
+}
+
+#[test]
+fn sbe_defi_stable_amm_add() {
+    let (text, file) = parse_sbe("DeFiStableAMM.sol");
+    let contract = &file.contracts()[0];
+    let vars: Vec<String> = contract
+        .state_vars()
+        .iter()
+        .filter_map(|v| v.name())
+        .collect();
+    assert!(vars.contains(&"amp".to_string()), "vars: {vars:?}");
+    assert!(vars.contains(&"balances".to_string()), "vars: {vars:?}");
+    let add = contract
+        .functions()
+        .into_iter()
+        .find(|f| f.name().as_deref() == Some("add"))
+        .expect("add");
+    let locals: Vec<String> = add
+        .body()
+        .expect("body")
+        .locals()
+        .iter()
+        .filter_map(|l| l.name())
+        .collect();
+    assert!(locals.contains(&"kept".to_string()), "locals: {locals:?}");
+    let at = text.find("Swapped").expect("decl") as u32;
+    let hover = hover_at(&file, &text, at).expect("hover");
+    assert_eq!(hover.contents, "event Swapped");
+}
+
+#[test]
+fn sbe_defi_remainder_twap() {
+    let (text, file) = parse_sbe("DeFiRemainder.sol");
+    assert_eq!(file.contracts()[0].kind_label(), "interface");
+    assert!(text.contains("TWAP") || text.contains("Twap"), "twap kept");
+    let target = file
+        .contracts()
+        .into_iter()
+        .find(|c| c.name().as_deref() == Some("Twap"))
+        .expect("Twap");
+    let read = target
+        .functions()
+        .into_iter()
+        .find(|f| f.name().as_deref() == Some("read"))
+        .expect("read");
+    let locals: Vec<String> = read
+        .body()
+        .expect("body")
+        .locals()
+        .iter()
+        .filter_map(|l| l.name())
+        .collect();
+    assert!(locals.contains(&"price".to_string()), "locals: {locals:?}");
+    assert!(locals.contains(&"source".to_string()), "locals: {locals:?}");
+    let at = text.find("event Read").expect("decl") as u32 + 6;
+    let hover = hover_at(&file, &text, at).expect("hover");
+    assert_eq!(hover.contents, "event Read");
+}
+
+#[test]
+fn sbe_foundry_counter_inc() {
+    let (text, file) = parse_sbe("FoundryCounterTest.sol");
+    assert_eq!(file.imports().len(), 1);
+    assert_eq!(file.imports()[0].path().as_deref(), Some("./TestStub.sol"));
+    let contract = file
+        .contracts()
+        .into_iter()
+        .find(|c| c.name().as_deref() == Some("CounterTest"))
+        .expect("CounterTest");
+    assert_eq!(contract.heritage(), vec!["Test"]);
+    assert!(text.contains("vm.prank"), "prank pattern kept");
+    let test = contract
+        .functions()
+        .into_iter()
+        .find(|f| f.name().as_deref() == Some("testInc"))
+        .expect("testInc");
+    let locals: Vec<String> = test
+        .body()
+        .expect("body")
+        .locals()
+        .iter()
+        .filter_map(|l| l.name())
+        .collect();
+    assert!(locals.contains(&"kept".to_string()), "locals: {locals:?}");
+    let at = text.find("function testInc").expect("decl") as u32 + 9;
+    let hover = hover_at(&file, &text, at).expect("hover");
+    assert!(
+        hover.contents.contains("function testInc"),
+        "contents: {}",
+        hover.contents
+    );
+}
+
+#[test]
+fn sbe_foundry_auth_prank() {
+    let (text, file) = parse_sbe("FoundryAuthTest.sol");
+    assert_eq!(file.imports().len(), 1);
+    let contract = file
+        .contracts()
+        .into_iter()
+        .find(|c| c.name().as_deref() == Some("AuthTest"))
+        .expect("AuthTest");
+    assert_eq!(contract.heritage(), vec!["Test"]);
+    assert!(text.contains("vm.prank"), "prank pattern kept");
+    let test = contract
+        .functions()
+        .into_iter()
+        .find(|f| f.name().as_deref() == Some("testOnlyOwner"))
+        .expect("testOnlyOwner");
+    let locals: Vec<String> = test
+        .body()
+        .expect("body")
+        .locals()
+        .iter()
+        .filter_map(|l| l.name())
+        .collect();
+    assert!(locals.contains(&"caller".to_string()), "locals: {locals:?}");
+    assert!(locals.contains(&"kept".to_string()), "locals: {locals:?}");
+    let at = text.find("owner").expect("decl") as u32;
+    let hover = hover_at(&file, &text, at).expect("hover");
+    assert!(
+        hover.contents.contains("owner"),
+        "contents: {}",
+        hover.contents
+    );
+}
+
+#[test]
+fn sbe_foundry_error_revert() {
+    let (text, file) = parse_sbe("FoundryErrorTest.sol");
+    assert_eq!(file.imports().len(), 1);
+    assert!(text.contains("expectRevert"), "pattern kept");
+    let contract = file
+        .contracts()
+        .into_iter()
+        .find(|c| c.name().as_deref() == Some("ErrorTest"))
+        .expect("ErrorTest");
+    assert_eq!(contract.errors().len(), 1);
+    assert_eq!(contract.errors()[0].name().as_deref(), Some("Unauthorized"));
+    let test = contract
+        .functions()
+        .into_iter()
+        .find(|f| f.name().as_deref() == Some("testRevert"))
+        .expect("testRevert");
+    let locals: Vec<String> = test
+        .body()
+        .expect("body")
+        .locals()
+        .iter()
+        .filter_map(|l| l.name())
+        .collect();
+    assert!(locals.contains(&"kept".to_string()), "locals: {locals:?}");
+    let at = text.find("Unauthorized").expect("decl") as u32;
+    let hover = hover_at(&file, &text, at).expect("hover");
+    assert_eq!(hover.contents, "error Unauthorized");
+}
+
+#[test]
+fn sbe_foundry_event_emit() {
+    let (text, file) = parse_sbe("FoundryEventTest.sol");
+    assert_eq!(file.imports().len(), 1);
+    assert!(text.contains("expectEmit"), "pattern kept");
+    let contract = &file.contracts()[0];
+    assert_eq!(contract.events().len(), 1);
+    assert_eq!(contract.events()[0].name().as_deref(), Some("Set"));
+    let test = contract
+        .functions()
+        .into_iter()
+        .find(|f| f.name().as_deref() == Some("testEmit"))
+        .expect("testEmit");
+    let locals: Vec<String> = test
+        .body()
+        .expect("body")
+        .locals()
+        .iter()
+        .filter_map(|l| l.name())
+        .collect();
+    assert!(locals.contains(&"kept".to_string()), "locals: {locals:?}");
+    let at = text.find("event Set").expect("decl") as u32 + 6;
+    let hover = hover_at(&file, &text, at).expect("hover");
+    assert_eq!(hover.contents, "event Set");
+}
+
+#[test]
+fn sbe_foundry_send_eth_deal() {
+    let (text, file) = parse_sbe("FoundrySendEthTest.sol");
+    assert_eq!(file.imports().len(), 1);
+    assert!(text.contains("deal("), "deal pattern kept");
+    let contract = &file.contracts()[0];
+    let types: Vec<String> = contract
+        .state_vars()
+        .iter()
+        .filter_map(|v| v.type_node().map(|n| TypeNode::text(&n)))
+        .collect();
+    assert!(
+        types.contains(&"mapping(address => uint)".to_string()),
+        "types: {types:?}"
+    );
+    let test = contract
+        .functions()
+        .into_iter()
+        .find(|f| f.name().as_deref() == Some("testSend"))
+        .expect("testSend");
+    let locals: Vec<String> = test
+        .body()
+        .expect("body")
+        .locals()
+        .iter()
+        .filter_map(|l| l.name())
+        .collect();
+    assert!(
+        locals.contains(&"receiver".to_string()),
+        "locals: {locals:?}"
+    );
+    assert!(locals.contains(&"kept".to_string()), "locals: {locals:?}");
+    let at = text.find("Paid").expect("decl") as u32;
+    let hover = hover_at(&file, &text, at).expect("hover");
+    assert_eq!(hover.contents, "event Paid");
+}
+
+#[test]
+fn sbe_foundry_time_warp() {
+    let (text, file) = parse_sbe("FoundryTimeTest.sol");
+    assert_eq!(file.imports().len(), 1);
+    assert!(text.contains("warp("), "warp pattern kept");
+    assert!(text.contains("block.timestamp"), "timestamp kept");
+    let contract = &file.contracts()[0];
+    let vars: Vec<String> = contract
+        .state_vars()
+        .iter()
+        .filter_map(|v| v.name())
+        .collect();
+    assert!(vars.contains(&"deadline".to_string()), "vars: {vars:?}");
+    let test = contract
+        .functions()
+        .into_iter()
+        .find(|f| f.name().as_deref() == Some("testWarp"))
+        .expect("testWarp");
+    let locals: Vec<String> = test
+        .body()
+        .expect("body")
+        .locals()
+        .iter()
+        .filter_map(|l| l.name())
+        .collect();
+    assert!(locals.contains(&"kept".to_string()), "locals: {locals:?}");
+    let at = text.find("Warped").expect("decl") as u32;
+    let hover = hover_at(&file, &text, at).expect("hover");
+    assert_eq!(hover.contents, "event Warped");
+}
+
+#[test]
+fn sbe_foundry_sig_sign() {
+    let (text, file) = parse_sbe("FoundrySigTest.sol");
+    assert_eq!(file.imports().len(), 1);
+    assert!(text.contains("sign("), "sign pattern kept");
+    let contract = &file.contracts()[0];
+    let test = contract
+        .functions()
+        .into_iter()
+        .find(|f| f.name().as_deref() == Some("testSign"))
+        .expect("testSign");
+    let locals: Vec<String> = test
+        .body()
+        .expect("body")
+        .locals()
+        .iter()
+        .filter_map(|l| l.name())
+        .collect();
+    assert!(locals.contains(&"digest".to_string()), "locals: {locals:?}");
+    assert!(
+        locals.contains(&"recovered".to_string()),
+        "locals: {locals:?}"
+    );
+    assert!(locals.contains(&"ok".to_string()), "locals: {locals:?}");
+    let at = text.find("address recovered").expect("decl") as u32 + 8;
+    let hover = hover_at(&file, &text, at).expect("hover");
+    assert_eq!(hover.contents, "address recovered");
+}
+
+#[test]
+fn sbe_foundry_label_mock_store() {
+    let (text, file) = parse_sbe("FoundryLabelMockStore.sol");
+    assert_eq!(file.imports().len(), 1);
+    assert!(text.contains("vm.label"), "label pattern kept");
+    assert!(text.contains("mockCall"), "mock pattern kept");
+    let contract = file
+        .contracts()
+        .into_iter()
+        .find(|c| c.name().as_deref() == Some("LabelMock"))
+        .expect("LabelMock");
+    let test = contract
+        .functions()
+        .into_iter()
+        .find(|f| f.name().as_deref() == Some("testLabelMock"))
+        .expect("testLabelMock");
+    let locals: Vec<String> = test
+        .body()
+        .expect("body")
+        .locals()
+        .iter()
+        .filter_map(|l| l.name())
+        .collect();
+    assert!(locals.contains(&"who".to_string()), "locals: {locals:?}");
+    assert!(locals.contains(&"kept".to_string()), "locals: {locals:?}");
+    let at = text.find("Labeled").expect("decl") as u32;
+    let hover = hover_at(&file, &text, at).expect("hover");
+    assert_eq!(hover.contents, "event Labeled");
+}
+
+#[test]
+fn sbe_evm_storage_layout_read() {
+    let (text, file) = parse_sbe("EVMStorageLayout.sol");
+    let contract = &file.contracts()[0];
+    let vars: Vec<String> = contract
+        .state_vars()
+        .iter()
+        .filter_map(|v| v.name())
+        .collect();
+    assert!(vars.contains(&"x".to_string()), "vars: {vars:?}");
+    assert!(vars.contains(&"y".to_string()), "vars: {vars:?}");
+    let read = contract
+        .functions()
+        .into_iter()
+        .find(|f| f.name().as_deref() == Some("read"))
+        .expect("read");
+    let locals: Vec<String> = read
+        .body()
+        .expect("body")
+        .locals()
+        .iter()
+        .filter_map(|l| l.name())
+        .collect();
+    assert!(locals.contains(&"before".to_string()), "locals: {locals:?}");
+    assert!(locals.contains(&"after".to_string()), "locals: {locals:?}");
+    let at = text.find("uint after").expect("decl") as u32 + 5;
+    let hover = hover_at(&file, &text, at).expect("hover");
+    assert_eq!(hover.contents, "uint after");
+}
+
+#[test]
+fn sbe_evm_memory_layout_read() {
+    let (text, file) = parse_sbe("EVMMemoryLayout.sol");
+    let contract = &file.contracts()[0];
+    let read = contract
+        .functions()
+        .into_iter()
+        .find(|f| f.name().as_deref() == Some("read"))
+        .expect("read");
+    assert_eq!(read.params().len(), 1);
+    let locals: Vec<String> = read
+        .body()
+        .expect("body")
+        .locals()
+        .iter()
+        .filter_map(|l| l.name())
+        .collect();
+    assert!(locals.contains(&"prev".to_string()), "locals: {locals:?}");
+    assert!(locals.contains(&"next".to_string()), "locals: {locals:?}");
+    let at = text.find("bytes memory prev").expect("decl") as u32 + 13;
+    let hover = hover_at(&file, &text, at).expect("hover");
+    assert_eq!(hover.contents, "bytes prev");
+}
+
+#[test]
+fn sbe_echidna_property_bool() {
+    let (text, file) = parse_sbe("EchidnaFuzz.sol");
+    assert!(text.contains("hevm"), "hevm pattern kept");
+    let contract = &file.contracts()[0];
+    let prop = contract
+        .functions()
+        .into_iter()
+        .find(|f| f.name().as_deref() == Some("echidna_balance"))
+        .expect("property");
+    assert_eq!(prop.return_types().len(), 1);
+    let locals: Vec<String> = prop
+        .body()
+        .expect("body")
+        .locals()
+        .iter()
+        .filter_map(|l| l.name())
+        .collect();
+    assert!(locals.contains(&"kept".to_string()), "locals: {locals:?}");
+    let at = text.find("function echidna_balance").expect("decl") as u32 + 9;
+    let hover = hover_at(&file, &text, at).expect("hover");
+    assert!(
+        hover.contents.contains("function echidna_balance"),
+        "contents: {}",
+        hover.contents
+    );
+}
