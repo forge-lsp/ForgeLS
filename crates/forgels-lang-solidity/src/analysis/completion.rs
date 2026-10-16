@@ -203,6 +203,35 @@ fn scan_import_string_at(text: &str, offset: u32) -> Option<Span> {
     None
 }
 
+/// Inner span of an import string: without surrounding quotes.
+///
+/// `outer` includes quotes (see `import_path_at`). Terminated strings
+/// drop both ends, unterminated strings drop the opening quote only.
+/// Returns `None` when `outer` falls outside `text`.
+pub fn import_inner_span(text: &str, outer: Span) -> Option<Span> {
+    let start = outer.start as usize;
+    let end = outer.end as usize;
+    if end > text.len() || start >= end {
+        return None;
+    }
+    let outer_text = text.get(start..end)?;
+    let quote = *outer_text.as_bytes().first()?;
+    if quote != b'"' && quote != b'\'' {
+        return None;
+    }
+    let inner_start = start + 1;
+    let inner_end = if end - start >= 2 && outer_text.as_bytes()[end - start - 1] == quote {
+        end - 1
+    } else {
+        end
+    };
+    if inner_start > inner_end || inner_end > text.len() {
+        return None;
+    }
+    text.get(inner_start..inner_end)?;
+    Some(Span::new(inner_start as u32, inner_end as u32))
+}
+
 /// Path completions for an import string.
 ///
 /// Lists `.sol` files under `roots` (or next to `current_file` when roots

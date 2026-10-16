@@ -24,6 +24,23 @@ pub struct CompletionData {
     pub label: String,
     pub detail: String,
     pub kind: CompletionItemKind,
+    pub text_edit: Option<TextEdit>,
+}
+
+/// Replacement for a completion item.
+///
+/// `span` covers the source range to replace, `new_text` is the full
+/// replacement. Core forwards this without logic.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TextEdit {
+    pub span: Span,
+    pub new_text: String,
+}
+
+impl TextEdit {
+    pub fn new(span: Span, new_text: String) -> Self {
+        Self { span, new_text }
+    }
 }
 
 /// One parse problem from a language analyzer.

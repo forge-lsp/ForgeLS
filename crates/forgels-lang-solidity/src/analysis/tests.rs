@@ -1,7 +1,7 @@
 use super::{
     CompletionItem, CompletionKind, Scope, SolidityAnalyzer, SymbolKind, collect_symbols,
     complete_at, complete_bare_imports, complete_import_paths, completion_item_kind, exports_of,
-    goto_definition, hover_at, import_path_at,
+    goto_definition, hover_at, import_inner_span, import_path_at, imports_in,
 };
 use crate::{SolidityLexer, SolidityParser};
 use forgels_core::{Analyzer, ProjectContext, Workspace, routing::Language};
@@ -1675,4 +1675,126 @@ fn analyzer_complete_merges_bare_node_imports() {
     assert_eq!(hit.detail, "file");
     assert_eq!(hit.kind.value(), 17);
     let _ = std::fs::remove_dir_all(&root);
+}
+
+fn apply_edit(text: &str, span: Span, replacement: &str) -> String {
+    let mut out = text.to_string();
+    out.replace_range(span.start as usize..span.end as usize, replacement);
+    out
+}
+
+#[test]
+fn path_completion_replaces_full_inner() {
+    let root = fresh_sol_root("forgels-sol-import-edit");
+    let current = root.join("A.sol");
+    let text = "import \"./B\";";
+    let mut workspace = Workspace::new();
+    workspace.set_roots(vec![root.clone()]);
+    workspace
+        .open(current.clone(), Language::Solidity, text.to_string(), 1)
+        .expect("open works");
+    let owned = text.to_string();
+    let at = owned.find("./B").expect("prefix") as u32 + 3;
+    let ctx = ProjectContext::new(&current, &owned, at, &workspace);
+    let hit = SolidityAnalyzer
+        .complete(&ctx)
+        .into_iter()
+        .find(|item| item.label == "./B.sol")
+        .expect("path hit");
+    let edit = hit.text_edit.expect("path carries edit");
+    assert_eq!(edit.new_text, "./B.sol");
+    let applied = apply_edit(&owned, edit.span, &edit.new_text);
+    assert_eq!(applied, "import \"./B.sol\";");
+    let found = imports_in(&applied);
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].raw, "./B.sol");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn symbol_and_keyword_have_no_edit() {
+    let text = "contract C {\nuint256 total;\ntot";
+    let workspace = open_workspace(&[("/repo/C.sol", text)]);
+    let owned = text.to_string();
+    let buf = PathBuf::from("/repo/C.sol");
+    let ctx = ProjectContext::new(&buf, &owned, owned.len() as u32, &workspace);
+    let symbol = SolidityAnalyzer
+        .complete(&ctx)
+        .into_iter()
+        .find(|item| item.label == "total")
+        .expect("symbol hit");
+    assert!(symbol.text_edit.is_none());
+    let keyword_text = "contract C {\nfun";
+    let keyword_workspace = open_workspace(&[("/repo/C.sol", keyword_text)]);
+    let keyword_owned = keyword_text.to_string();
+    let keyword_ctx = ProjectContext::new(
+        &buf,
+        &keyword_owned,
+        keyword_owned.len() as u32,
+        &keyword_workspace,
+    );
+    let keyword = SolidityAnalyzer
+        .complete(&keyword_ctx)
+        .into_iter()
+        .find(|item| item.label == "function")
+        .expect("keyword hit");
+    assert!(keyword.text_edit.is_none());
+}
+
+#[test]
+fn mid_string_cursor_replaces_suffix() {
+    let root = fresh_sol_root("forgels-sol-import-mid");
+    let current = root.join("A.sol");
+    let text = "import \"./B.sol\";";
+    let mut workspace = Workspace::new();
+    workspace.set_roots(vec![root.clone()]);
+    workspace
+        .open(current.clone(), Language::Solidity, text.to_string(), 1)
+        .expect("open works");
+    let owned = text.to_string();
+    let at = owned.find("./B").expect("prefix") as u32 + 3;
+    let ctx = ProjectContext::new(&current, &owned, at, &workspace);
+    let hit = SolidityAnalyzer
+        .complete(&ctx)
+        .into_iter()
+        .find(|item| item.label == "./B.sol")
+        .expect("path hit");
+    let edit = hit.text_edit.expect("path carries edit");
+    assert!(edit.span.end > at, "edit covers suffix");
+    let applied = apply_edit(&owned, edit.span, &edit.new_text);
+    assert_eq!(applied, "import \"./B.sol\";");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn bare_completion_carries_edit() {
+    let root = fresh_node_root("forgels-sol-bare-edit");
+    let current = root.join("contracts/A.sol");
+    let text = "import \"beta/\";";
+    let mut workspace = Workspace::new();
+    workspace.set_roots(vec![root.clone()]);
+    workspace
+        .open(current.clone(), Language::Solidity, text.to_string(), 1)
+        .expect("open works");
+    let owned = text.to_string();
+    let at = owned.find("beta/").expect("prefix") as u32 + 5;
+    let ctx = ProjectContext::new(&current, &owned, at, &workspace);
+    let hit = SolidityAnalyzer
+        .complete(&ctx)
+        .into_iter()
+        .find(|item| item.label == "beta/Token.sol")
+        .expect("bare hit");
+    let edit = hit.text_edit.expect("bare carries edit");
+    assert_eq!(edit.new_text, "beta/Token.sol");
+    let applied = apply_edit(&owned, edit.span, &edit.new_text);
+    assert!(applied.contains("\"beta/Token.sol\""), "applied: {applied}");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn inner_span_rejects_out_of_bounds() {
+    assert!(import_inner_span("short", Span::new(100, 110)).is_none());
+    let text = "import \"./B.sol\";";
+    assert!(import_inner_span(text, Span::new(7, 100)).is_none());
+    assert!(import_inner_span(text, Span::new(0, 6)).is_none());
 }

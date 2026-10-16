@@ -1,6 +1,6 @@
 use forgels_core::{
     Analyzer, CompletionData, DiagnosticData, GotoTarget, HoverData, ProjectContext,
-    analyzer::ImportRef,
+    analyzer::{ImportRef, TextEdit},
 };
 use forgels_syntax::{AstNode, Lexer, Span};
 
@@ -21,7 +21,7 @@ mod tests;
 
 pub use completion::{
     CompletionItem, CompletionKind, complete_at, complete_bare_imports, complete_import_paths,
-    completion_item_kind, exports_of, import_path_at,
+    completion_item_kind, exports_of, import_inner_span, import_path_at,
 };
 pub use goto::{goto_definition, resolve_in_dep};
 pub use hover::{Hover, hover_at};
@@ -390,6 +390,7 @@ impl SolidityAnalyzer {
                 kind: completion::completion_item_kind(completion::CompletionKind::Symbol(
                     item.kind,
                 )),
+                text_edit: None,
             });
         }
         for (info, _) in members::collect_cross_file_members(file, &kind, deps) {
@@ -406,6 +407,7 @@ impl SolidityAnalyzer {
                 kind: completion::completion_item_kind(completion::CompletionKind::Symbol(
                     info.kind,
                 )),
+                text_edit: None,
             });
         }
         out.sort_by(|left, right| left.label.cmp(&right.label));
@@ -464,7 +466,7 @@ impl Analyzer for SolidityAnalyzer {
     fn complete(&self, ctx: &ProjectContext) -> Vec<CompletionData> {
         let tokens = SolidityLexer.tokenize(ctx.text);
         let (recovered, _) = SolidityParser.parse_with_errors(&tokens);
-        if completion::import_path_at(&recovered, ctx.text, ctx.offset).is_some() {
+        if let Some(outer) = completion::import_path_at(&recovered, ctx.text, ctx.offset) {
             let prefix = completion::path_prefix_at(ctx.text, ctx.offset);
             let mut items =
                 completion::complete_import_paths(ctx.path, ctx.workspace.roots(), &prefix);
@@ -479,12 +481,17 @@ impl Analyzer for SolidityAnalyzer {
                 }
                 items.sort_by(|left, right| left.label.cmp(&right.label));
             }
+            let inner = completion::import_inner_span(ctx.text, outer);
             return items
                 .into_iter()
-                .map(|item| CompletionData {
-                    label: item.label,
-                    detail: item.detail,
-                    kind: completion::completion_item_kind(item.kind),
+                .map(|item| {
+                    let edit = inner.map(|span| TextEdit::new(span, item.label.clone()));
+                    CompletionData {
+                        label: item.label.clone(),
+                        detail: item.detail.clone(),
+                        kind: completion::completion_item_kind(item.kind),
+                        text_edit: edit,
+                    }
                 })
                 .collect();
         }
@@ -505,6 +512,7 @@ impl Analyzer for SolidityAnalyzer {
                 label: item.label,
                 detail: item.detail,
                 kind: completion::completion_item_kind(item.kind),
+                text_edit: None,
             });
         }
         for (dep_path, dep_text) in forgels_core::dep_texts(ctx, 16) {
@@ -524,6 +532,7 @@ impl Analyzer for SolidityAnalyzer {
                     label: item.label.clone(),
                     detail: format!("{} - from {}", item.detail, origin),
                     kind: completion::completion_item_kind(item.kind),
+                    text_edit: None,
                 });
             }
         }

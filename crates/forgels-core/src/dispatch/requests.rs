@@ -77,11 +77,38 @@ fn completion_result(session: &Session, workspace: &Workspace, params: &Value) -
     let items: Vec<Value> = analyzer
         .complete(&ctx)
         .iter()
-        .map(|item| {
-            serde_json::json!({ "label": item.label, "detail": item.detail, "kind": item.kind.value() })
-        })
+        .map(|item| completion_item(&doc.text, item))
         .collect();
     Some(serde_json::json!({ "isIncomplete": false, "items": items }))
+}
+
+/// One completion item as JSON. Path items carry `textEdit` so the
+/// client replaces the full inner string instead of inserting at
+/// the cursor. Invalid spans stay plain to avoid broken edits.
+fn completion_item(text: &str, item: &crate::analyzer::CompletionData) -> Value {
+    let mut value = serde_json::json!({
+        "label": item.label,
+        "detail": item.detail,
+        "kind": item.kind.value(),
+    });
+    let Some(edit) = item.text_edit.as_ref() else {
+        return value;
+    };
+    if text
+        .get(edit.span.start as usize..edit.span.end as usize)
+        .is_none()
+    {
+        return value;
+    }
+    let range = span_to_range(text, edit.span);
+    value["textEdit"] = serde_json::json!({
+        "range": {
+            "start": { "line": range.start.line, "character": range.start.character },
+            "end": { "line": range.end.line, "character": range.end.character },
+        },
+        "newText": edit.new_text,
+    });
+    value
 }
 
 /// Answer `textDocument/definition`. Notifications without id stay silent.
