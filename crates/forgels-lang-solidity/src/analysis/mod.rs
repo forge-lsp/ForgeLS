@@ -20,8 +20,8 @@ pub(crate) mod members;
 mod tests;
 
 pub use completion::{
-    CompletionItem, CompletionKind, complete_at, complete_import_paths, completion_item_kind,
-    exports_of, import_path_at,
+    CompletionItem, CompletionKind, complete_at, complete_bare_imports, complete_import_paths,
+    completion_item_kind, exports_of, import_path_at,
 };
 pub use goto::{goto_definition, resolve_in_dep};
 pub use hover::{Hover, hover_at};
@@ -466,7 +466,20 @@ impl Analyzer for SolidityAnalyzer {
         let (recovered, _) = SolidityParser.parse_with_errors(&tokens);
         if completion::import_path_at(&recovered, ctx.text, ctx.offset).is_some() {
             let prefix = completion::path_prefix_at(ctx.text, ctx.offset);
-            return completion::complete_import_paths(ctx.path, ctx.workspace.roots(), &prefix)
+            let mut items =
+                completion::complete_import_paths(ctx.path, ctx.workspace.roots(), &prefix);
+            if !prefix.starts_with('.') {
+                for bare in
+                    completion::complete_bare_imports(ctx.path, ctx.workspace.roots(), &prefix)
+                {
+                    if items.iter().any(|known| known.label == bare.label) {
+                        continue;
+                    }
+                    items.push(bare);
+                }
+                items.sort_by(|left, right| left.label.cmp(&right.label));
+            }
+            return items
                 .into_iter()
                 .map(|item| CompletionData {
                     label: item.label,
