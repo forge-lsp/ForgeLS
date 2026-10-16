@@ -75,6 +75,25 @@ fn ignores_unknown_notification_without_id() {
 }
 
 #[test]
+fn ignores_standard_noise_notifications() {
+    let mut session = Session::new();
+    let mut workspace = Workspace::new();
+    init(&mut session, &mut workspace);
+    for method in [
+        "initialized",
+        "$/setTrace",
+        "$/cancelRequest",
+        "textDocument/didSave",
+    ] {
+        let body = format!(r#"{{"jsonrpc":"2.0","method":"{method}","params":{{}}}}"#);
+        assert!(
+            handle_message(&mut session, &mut workspace, &body).is_none(),
+            "{method} stays silent"
+        );
+    }
+}
+
+#[test]
 fn ignores_notifications_without_id() {
     let mut session = Session::new();
     let mut workspace = Workspace::new();

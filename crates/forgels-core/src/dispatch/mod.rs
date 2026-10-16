@@ -175,6 +175,13 @@ pub fn handle_message(
             apply_folder_change(workspace, &params);
             return None;
         }
+        // Standard notifications with no handler: acknowledge silently
+        // instead of warning. `initialized` always follows `initialize`,
+        // `$/setTrace` and `$/cancelRequest` are client bookkeeping, and
+        // `didSave` carries nothing new under full text sync.
+        "initialized" | "$/setTrace" | "$/cancelRequest" | "textDocument/didSave" => {
+            return None;
+        }
         _ => {}
     }
     if method != "initialize" {
