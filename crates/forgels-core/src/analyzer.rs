@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
+use forgels_protocol::CompletionItemKind;
 use forgels_syntax::Span;
 
 use crate::index::ProjectIndex;
@@ -19,6 +20,7 @@ pub struct HoverData {
 pub struct CompletionData {
     pub label: String,
     pub detail: String,
+    pub kind: CompletionItemKind,
 }
 
 /// One parse problem from a language analyzer.

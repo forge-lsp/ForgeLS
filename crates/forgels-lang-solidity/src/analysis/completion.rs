@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 
 use super::{SymbolKind, collect_symbols, is_word_byte};
 use crate::{SolidityFile, SolidityLexer, SolidityParser};
+use forgels_protocol::CompletionItemKind;
 use forgels_syntax::{Lexer, Span};
 
 pub struct CompletionItem {
@@ -16,6 +17,27 @@ pub enum CompletionKind {
     Symbol(SymbolKind),
     Keyword,
     Path,
+}
+
+/// Map a completion origin to its LSP number.
+///
+/// State vars stay Variable (6), same as locals and params.
+/// Enum members map to 20 once the symbol exists (follow-up).
+pub fn completion_item_kind(kind: CompletionKind) -> CompletionItemKind {
+    match kind {
+        CompletionKind::Keyword => CompletionItemKind::KEYWORD,
+        CompletionKind::Path => CompletionItemKind::FILE,
+        CompletionKind::Symbol(symbol) => match symbol {
+            SymbolKind::Contract => CompletionItemKind::CLASS,
+            SymbolKind::Function => CompletionItemKind::FUNCTION,
+            SymbolKind::StateVar | SymbolKind::LocalVar | SymbolKind::Param => {
+                CompletionItemKind::VARIABLE
+            }
+            SymbolKind::Field => CompletionItemKind::FIELD,
+            SymbolKind::Struct => CompletionItemKind::STRUCT,
+            SymbolKind::Enum => CompletionItemKind::ENUM,
+        },
+    }
 }
 
 /// Suggest symbols visible at `offset`, filtered by the typed prefix.

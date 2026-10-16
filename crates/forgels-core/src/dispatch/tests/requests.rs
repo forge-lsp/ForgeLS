@@ -124,6 +124,14 @@ fn completion_lists_matching_labels() {
         items[0].pointer("/label").expect("has label"),
         &serde_json::json!("stub_one")
     );
+    assert_eq!(
+        items[0].pointer("/kind").expect("has kind"),
+        &serde_json::json!(3)
+    );
+    assert_eq!(
+        items[1].pointer("/kind").expect("has kind"),
+        &serde_json::json!(6)
+    );
 }
 
 #[test]
@@ -375,6 +383,7 @@ fn completion_lists_dep_symbol_with_origin() {
                     out.push(crate::analyzer::CompletionData {
                         label: "dep_fn".to_string(),
                         detail: format!("function dep_fn() - from {name}"),
+                        kind: forgels_protocol::CompletionItemKind::FUNCTION,
                     });
                 }
             }
@@ -444,5 +453,9 @@ fn completion_lists_dep_symbol_with_origin() {
     assert_eq!(
         items[0].pointer("/detail").expect("has detail"),
         &serde_json::json!("function dep_fn() - from B.sol")
+    );
+    assert_eq!(
+        items[0].pointer("/kind").expect("has kind"),
+        &serde_json::json!(3)
     );
 }
