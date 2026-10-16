@@ -1,6 +1,7 @@
 use serde_json::Value;
 
-use forgels_common::paths::resolve_with_remappings;
+use forgels_common::fs::is_trackable_file;
+use forgels_common::paths::resolve_import_full;
 
 use super::Workspace;
 use crate::analyzer::AnalyzerMap;
@@ -103,7 +104,15 @@ fn refresh_index(
     let deps: Vec<std::path::PathBuf> = analyzer
         .imports(&text)
         .iter()
-        .filter_map(|item| resolve_with_remappings(path, &item.raw, &root, &config.remappings))
+        .filter_map(|item| {
+            resolve_import_full(
+                path,
+                &item.raw,
+                &root,
+                &config.remappings,
+                is_trackable_file,
+            )
+        })
         .collect();
     workspace.set_file_deps(path.to_path_buf(), deps);
 }

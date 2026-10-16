@@ -285,6 +285,46 @@ fn definition_with_invalid_span_returns_null() {
 }
 
 #[test]
+fn definition_reads_disk_only_target() {
+    let root = std::env::temp_dir().join("forgels-goto-disk");
+    let _ = std::fs::remove_dir_all(&root);
+    let a = root.join("contracts/A.sol");
+    let b = root.join("contracts/node_modules/pkg/B.sol");
+    std::fs::create_dir_all(b.parent().expect("parent")).expect("dirs");
+    std::fs::write(&b, "contract B {}").expect("write");
+    let mut session = session_with_cross(b.clone(), Span::new(9, 10));
+    let mut workspace = Workspace::new();
+    init(&mut session, &mut workspace);
+    let uri = super::super::sync::path_to_uri(&a);
+    let open = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "textDocument/didOpen",
+        "params": { "textDocument": {
+            "uri": uri, "languageId": "solidity", "version": 1, "text": "contract A {}",
+        } },
+    })
+    .to_string();
+    assert!(handle_message(&mut session, &mut workspace, &open).is_none());
+    let reply = handle_message(
+        &mut session,
+        &mut workspace,
+        &definition_body(7, &uri, 0, 10),
+    )
+    .expect("must reply");
+    let value: Value = serde_json::from_str(&reply).expect("reply is json");
+    let result = value.get("result").expect("has result");
+    assert_eq!(
+        result.pointer("/uri").expect("has uri"),
+        &serde_json::json!(super::super::sync::path_to_uri(&b))
+    );
+    assert_eq!(
+        result.pointer("/range/start").expect("has start"),
+        &serde_json::json!({"line": 0, "character": 9})
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn hover_reads_current_file_through_context() {
     use crate::analyzer::{Analyzer, ProjectContext};
 

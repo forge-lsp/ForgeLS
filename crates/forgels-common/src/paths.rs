@@ -150,6 +150,56 @@ pub fn relative_path(from_file: &Path, target: &Path) -> Option<String> {
     }
 }
 
+/// Max ancestor dirs to probe for `node_modules`. Bounds disk checks.
+pub const MAX_NODE_MODULES_DEPTH: usize = 8;
+
+/// Candidate `node_modules` paths for a bare specifier, nearest first.
+///
+/// Lexical only, no disk access. Relative, absolute, and empty
+/// specifiers yield no candidates. Stops after `MAX_NODE_MODULES_DEPTH`
+/// ancestors.
+pub fn node_module_candidates(from_file: &Path, raw: &str) -> Vec<PathBuf> {
+    if raw.is_empty() {
+        return Vec::new();
+    }
+    if raw == "." || raw == ".." || raw.starts_with("./") || raw.starts_with("../") {
+        return Vec::new();
+    }
+    if Path::new(raw).is_absolute() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    let mut dir = from_file.parent().map(|parent| parent.to_path_buf());
+    for _ in 0..MAX_NODE_MODULES_DEPTH {
+        let Some(current) = dir else {
+            break;
+        };
+        out.push(normalize_lexically(&current.join("node_modules").join(raw)));
+        dir = current.parent().map(|parent| parent.to_path_buf());
+    }
+    out
+}
+
+/// Resolve with `node_modules` fallback: relative, then remappings,
+/// then the first existing `node_modules` candidate.
+///
+/// Old callers keep `resolve_import` and `resolve_with_remappings`
+/// unchanged. Only new resolution flows use this entry point.
+pub fn resolve_import_full(
+    from_file: &Path,
+    raw: &str,
+    root: &Path,
+    remappings: &[Remapping],
+    exists: impl Fn(&Path) -> bool,
+) -> Option<PathBuf> {
+    if let Some(path) = resolve_with_remappings(from_file, raw, root, remappings) {
+        return Some(path);
+    }
+    node_module_candidates(from_file, raw)
+        .into_iter()
+        .find(|candidate| exists(candidate))
+}
+
 fn normalize_lexically(path: &Path) -> PathBuf {
     let mut out = PathBuf::new();
     for part in path.components() {
@@ -292,5 +342,72 @@ mod tests {
     fn relative_mixed_roots_return_none() {
         assert!(relative_path(Path::new("/repo/A.sol"), Path::new("contracts/B.sol")).is_none());
         assert!(relative_path(Path::new("contracts/A.sol"), Path::new("/repo/B.sol")).is_none());
+    }
+
+    #[test]
+    fn node_candidates_nearest_first() {
+        let found = node_module_candidates(Path::new("/repo/contracts/A.sol"), "@oz/ERC20.sol");
+        assert!(found.len() >= 2);
+        assert_eq!(
+            found[0],
+            PathBuf::from("/repo/contracts/node_modules/@oz/ERC20.sol")
+        );
+        assert_eq!(found[1], PathBuf::from("/repo/node_modules/@oz/ERC20.sol"));
+    }
+
+    #[test]
+    fn node_candidates_cap_at_depth() {
+        let found = node_module_candidates(Path::new("/a/b/c/d/e/f/g/h/i/A.sol"), "pkg/M.sol");
+        assert_eq!(found.len(), MAX_NODE_MODULES_DEPTH);
+    }
+
+    #[test]
+    fn node_candidates_reject_non_bare() {
+        assert!(node_module_candidates(Path::new("/repo/A.sol"), "").is_empty());
+        assert!(node_module_candidates(Path::new("/repo/A.sol"), "./B.sol").is_empty());
+        assert!(node_module_candidates(Path::new("/repo/A.sol"), "../B.sol").is_empty());
+        assert!(node_module_candidates(Path::new("/repo/A.sol"), "/abs/B.sol").is_empty());
+    }
+
+    #[test]
+    fn full_prefers_relative_then_remapping_then_node() {
+        let root = Path::new("/repo");
+        let maps = vec![parse_remapping("@oz/=lib/oz/").expect("valid")];
+        let never = |_: &Path| false;
+        assert_eq!(
+            resolve_import_full(
+                Path::new("/repo/contracts/A.sol"),
+                "./B.sol",
+                root,
+                &maps,
+                never
+            ),
+            Some(PathBuf::from("/repo/contracts/B.sol"))
+        );
+        assert_eq!(
+            resolve_import_full(Path::new("/repo/A.sol"), "@oz/M.sol", root, &maps, never),
+            Some(PathBuf::from("/repo/lib/oz/M.sol"))
+        );
+        let only_node = |path: &Path| path == Path::new("/repo/node_modules/pkg/M.sol");
+        assert_eq!(
+            resolve_import_full(
+                Path::new("/repo/contracts/A.sol"),
+                "pkg/M.sol",
+                root,
+                &[],
+                only_node
+            ),
+            Some(PathBuf::from("/repo/node_modules/pkg/M.sol"))
+        );
+    }
+
+    #[test]
+    fn full_missing_returns_none() {
+        let root = Path::new("/repo");
+        let never = |_: &Path| false;
+        assert!(
+            resolve_import_full(Path::new("/repo/A.sol"), "pkg/M.sol", root, &[], never).is_none()
+        );
+        assert!(resolve_import_full(Path::new("/repo/A.sol"), "", root, &[], never).is_none());
     }
 }
