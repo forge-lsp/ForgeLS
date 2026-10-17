@@ -589,8 +589,7 @@ impl SolidityAnalyzer {
             })
             .collect();
         out.extend(calls::arity_diagnostics(file, scope));
-        // Plain asserts only: member cheatcodes (`vm.*`) carry no arg
-        // count in `MemberExpr`, so member arity waits for parser support.
+        out.extend(calls::member_arity_diagnostics(file, scope, deps));
         out.extend(forge::assert_arity_diagnostics(file, scope));
         out.extend(emits::emit_arity_diagnostics(file));
         out.extend(emits::unknown_emit_diagnostics(file, deps));

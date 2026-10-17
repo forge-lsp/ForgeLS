@@ -704,9 +704,155 @@ fn unknown_callee_stays_silent() {
 }
 
 #[test]
-fn member_call_stays_silent() {
+fn unknown_member_receiver_stays_silent() {
     let text = "contract C {\nfunction greet(uint a, uint b) public {}\nfunction f() public {\nobj.greet(1);\n}\n}";
     assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn member_call_correct_count_stays_silent() {
+    let text = "contract Hello {\nfunction greet(uint a, uint b) public {}\n}\ncontract C {\nfunction f() public {\nHello h;\nh.greet(1, 2);\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn member_call_too_few_reports_exact_message() {
+    let text = "contract Hello {\nfunction greet(uint a, uint b) public {}\n}\ncontract C {\nfunction f() public {\nHello h;\nh.greet(1);\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "this function 'greet' takes 2 arguments but 1 supplied"
+    );
+    let covered = &text[found[0].span.start as usize..found[0].span.end as usize];
+    assert!(
+        covered.starts_with("h.greet") && covered.ends_with(')'),
+        "span: {covered}"
+    );
+}
+
+#[test]
+fn member_call_too_many_reports_exact_message() {
+    let text = "contract Hello {\nfunction greet(uint a) public {}\n}\ncontract C {\nfunction f() public {\nHello h;\nh.greet(1, 2);\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "this function 'greet' takes 1 arguments but 2 supplied"
+    );
+}
+
+#[test]
+fn member_plain_access_stays_silent() {
+    let text = "contract Hello {\nfunction greet(uint a) public {}\n}\ncontract C {\nfunction f() public {\nHello h;\nh.greet;\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn member_empty_call_reports_zero_supplied() {
+    let text = "contract Hello {\nfunction greet(uint a) public {}\n}\ncontract C {\nfunction f() public {\nHello h;\nh.greet();\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "this function 'greet' takes 1 arguments but 0 supplied"
+    );
+}
+
+#[test]
+fn member_this_call_reports_exact_message() {
+    let text = "contract C {\nfunction greet(uint a, uint b) public {}\nfunction f() public {\nthis.greet(1);\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "this function 'greet' takes 2 arguments but 1 supplied"
+    );
+}
+
+#[test]
+fn member_this_correct_count_stays_silent() {
+    let text = "contract C {\nfunction greet(uint a) public {}\nfunction f() public {\nthis.greet(1);\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn member_inherited_arity_uses_base_signature() {
+    let text = "contract B {\nfunction greet(uint a, uint b) public {}\n}\ncontract D is B {\nfunction f() public {\nthis.greet(1);\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "this function 'greet' takes 2 arguments but 1 supplied"
+    );
+}
+
+#[test]
+fn member_shadow_uses_derived_signature() {
+    let text = "contract B {\nfunction greet(uint a, uint b) public {}\n}\ncontract D is B {\nfunction greet(uint a) public {}\nfunction f() public {\nthis.greet(1, 2);\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "this function 'greet' takes 1 arguments but 2 supplied"
+    );
+}
+
+#[test]
+fn member_builtin_calls_stay_silent() {
+    let text = "contract T is Test {\nfunction f() public {\nvm.prank(a, b, c);\nvm.stopPrank(1);\nconsole.log(a, b);\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn member_struct_field_call_stays_silent() {
+    let text = "struct Person {\nuint age;\n}\ncontract C {\nfunction f() public {\nPerson p;\np.age(1);\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn member_unknown_function_stays_silent() {
+    let text = "contract Hello {\nfunction greet(uint a) public {}\n}\ncontract C {\nfunction f() public {\nHello h;\nh.missing(1, 2);\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn member_dep_arity_reports() {
+    let dep = "contract Hello {\nfunction greet(uint a, uint b) public {}\n}";
+    let cur =
+        "import \"./H.sol\";\ncontract C {\nfunction f() public {\nHello h;\nh.greet(1);\n}\n}";
+    let mut workspace = open_workspace(&[("/H.sol", dep), ("/C.sol", cur)]);
+    workspace.set_file_deps(PathBuf::from("/C.sol"), vec![PathBuf::from("/H.sol")]);
+    let found = diagnostics_multi(&workspace, "/C.sol", cur);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "this function 'greet' takes 2 arguments but 1 supplied"
+    );
+}
+
+#[test]
+fn member_dep_correct_count_stays_silent() {
+    let dep = "contract Hello {\nfunction greet(uint a) public {}\n}";
+    let cur =
+        "import \"./H.sol\";\ncontract C {\nfunction f() public {\nHello h;\nh.greet(1);\n}\n}";
+    let mut workspace = open_workspace(&[("/H.sol", dep), ("/C.sol", cur)]);
+    workspace.set_file_deps(PathBuf::from("/C.sol"), vec![PathBuf::from("/H.sol")]);
+    assert!(diagnostics_multi(&workspace, "/C.sol", cur).is_empty());
+}
+
+#[test]
+fn member_dep_inherited_arity_uses_base() {
+    let base = "contract B {\nfunction greet(uint a, uint b) public {}\n}";
+    let cur = "import \"./B.sol\";\ncontract D is B {\nfunction f() public {\nthis.greet(1);\n}\n}";
+    let mut workspace = open_workspace(&[("/B.sol", base), ("/D.sol", cur)]);
+    workspace.set_file_deps(PathBuf::from("/D.sol"), vec![PathBuf::from("/B.sol")]);
+    let found = diagnostics_multi(&workspace, "/D.sol", cur);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "this function 'greet' takes 2 arguments but 1 supplied"
+    );
 }
 
 #[test]

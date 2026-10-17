@@ -82,10 +82,11 @@ Status: token kinds defined. Real lexer and parser are planned.
   - Goto returns `None` for builtins by design and skips dep lookup, so
     builtin names never jump to coincidental same-name declarations.
 - Limits:
-  - Member arity is postponed: `MemberExpr` stores receiver, dot, and
-    member only with no arg count, so `vm.*` arity waits for parser
-    support. Plain asserts check arity with the same message shape as
-    plain calls.
+  - Member arity checked: `MemberExpr` stores call markers, so
+    `vault.withdraw(a, b, c)` diagnoses against own, inherited, and
+    dep definitions. Builtins (`vm.*`, `console.*`) stay silent by
+    priority guard. Plain asserts check arity with the same message
+    shape as plain calls.
   - Message-string assert overloads (for example 3-arg `assertEq`) are
     follow-up. V1 checks the canonical fixed arity only.
 
