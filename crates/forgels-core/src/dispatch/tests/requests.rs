@@ -643,3 +643,151 @@ fn completion_skips_out_of_bounds_edit() {
     assert_eq!(items.len(), 1);
     assert!(items[0].get("textEdit").is_none());
 }
+
+fn signature_body(id: u32, uri: &str, line: u32, character: u32) -> String {
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": "textDocument/signatureHelp",
+        "params": {
+            "textDocument": { "uri": uri },
+            "position": { "line": line, "character": character },
+        }
+    })
+    .to_string()
+}
+
+#[derive(Debug)]
+struct SigAnalyzer;
+
+impl crate::analyzer::Analyzer for SigAnalyzer {
+    fn hover(&self, _ctx: &crate::analyzer::ProjectContext) -> Option<crate::analyzer::HoverData> {
+        None
+    }
+
+    fn complete(
+        &self,
+        _ctx: &crate::analyzer::ProjectContext,
+    ) -> Vec<crate::analyzer::CompletionData> {
+        Vec::new()
+    }
+
+    fn goto(&self, _ctx: &crate::analyzer::ProjectContext) -> Option<Span> {
+        None
+    }
+
+    fn diagnostics(&self, _text: &str) -> Vec<crate::analyzer::DiagnosticData> {
+        Vec::new()
+    }
+
+    fn signature_help(
+        &self,
+        _ctx: &crate::analyzer::ProjectContext,
+    ) -> Option<Vec<crate::analyzer::SignatureData>> {
+        Some(vec![
+            crate::analyzer::SignatureData::new(
+                "function greet(uint a)".to_string(),
+                vec![crate::analyzer::SignatureParam::new("uint a".to_string())],
+                1,
+            ),
+            crate::analyzer::SignatureData::new(
+                "function greet(uint a, uint b)".to_string(),
+                vec![
+                    crate::analyzer::SignatureParam::new("uint a".to_string()),
+                    crate::analyzer::SignatureParam::new("uint b".to_string()),
+                ],
+                1,
+            ),
+        ])
+    }
+}
+
+fn session_with_sig() -> super::super::Session {
+    let mut session = super::super::Session::new();
+    session
+        .analyzers
+        .insert(crate::routing::Language::Solidity, Box::new(SigAnalyzer));
+    session
+}
+
+#[test]
+fn signature_returns_labels_and_active() {
+    let mut session = session_with_sig();
+    let mut workspace = Workspace::new();
+    open_sol(&mut session, &mut workspace);
+    let reply = handle_message(
+        &mut session,
+        &mut workspace,
+        &signature_body(12, "file:///repo/A.sol", 0, 10),
+    )
+    .expect("must reply");
+    let value: Value = serde_json::from_str(&reply).expect("reply is json");
+    let result = value.get("result").expect("has result");
+    assert_eq!(
+        result.pointer("/activeSignature").expect("has signature"),
+        &serde_json::json!(0)
+    );
+    assert_eq!(
+        result.pointer("/activeParameter").expect("has parameter"),
+        &serde_json::json!(1)
+    );
+    let signatures = result
+        .pointer("/signatures")
+        .expect("has signatures")
+        .as_array()
+        .expect("array");
+    assert_eq!(signatures.len(), 2);
+    assert_eq!(
+        signatures[0].pointer("/label").expect("has label"),
+        &serde_json::json!("function greet(uint a)")
+    );
+    assert_eq!(
+        signatures[0]
+            .pointer("/parameters/0/label")
+            .expect("has param"),
+        &serde_json::json!("uint a")
+    );
+    assert_eq!(
+        signatures[1].pointer("/label").expect("has label"),
+        &serde_json::json!("function greet(uint a, uint b)")
+    );
+}
+
+#[test]
+fn signature_without_help_returns_null() {
+    let mut session = session_with_stub(true);
+    let mut workspace = Workspace::new();
+    open_sol(&mut session, &mut workspace);
+    let reply = handle_message(
+        &mut session,
+        &mut workspace,
+        &signature_body(12, "file:///repo/A.sol", 0, 10),
+    )
+    .expect("must reply");
+    let value: Value = serde_json::from_str(&reply).expect("reply is json");
+    assert!(value.get("result").expect("has result").is_null());
+}
+
+#[test]
+fn signature_on_unknown_file_returns_null() {
+    let mut session = session_with_sig();
+    let mut workspace = Workspace::new();
+    init(&mut session, &mut workspace);
+    let reply = handle_message(
+        &mut session,
+        &mut workspace,
+        &signature_body(12, "file:///repo/ghost.sol", 0, 1),
+    )
+    .expect("must reply");
+    let value: Value = serde_json::from_str(&reply).expect("reply is json");
+    assert!(value.get("result").expect("has result").is_null());
+}
+
+#[test]
+fn signature_without_id_stays_silent() {
+    let mut session = session_with_sig();
+    let mut workspace = Workspace::new();
+    open_sol(&mut session, &mut workspace);
+    let body = r#"{"jsonrpc":"2.0","method":"textDocument/signatureHelp","params":{"textDocument":{"uri":"file:///repo/A.sol"},"position":{"line":0,"character":10}}}"#;
+    assert!(handle_message(&mut session, &mut workspace, body).is_none());
+}

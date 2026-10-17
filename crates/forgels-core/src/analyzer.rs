@@ -43,6 +43,40 @@ impl TextEdit {
     }
 }
 
+/// One parameter label inside a signature.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SignatureParam {
+    pub label: String,
+}
+
+impl SignatureParam {
+    pub fn new(label: String) -> Self {
+        Self { label }
+    }
+}
+
+/// One callable signature: display label plus ordered params.
+///
+/// `active_param` repeats the cursor arg index on every entry of one
+/// help response. Overloads share the cursor, so dispatch reads the
+/// first entry and answers `activeSignature` 0.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SignatureData {
+    pub label: String,
+    pub params: Vec<SignatureParam>,
+    pub active_param: u32,
+}
+
+impl SignatureData {
+    pub fn new(label: String, params: Vec<SignatureParam>, active_param: u32) -> Self {
+        Self {
+            label,
+            params,
+            active_param,
+        }
+    }
+}
+
 /// One parse problem from a language analyzer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiagnosticData {
@@ -270,6 +304,11 @@ pub trait Analyzer: std::fmt::Debug {
     /// without imports keep working.
     fn imports(&self, _text: &str) -> Vec<ImportRef> {
         Vec::new()
+    }
+    /// Signature help for the call at the cursor. Default is none so
+    /// languages without calls keep working.
+    fn signature_help(&self, _ctx: &ProjectContext) -> Option<Vec<SignatureData>> {
+        None
     }
 }
 

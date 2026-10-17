@@ -160,3 +160,51 @@ fn definition_result(session: &Session, workspace: &Workspace, params: &Value) -
         }
     }))
 }
+
+/// Answer `textDocument/signatureHelp`. Notifications without id stay
+/// silent. Positions outside any call and unknown callees get null.
+pub(crate) fn signature_response(
+    session: &Session,
+    workspace: &Workspace,
+    params: &Value,
+    id: Option<&Value>,
+) -> Option<String> {
+    let id = id?.clone();
+    let result = signature_result(session, workspace, params).unwrap_or(Value::Null);
+    let response = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "result": result
+    });
+    Some(response.to_string())
+}
+
+fn signature_result(session: &Session, workspace: &Workspace, params: &Value) -> Option<Value> {
+    let uri = params.get("textDocument")?.get("uri")?.as_str()?;
+    let position = params.get("position")?;
+    let line = position.get("line")?.as_u64()? as u32;
+    let character = position.get("character")?.as_u64()? as u32;
+    let path = uri_to_path(uri);
+    let doc = workspace.get(&path)?;
+    let analyzer = session.analyzers.get(&doc.language)?;
+    let offset = position_to_offset(&doc.text, Position { line, character });
+    let ctx = ProjectContext::new(&path, &doc.text, offset, workspace);
+    let list = analyzer.signature_help(&ctx)?;
+    let head = list.first()?;
+    let signatures: Vec<Value> = list
+        .iter()
+        .map(|item| {
+            let params: Vec<Value> = item
+                .params
+                .iter()
+                .map(|param| serde_json::json!({ "label": param.label }))
+                .collect();
+            serde_json::json!({ "label": item.label, "parameters": params })
+        })
+        .collect();
+    Some(serde_json::json!({
+        "signatures": signatures,
+        "activeSignature": 0,
+        "activeParameter": head.active_param,
+    }))
+}

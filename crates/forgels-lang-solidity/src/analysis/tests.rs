@@ -2418,3 +2418,134 @@ fn builtin_completion_beats_coincidental_dep() {
         hits[0].1
     );
 }
+
+fn signature_multi(
+    workspace: &Workspace,
+    path: &str,
+    text: &str,
+    needle: &str,
+) -> Option<Vec<forgels_core::SignatureData>> {
+    let owned = text.to_string();
+    let buf = PathBuf::from(path);
+    let at = owned.rfind(needle).expect("needle") as u32 + needle.len() as u32;
+    let ctx = ProjectContext::new(buf.as_path(), &owned, at, workspace);
+    SolidityAnalyzer.signature_help(&ctx)
+}
+
+#[test]
+fn signature_plain_first_param_active_zero() {
+    let text = "contract C {\nfunction greet(uint a, uint b) public {}\nfunction f() public {\ngreet(\n}\n}";
+    let workspace = open_workspace(&[("/repo/C.sol", text)]);
+    let found = signature_multi(&workspace, "/repo/C.sol", text, "greet(").expect("help");
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].label, "function greet(uint a, uint b)");
+    let labels: Vec<&str> = found[0]
+        .params
+        .iter()
+        .map(|param| param.label.as_str())
+        .collect();
+    assert_eq!(labels, vec!["uint a", "uint b"]);
+    assert_eq!(found[0].active_param, 0);
+}
+
+#[test]
+fn signature_second_param_skips_string_comma() {
+    let text = "contract C {\nfunction greet(string a, uint b) public {}\nfunction f() public {\ngreet(\"x,y\", \n}\n}";
+    let workspace = open_workspace(&[("/repo/C.sol", text)]);
+    let found = signature_multi(&workspace, "/repo/C.sol", text, "greet(\"x,y\", ").expect("help");
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].active_param, 1);
+}
+
+#[test]
+fn signature_unclosed_paren_still_helps() {
+    let text =
+        "contract C {\nfunction greet(uint a, uint b) public {}\nfunction f() public {\ngreet(1, 2";
+    let workspace = open_workspace(&[("/repo/C.sol", text)]);
+    let found = signature_multi(&workspace, "/repo/C.sol", text, "greet(1, 2").expect("help");
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].label, "function greet(uint a, uint b)");
+    assert_eq!(found[0].active_param, 1);
+}
+
+#[test]
+fn signature_outside_paren_returns_none() {
+    let text =
+        "contract C {\nfunction greet(uint a) public {}\nfunction f() public {\ngreet(1)\n}\n}";
+    let workspace = open_workspace(&[("/repo/C.sol", text)]);
+    assert!(signature_multi(&workspace, "/repo/C.sol", text, "greet(1)").is_none());
+}
+
+#[test]
+fn signature_unknown_callee_returns_none() {
+    let text = "contract C {\nfunction f() public {\nmissing(1, \n}\n}";
+    let workspace = open_workspace(&[("/repo/C.sol", text)]);
+    assert!(signature_multi(&workspace, "/repo/C.sol", text, "missing(1, ").is_none());
+}
+
+#[test]
+fn signature_member_call_shows_receiver_signature() {
+    let text = "contract Hello {\nfunction greet(uint a, uint b) public {}\n}\ncontract C {\nfunction f() public {\nHello h;\nh.greet(\n}\n}";
+    let workspace = open_workspace(&[("/repo/C.sol", text)]);
+    let found = signature_multi(&workspace, "/repo/C.sol", text, "h.greet(").expect("help");
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].label, "function greet(uint a, uint b)");
+    assert_eq!(found[0].active_param, 0);
+}
+
+#[test]
+fn signature_emit_call_shows_event_params() {
+    let text = "contract C {\nevent Transfer(address from, uint amount);\nfunction f() public {\nemit Transfer(\n}\n}";
+    let workspace = open_workspace(&[("/repo/C.sol", text)]);
+    let found = signature_multi(&workspace, "/repo/C.sol", text, "emit Transfer(").expect("help");
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].label, "event Transfer(address from, uint amount)");
+    let labels: Vec<&str> = found[0]
+        .params
+        .iter()
+        .map(|param| param.label.as_str())
+        .collect();
+    assert_eq!(labels, vec!["address from", "uint amount"]);
+    assert_eq!(found[0].active_param, 0);
+}
+
+#[test]
+fn signature_assert_builtin_inside_test_contract() {
+    let text = "contract T is Test {\nfunction f() public {\nassertEq(\n}\n}";
+    let workspace = open_workspace(&[("/repo/C.sol", text)]);
+    let found = signature_multi(&workspace, "/repo/C.sol", text, "assertEq(").expect("help");
+    assert_eq!(found.len(), 1);
+    assert_eq!(
+        found[0].label,
+        "function assertEq(uint256 left, uint256 right)"
+    );
+    let labels: Vec<&str> = found[0]
+        .params
+        .iter()
+        .map(|param| param.label.as_str())
+        .collect();
+    assert_eq!(labels, vec!["uint256 left", "uint256 right"]);
+    assert_eq!(found[0].active_param, 0);
+}
+
+#[test]
+fn signature_vm_member_builtin_signature() {
+    let text = "contract C {\nfunction f() public {\nvm.prank(\n}\n}";
+    let workspace = open_workspace(&[("/repo/C.sol", text)]);
+    let found = signature_multi(&workspace, "/repo/C.sol", text, "vm.prank(").expect("help");
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].label, "function prank(address msgSender)");
+    assert_eq!(found[0].active_param, 0);
+}
+
+#[test]
+fn signature_overloads_return_all_signatures() {
+    let text = "contract C {\nfunction greet(uint a) public {}\nfunction greet(uint a, uint b) public {}\nfunction f() public {\ngreet(\n}\n}";
+    let workspace = open_workspace(&[("/repo/C.sol", text)]);
+    let found = signature_multi(&workspace, "/repo/C.sol", text, "greet(").expect("help");
+    assert_eq!(found.len(), 2);
+    assert_eq!(found[0].label, "function greet(uint a)");
+    assert_eq!(found[1].label, "function greet(uint a, uint b)");
+    assert_eq!(found[0].active_param, 0);
+    assert_eq!(found[1].active_param, 0);
+}

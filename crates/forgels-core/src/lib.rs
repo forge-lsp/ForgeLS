@@ -15,7 +15,7 @@ pub mod workspace;
 
 pub use analyzer::{
     Analyzer, AnalyzerMap, CompletionData, DiagnosticData, GotoTarget, HoverData, ImportRef,
-    ProjectContext, TextEdit, dep_texts, read_tracked_or_disk,
+    ProjectContext, SignatureData, SignatureParam, TextEdit, dep_texts, read_tracked_or_disk,
 };
 pub use config::Config;
 pub use index::{FileEntry, ProjectIndex};
