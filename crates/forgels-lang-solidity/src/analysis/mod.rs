@@ -558,6 +558,32 @@ impl SolidityAnalyzer {
         out.sort_by(|left, right| left.label.cmp(&right.label));
         out
     }
+
+    fn diagnostics_for(
+        file: &SolidityFile,
+        errors: &[forgels_syntax::ParseError],
+        scope: &Scope,
+        deps: &[(std::path::PathBuf, SolidityFile)],
+    ) -> Vec<DiagnosticData> {
+        let mut out: Vec<DiagnosticData> = errors
+            .iter()
+            .map(|error| DiagnosticData {
+                span: error.span,
+                message: error.message.clone(),
+            })
+            .collect();
+        out.extend(calls::arity_diagnostics(file, scope));
+        out.extend(emits::emit_arity_diagnostics(file));
+        out.extend(emits::unknown_emit_diagnostics(file, deps));
+        out.sort_by(|left, right| {
+            left.span
+                .start
+                .cmp(&right.span.start)
+                .then(left.span.end.cmp(&right.span.end))
+                .then(left.message.cmp(&right.message))
+        });
+        out
+    }
 }
 
 impl Analyzer for SolidityAnalyzer {
@@ -752,24 +778,16 @@ impl Analyzer for SolidityAnalyzer {
     fn diagnostics(&self, text: &str) -> Vec<DiagnosticData> {
         let tokens = SolidityLexer.tokenize(text);
         let (file, errors) = SolidityParser.parse_with_errors(&tokens);
-        let mut out: Vec<DiagnosticData> = errors
-            .iter()
-            .map(|error| DiagnosticData {
-                span: error.span,
-                message: error.message.clone(),
-            })
-            .collect();
         let scope = collect_symbols(&file);
-        out.extend(calls::arity_diagnostics(&file, &scope));
-        out.extend(emits::emit_arity_diagnostics(&file));
-        out.sort_by(|a, b| {
-            a.span
-                .start
-                .cmp(&b.span.start)
-                .then(a.span.end.cmp(&b.span.end))
-                .then(a.message.cmp(&b.message))
-        });
-        out
+        Self::diagnostics_for(&file, &errors, &scope, &[])
+    }
+
+    fn diagnostics_ctx(&self, ctx: &ProjectContext) -> Vec<DiagnosticData> {
+        let tokens = SolidityLexer.tokenize(ctx.text);
+        let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+        let scope = collect_symbols(&file);
+        let deps = Self::dep_files(ctx);
+        Self::diagnostics_for(&file, &errors, &scope, &deps)
     }
 
     fn imports(&self, text: &str) -> Vec<ImportRef> {

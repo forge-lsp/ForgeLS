@@ -314,6 +314,56 @@ pub fn dep_emit_candidates(
     out
 }
 
+/// Unknown event errors: named emits must resolve locally or in deps.
+///
+/// Same resolve order as hover: `resolve_local_emit` first (own contract,
+/// same file bases, file level), then `find_emit_in_dep` in index order.
+/// Bare `emit` stays silent so completion can offer names. Untracked deps
+/// stay missing by construction: dep lists only carry tracked files, so
+/// untracked names still error here while the import reports separately.
+pub fn unknown_emit_diagnostics(
+    file: &SolidityFile,
+    deps: &[(PathBuf, SolidityFile)],
+) -> Vec<DiagnosticData> {
+    let mut out = Vec::new();
+    for contract in file.contracts() {
+        for function in contract.functions() {
+            let Some(body) = function.body() else {
+                continue;
+            };
+            for emit in body.emits() {
+                let Some(name) = emit.name() else {
+                    continue;
+                };
+                if name.is_empty() {
+                    continue;
+                }
+                let Some(name_span) = emit.name_span() else {
+                    continue;
+                };
+                if resolve_local_emit(file, name_span.start, &name).is_some() {
+                    continue;
+                }
+                let mut found = false;
+                for (_, dep_file) in deps {
+                    if find_emit_in_dep(dep_file, &name).is_some() {
+                        found = true;
+                        break;
+                    }
+                }
+                if found {
+                    continue;
+                }
+                out.push(DiagnosticData {
+                    span: name_span,
+                    message: format!("unresolved event '{name}'"),
+                });
+            }
+        }
+    }
+    out
+}
+
 /// Arity checks for emit statements: declared event params against
 /// supplied args.
 ///

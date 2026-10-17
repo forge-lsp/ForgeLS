@@ -1870,10 +1870,88 @@ fn emit_correct_count_stays_silent() {
     assert!(diagnostics_of(text).is_empty());
 }
 
+fn diagnostics_multi(
+    workspace: &Workspace,
+    path: &str,
+    text: &str,
+) -> Vec<forgels_core::DiagnosticData> {
+    let owned = text.to_string();
+    let buf = PathBuf::from(path);
+    let ctx = ProjectContext::new(buf.as_path(), &owned, 0, workspace);
+    SolidityAnalyzer.diagnostics_ctx(&ctx)
+}
+
 #[test]
-fn emit_unknown_name_stays_silent() {
-    let text = "contract C {\nfunction f() public {\nemit Missing(a);\n}\n}";
+fn emit_unknown_reports_name_span() {
+    let text = "contract C {\nevent Increment(uint a);\nevent Decrement(uint a);\nfunction f() public {\nemit Inc(a);\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(found[0].message, "unresolved event 'Inc'");
+    let at = text.find("Inc(a)").expect("use") as u32;
+    assert_eq!(found[0].span.start, at);
+    assert_eq!(found[0].span.end, at + 3);
+    let covered = &text[found[0].span.start as usize..found[0].span.end as usize];
+    assert_eq!(covered, "Inc");
+}
+
+#[test]
+fn emit_typo_prefix_reports() {
+    let text = "contract C {\nevent Increment(uint a);\nevent Decrement(uint a);\nfunction f() public {\nemit Incremente(a);\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(found[0].message, "unresolved event 'Incremente'");
+}
+
+#[test]
+fn emit_known_events_stay_silent() {
+    let text = "contract C {\nevent Increment(uint a);\nevent Decrement(uint a);\nfunction f() public {\nemit Increment(a);\nemit Decrement(a);\n}\n}";
     assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn emit_bare_stays_silent() {
+    let bare = "contract C {\nfunction f() public {\nemit\n}\n}";
+    assert!(diagnostics_of(bare).is_empty());
+    let open = "contract C {\nfunction f() public {\nemit (\n}\n}";
+    let found: Vec<_> = diagnostics_of(open)
+        .into_iter()
+        .filter(|item| item.message.starts_with("unresolved event"))
+        .collect();
+    assert!(found.is_empty(), "diags: {found:?}");
+}
+
+#[test]
+fn emit_partial_name_still_lints() {
+    let text = "contract C {\nevent Increment(uint a);\nfunction f() public {\nemit Inc\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(found[0].message, "unresolved event 'Inc'");
+}
+
+#[test]
+fn emit_dep_event_stays_silent() {
+    let b = "contract B {\nevent Transfer(address a);\n}";
+    let a = "import \"./B.sol\";\ncontract A {\nfunction f() public {\nemit Transfer(a);\n}\n}";
+    let mut workspace = open_workspace(&[("/A.sol", a), ("/B.sol", b)]);
+    workspace.set_file_deps(PathBuf::from("/A.sol"), vec![PathBuf::from("/B.sol")]);
+    assert!(diagnostics_multi(&workspace, "/A.sol", a).is_empty());
+}
+
+#[test]
+fn emit_inherited_event_stays_silent() {
+    let text = "contract B {\nevent Transfer(address a);\n}\ncontract D is B {\nfunction f() public {\nemit Transfer(a);\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn emit_untracked_dep_still_errors() {
+    let a =
+        "import \"./Missing.sol\";\ncontract A {\nfunction f() public {\nemit Transfer(a);\n}\n}";
+    let mut workspace = open_workspace(&[("/A.sol", a)]);
+    workspace.set_file_deps(PathBuf::from("/A.sol"), vec![PathBuf::from("/Missing.sol")]);
+    let found = diagnostics_multi(&workspace, "/A.sol", a);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(found[0].message, "unresolved event 'Transfer'");
 }
 
 #[test]

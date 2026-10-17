@@ -261,6 +261,11 @@ pub trait Analyzer: std::fmt::Debug {
             .map(|span| GotoTarget::new(ctx.path.to_path_buf(), span))
     }
     fn diagnostics(&self, text: &str) -> Vec<DiagnosticData>;
+    /// Context aware diagnostics with dep access. Default keeps single
+    /// file behavior so stub analyzers keep working.
+    fn diagnostics_ctx(&self, ctx: &ProjectContext) -> Vec<DiagnosticData> {
+        self.diagnostics(ctx.text)
+    }
     /// Import specifiers in `text`. Default is none so languages
     /// without imports keep working.
     fn imports(&self, _text: &str) -> Vec<ImportRef> {
