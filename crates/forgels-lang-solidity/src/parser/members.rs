@@ -340,6 +340,13 @@ pub(crate) fn parse_block(cursor: &mut Cursor, errors: &mut Vec<ParseError>) -> 
                     }
                 }
             }
+            Some(kind) if kind == SolidityKind::Emit.as_u16() => {
+                if let Some(emit) = try_parse_emit(cursor) {
+                    items.push(SyntaxElement::Node(emit));
+                } else {
+                    recover_statement(cursor);
+                }
+            }
             Some(kind) if is_type_start(kind) || kind == SolidityKind::Ident.as_u16() => {
                 if kind == SolidityKind::Ident.as_u16()
                     && let Some(member) = try_parse_member(cursor)
@@ -515,6 +522,178 @@ pub(crate) fn try_parse_call(cursor: &mut Cursor) -> Option<SyntaxNode> {
         children,
     );
     while cursor.pos() <= rparen_idx {
+        if cursor.bump().is_none() {
+            break;
+        }
+    }
+    Some(node)
+}
+
+/// Try `emit Name(args)` at block top level. Returns the Emit node.
+///
+/// Partial rows keep what exists: bare `emit`, `emit Name`, and
+/// unclosed `emit Name(args` all yield a node so typing keeps working.
+/// Full rows count commas at paren depth one; empty parens give zero.
+pub(crate) fn try_parse_emit(cursor: &mut Cursor) -> Option<SyntaxNode> {
+    let tokens = cursor.tokens;
+    let comment = SolidityKind::Comment.as_u16();
+    let next_code = |mut index: usize| -> Option<usize> {
+        while let Some(token) = tokens.get(index) {
+            if token.kind != comment {
+                return Some(index);
+            }
+            index += 1;
+        }
+        None
+    };
+    let emit_idx = next_code(cursor.pos())?;
+    let emit = tokens.get(emit_idx)?.clone();
+    if emit.kind != SolidityKind::Emit.as_u16() {
+        return None;
+    }
+    let Some(name_idx) = next_code(emit_idx + 1) else {
+        let node = SyntaxNode::with_children(
+            SolidityNode::Emit.as_u16(),
+            Span::new(emit.span.start, emit.span.end),
+            vec![token_element(emit)],
+        );
+        while cursor.pos() <= emit_idx {
+            if cursor.bump().is_none() {
+                break;
+            }
+        }
+        return Some(node);
+    };
+    let name = tokens.get(name_idx)?.clone();
+    if name.kind != SolidityKind::Ident.as_u16() {
+        let node = SyntaxNode::with_children(
+            SolidityNode::Emit.as_u16(),
+            Span::new(emit.span.start, emit.span.end),
+            vec![token_element(emit)],
+        );
+        while cursor.pos() <= emit_idx {
+            if cursor.bump().is_none() {
+                break;
+            }
+        }
+        return Some(node);
+    }
+    let Some(lparen_idx) = next_code(name_idx + 1) else {
+        let node = SyntaxNode::with_children(
+            SolidityNode::Emit.as_u16(),
+            Span::new(emit.span.start, name.span.end),
+            vec![token_element(emit), token_element(name)],
+        );
+        while cursor.pos() <= name_idx {
+            if cursor.bump().is_none() {
+                break;
+            }
+        }
+        return Some(node);
+    };
+    let lparen = tokens.get(lparen_idx)?.clone();
+    if lparen.kind != SolidityKind::LParen.as_u16() {
+        let node = SyntaxNode::with_children(
+            SolidityNode::Emit.as_u16(),
+            Span::new(emit.span.start, name.span.end),
+            vec![token_element(emit), token_element(name)],
+        );
+        while cursor.pos() <= name_idx {
+            if cursor.bump().is_none() {
+                break;
+            }
+        }
+        return Some(node);
+    }
+    let mut paren_depth = 0u32;
+    let mut bracket_depth = 0u32;
+    let mut commas = Vec::new();
+    let mut rparen_idx: Option<usize> = None;
+    let mut scan_end = lparen_idx;
+    let mut index = lparen_idx;
+    let mut closed = false;
+    while let Some(token) = tokens.get(index) {
+        if token.kind == comment {
+            index += 1;
+            continue;
+        }
+        let kind = token.kind;
+        if kind == SolidityKind::LBrace.as_u16() {
+            break;
+        }
+        if kind == SolidityKind::LParen.as_u16() {
+            paren_depth += 1;
+        } else if kind == SolidityKind::RParen.as_u16() {
+            if paren_depth == 0 {
+                break;
+            }
+            paren_depth -= 1;
+            if paren_depth == 0 {
+                rparen_idx = Some(index);
+                scan_end = index;
+                closed = true;
+                break;
+            }
+        } else if kind == SolidityKind::LBracket.as_u16() {
+            bracket_depth += 1;
+        } else if kind == SolidityKind::RBracket.as_u16() {
+            if bracket_depth == 0 {
+                break;
+            }
+            bracket_depth -= 1;
+        } else if kind == SolidityKind::Comma.as_u16() && paren_depth == 1 && bracket_depth == 0 {
+            commas.push(token.clone());
+        } else if (kind == SolidityKind::Semicolon.as_u16() && paren_depth == 1)
+            || (kind == SolidityKind::RBrace.as_u16() && paren_depth > 0)
+        {
+            break;
+        }
+        scan_end = index;
+        index += 1;
+    }
+    if closed {
+        let close_idx = rparen_idx?;
+        let rparen = tokens.get(close_idx)?.clone();
+        let after_lparen = next_code(lparen_idx + 1);
+        let is_empty = after_lparen.is_none_or(|at| at == close_idx);
+        let start = emit.span.start;
+        let end = rparen.span.end;
+        let mut children = vec![token_element(emit), token_element(name)];
+        if !is_empty {
+            children.push(token_element(lparen));
+            for comma in commas {
+                children.push(token_element(comma));
+            }
+        }
+        let node =
+            SyntaxNode::with_children(SolidityNode::Emit.as_u16(), Span::new(start, end), children);
+        while cursor.pos() <= close_idx {
+            if cursor.bump().is_none() {
+                break;
+            }
+        }
+        return Some(node);
+    }
+    let after_lparen = next_code(lparen_idx + 1);
+    let has_content = after_lparen.is_some_and(|at| at <= scan_end);
+    let start = emit.span.start;
+    let name_end = name.span.end;
+    let mut children = vec![token_element(emit), token_element(name)];
+    if has_content {
+        children.push(token_element(lparen));
+        for comma in commas {
+            children.push(token_element(comma));
+        }
+    }
+    let end = tokens
+        .get(scan_end)
+        .map(|token| token.span.end)
+        .unwrap_or(name_end)
+        .max(name_end);
+    let target = scan_end.max(name_idx);
+    let node =
+        SyntaxNode::with_children(SolidityNode::Emit.as_u16(), Span::new(start, end), children);
+    while cursor.pos() <= target {
         if cursor.bump().is_none() {
             break;
         }

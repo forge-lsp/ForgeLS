@@ -53,6 +53,9 @@ pub fn complete_at(file: &SolidityFile, text: &str, offset: u32) -> Vec<Completi
     if let Some(ctx) = super::members::member_context_at(text, offset) {
         return complete_members(file, offset, &ctx);
     }
+    if super::emits::is_emit_name_context(text, offset) {
+        return complete_emit_events(file, text, offset);
+    }
     let prefix = prefix_at(text, offset);
     let scope = collect_symbols(file);
     let mut seen: Vec<String> = Vec::new();
@@ -100,6 +103,25 @@ fn complete_members(
             label: member.name,
             detail: member.detail,
             kind: CompletionKind::Symbol(member.kind),
+        })
+        .collect();
+    items.sort_by(|left, right| left.label.cmp(&right.label));
+    items
+}
+
+/// Event names for the emit slot, filtered by the typed prefix.
+///
+/// No keywords here: after `emit` only events complete. Local order is
+/// own contract, same file bases, then file level.
+fn complete_emit_events(file: &SolidityFile, text: &str, offset: u32) -> Vec<CompletionItem> {
+    let prefix = prefix_at(text, offset);
+    let mut items: Vec<CompletionItem> = super::emits::emit_candidates(file, offset)
+        .into_iter()
+        .filter(|symbol| symbol.name.starts_with(prefix.as_str()))
+        .map(|symbol| CompletionItem {
+            label: symbol.name,
+            detail: symbol.detail,
+            kind: CompletionKind::Symbol(symbol.kind),
         })
         .collect();
     items.sort_by(|left, right| left.label.cmp(&right.label));
