@@ -17,6 +17,7 @@ mod hover;
 mod imports;
 pub(crate) mod inheritance;
 pub(crate) mod members;
+mod signature;
 
 #[cfg(test)]
 mod tests;
@@ -28,6 +29,7 @@ pub use completion::{
 pub use goto::{goto_definition, resolve_in_dep};
 pub use hover::{Hover, hover_at};
 pub use imports::imports_in;
+pub use signature::signature_at;
 
 fn is_word_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'$'
@@ -818,5 +820,11 @@ impl Analyzer for SolidityAnalyzer {
 
     fn imports(&self, text: &str) -> Vec<ImportRef> {
         imports::imports_in(text)
+    }
+
+    fn signature_help(&self, ctx: &ProjectContext) -> Option<Vec<forgels_core::SignatureData>> {
+        let file = Self::parse_file(ctx.text);
+        let deps = Self::dep_files(ctx);
+        signature::signature_at(&file, ctx.text, ctx.offset, &deps)
     }
 }
