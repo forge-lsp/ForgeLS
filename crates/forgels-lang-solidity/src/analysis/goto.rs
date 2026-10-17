@@ -5,8 +5,10 @@ use forgels_syntax::{Lexer, Span};
 /// Jump target for the word at `offset`: the declaration span.
 ///
 /// Member positions after a dot jump to the field or contract member.
-/// Array members (`length`, `push`, `pop`) and address members
-/// (`balance`, `transfer`, and rest) return `None` by design: their
+/// Array members (`length`, `push`, `pop`), address members
+/// (`balance`, `transfer`, and rest), bytes (`length`), function
+/// (`selector`, `gas`, `value`), globals (`msg.*`, `block.*`, `tx.*`,
+/// `abi.*`), and `type()` metadata return `None` by design: their
 /// spans are synthetic with no declaration in the workspace. Emit name
 /// slots jump to the event declaration only. Positions on whitespace,
 /// operators, or undeclared words return `None`.
@@ -15,6 +17,11 @@ use forgels_syntax::{Lexer, Span};
 /// dep lookup the same way so builtins never jump to coincidental matches.
 /// The caller attaches the document URI; the span alone locates the jump.
 pub fn goto_definition(file: &SolidityFile, text: &str, offset: u32) -> Option<Span> {
+    if let Some(type_ctx) = super::meta::type_context_at(text, offset)
+        && (type_ctx.member_span.contains(offset) || type_ctx.member_span.end == offset)
+    {
+        return None;
+    }
     if let Some(ctx) = super::members::member_context_at(text, offset)
         && (ctx.member_span.contains(offset) || ctx.member_span.end == offset)
     {
@@ -22,7 +29,13 @@ pub fn goto_definition(file: &SolidityFile, text: &str, offset: u32) -> Option<S
         let kind = super::members::receiver_type(file, &scope, offset, &ctx.receiver);
         if matches!(
             kind,
-            super::members::TypeKind::Array { .. } | super::members::TypeKind::Address
+            super::members::TypeKind::Array { .. }
+                | super::members::TypeKind::Address
+                | super::members::TypeKind::Bytes
+                | super::members::TypeKind::String
+                | super::members::TypeKind::Function
+                | super::members::TypeKind::Meta(_)
+                | super::members::TypeKind::Global(_)
         ) {
             return None;
         }

@@ -3353,3 +3353,380 @@ fn non_variable_details_stay_keyword_and_file() {
     );
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[test]
+fn bytes_completion_has_length_only() {
+    let text = "contract C {\nbytes b;\nfunction f() public {\nb.\n}\n}";
+    let at = text.rfind("b.").expect("dot") as u32 + 2;
+    let labels = complete_labels(text, at);
+    assert_eq!(labels, vec!["length".to_string()], "labels: {labels:?}");
+}
+
+#[test]
+fn bytes_sized_completion_has_length_only() {
+    let text = "contract C {\nbytes32 h;\nfunction f() public {\nh.\n}\n}";
+    let at = text.rfind("h.").expect("dot") as u32 + 2;
+    let labels = complete_labels(text, at);
+    assert_eq!(labels, vec!["length".to_string()], "labels: {labels:?}");
+}
+
+#[test]
+fn bytes_hover_shows_length_detail() {
+    let text = "contract C {\nbytes b;\nfunction f() public {\nb.length;\n}\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let at = text.rfind("b.length").expect("use") as u32 + 2;
+    let hover = hover_at(&file, text, at).expect("hover");
+    assert_eq!(hover.contents, "uint256 length - from solidity");
+}
+
+#[test]
+fn bytes_goto_returns_none() {
+    let text = "contract C {\nbytes b;\nfunction f() public {\nb.length;\n}\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let at = text.rfind("b.length").expect("use") as u32 + 2;
+    assert!(goto_definition(&file, text, at).is_none());
+}
+
+#[test]
+fn bytes_length_call_stays_silent() {
+    let text = "contract C {\nbytes b;\nfunction f() public {\nb.length(1);\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn string_completion_is_empty() {
+    let text = "contract C {\nstring s;\nfunction f() public {\ns.\n}\n}";
+    let at = text.rfind("s.").expect("dot") as u32 + 2;
+    let labels = complete_labels(text, at);
+    assert!(labels.is_empty(), "labels: {labels:?}");
+}
+
+#[test]
+fn string_member_hover_returns_none() {
+    let text = "contract C {\nstring s;\nfunction f() public {\ns.length;\n}\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, _) = SolidityParser.parse_with_errors(&tokens);
+    let at = text.rfind("s.length").expect("use") as u32 + 2;
+    assert!(hover_at(&file, text, at).is_none());
+}
+
+#[test]
+fn function_member_completion_lists_selector_gas_value() {
+    let text =
+        "contract C {\nfunction greet(uint a) public {}\nfunction f() public {\ngreet.\n}\n}";
+    let at = text.rfind("greet.").expect("dot") as u32 + 6;
+    let labels = complete_labels(text, at);
+    assert!(
+        labels.contains(&"selector".to_string()),
+        "labels: {labels:?}"
+    );
+    assert!(labels.contains(&"gas".to_string()), "labels: {labels:?}");
+    assert!(labels.contains(&"value".to_string()), "labels: {labels:?}");
+    assert_eq!(labels.len(), 3, "labels: {labels:?}");
+}
+
+#[test]
+fn function_hover_shows_selector_detail() {
+    let text = "contract C {\nfunction greet(uint a) public {}\nfunction f() public {\ngreet.selector;\n}\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let at = text.rfind("greet.selector").expect("use") as u32 + 6;
+    let hover = hover_at(&file, text, at).expect("hover");
+    assert_eq!(hover.contents, "bytes4 selector - from solidity");
+}
+
+#[test]
+fn function_goto_returns_none() {
+    let text = "contract C {\nfunction greet(uint a) public {}\nfunction f() public {\ngreet.selector;\n}\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let at = text.rfind("greet.selector").expect("use") as u32 + 6;
+    assert!(goto_definition(&file, text, at).is_none());
+}
+
+#[test]
+fn function_gas_correct_count_stays_silent() {
+    let text = "contract C {\nfunction greet(uint a) public {}\nfunction f() public {\ngreet.gas(100);\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn function_gas_wrong_count_reports() {
+    let text =
+        "contract C {\nfunction greet(uint a) public {}\nfunction f() public {\ngreet.gas();\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "this function 'gas' takes 1 arguments but 0 supplied"
+    );
+}
+
+#[test]
+fn function_selector_call_stays_silent() {
+    let text = "contract C {\nfunction greet(uint a) public {}\nfunction f() public {\ngreet.selector(1);\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn type_contract_completion_lists_metadata() {
+    let text = "contract C {\nfunction f() public {\ntype(C).\n}\n}";
+    let at = text.rfind("type(C).").expect("dot") as u32 + 8;
+    let labels = complete_labels(text, at);
+    for member in ["name", "creationCode", "runtimeCode", "interfaceId"] {
+        assert!(
+            labels.contains(&member.to_string()),
+            "{member} missing: {labels:?}"
+        );
+    }
+}
+
+#[test]
+fn type_integer_completion_lists_min_max() {
+    let text = "contract C {\nfunction f() public {\ntype(uint256).\n}\n}";
+    let at = text.rfind("type(uint256).").expect("dot") as u32 + 14;
+    let labels = complete_labels(text, at);
+    assert_eq!(
+        labels,
+        vec!["max".to_string(), "min".to_string()],
+        "labels: {labels:?}"
+    );
+}
+
+#[test]
+fn type_hover_shows_creation_code() {
+    let text = "contract C {\nfunction f() public {\ntype(C).creationCode;\n}\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, _) = SolidityParser.parse_with_errors(&tokens);
+    let at = text.rfind("creationCode").expect("use") as u32;
+    let hover = hover_at(&file, text, at).expect("hover");
+    assert_eq!(hover.contents, "bytes creationCode - from solidity");
+}
+
+#[test]
+fn type_goto_returns_none() {
+    let text = "contract C {\nfunction f() public {\ntype(C).creationCode;\n}\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, _) = SolidityParser.parse_with_errors(&tokens);
+    let at = text.rfind("creationCode").expect("use") as u32;
+    assert!(goto_definition(&file, text, at).is_none());
+}
+
+#[test]
+fn msg_completion_lists_sender_value_data_sig() {
+    let text = "contract C {\nfunction f() public {\nmsg.\n}\n}";
+    let at = text.rfind("msg.").expect("dot") as u32 + 4;
+    let labels = complete_labels(text, at);
+    for member in ["sender", "value", "data", "sig"] {
+        assert!(
+            labels.contains(&member.to_string()),
+            "{member} missing: {labels:?}"
+        );
+    }
+    assert_eq!(labels.len(), 4, "labels: {labels:?}");
+}
+
+#[test]
+fn msg_hover_shows_sender_detail() {
+    let text = "contract C {\nfunction f() public {\nmsg.sender;\n}\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let at = text.rfind("msg.sender").expect("use") as u32 + 4;
+    let hover = hover_at(&file, text, at).expect("hover");
+    assert_eq!(hover.contents, "address sender - from solidity");
+}
+
+#[test]
+fn msg_goto_returns_none() {
+    let text = "contract C {\nfunction f() public {\nmsg.sender;\n}\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let at = text.rfind("msg.sender").expect("use") as u32 + 4;
+    assert!(goto_definition(&file, text, at).is_none());
+}
+
+#[test]
+fn block_completion_lists_chain_fields() {
+    let text = "contract C {\nfunction f() public {\nblock.\n}\n}";
+    let at = text.rfind("block.").expect("dot") as u32 + 6;
+    let labels = complete_labels(text, at);
+    for member in [
+        "chainid",
+        "coinbase",
+        "number",
+        "timestamp",
+        "basefee",
+        "blobhash",
+    ] {
+        assert!(
+            labels.contains(&member.to_string()),
+            "{member} missing: {labels:?}"
+        );
+    }
+}
+
+#[test]
+fn tx_completion_lists_gasprice_origin() {
+    let text = "contract C {\nfunction f() public {\ntx.\n}\n}";
+    let at = text.rfind("tx.").expect("dot") as u32 + 3;
+    let labels = complete_labels(text, at);
+    assert_eq!(
+        labels,
+        vec!["gasprice".to_string(), "origin".to_string()],
+        "labels: {labels:?}"
+    );
+}
+
+#[test]
+fn abi_completion_lists_encode_family() {
+    let text = "contract C {\nfunction f() public {\nabi.\n}\n}";
+    let at = text.rfind("abi.").expect("dot") as u32 + 4;
+    let labels = complete_labels(text, at);
+    for member in [
+        "decode",
+        "encode",
+        "encodePacked",
+        "encodeWithSelector",
+        "encodeWithSignature",
+        "encodeCall",
+    ] {
+        assert!(
+            labels.contains(&member.to_string()),
+            "{member} missing: {labels:?}"
+        );
+    }
+}
+
+#[test]
+fn abi_hover_shows_decode_detail() {
+    let text = "contract C {\nfunction f() public {\nabi.decode;\n}\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let at = text.rfind("abi.decode").expect("use") as u32 + 4;
+    let hover = hover_at(&file, text, at).expect("hover");
+    assert!(
+        hover.contents.contains("function decode"),
+        "contents: {}",
+        hover.contents
+    );
+}
+
+#[test]
+fn abi_goto_returns_none() {
+    let text = "contract C {\nfunction f() public {\nabi.decode;\n}\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let at = text.rfind("abi.decode").expect("use") as u32 + 4;
+    assert!(goto_definition(&file, text, at).is_none());
+}
+
+#[test]
+fn global_field_call_stays_silent() {
+    let text = "contract C {\nfunction f() public {\nmsg.sender(1);\nblock.timestamp(1);\ntx.origin(1);\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn blobhash_correct_count_stays_silent() {
+    let text = "contract C {\nfunction f() public {\nblock.blobhash(1);\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn blobhash_wrong_count_reports() {
+    let text = "contract C {\nfunction f() public {\nblock.blobhash();\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "this function 'blobhash' takes 1 arguments but 0 supplied"
+    );
+}
+
+#[test]
+fn abi_decode_wrong_count_reports() {
+    let text = "contract C {\nbytes b;\nfunction f() public {\nabi.decode(b);\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "this function 'decode' takes 2 arguments but 1 supplied"
+    );
+}
+
+#[test]
+fn abi_variadic_calls_stay_silent() {
+    let text = "contract C {\nfunction f() public {\nabi.encode(a, b, c);\nabi.encodePacked(a);\nabi.encodeWithSelector(s, a, b);\nabi.encodeWithSignature(s);\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn abi_encode_call_wrong_count_reports() {
+    let text = "contract C {\nbytes t;\nfunction f() public {\nabi.encodeCall(t);\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "this function 'encodeCall' takes 2 arguments but 1 supplied"
+    );
+}
+
+#[test]
+fn global_receiver_shadowed_by_user_var() {
+    let text = "contract C {\nuint msg;\nfunction f() public {\nmsg.\n}\n}";
+    let at = text.rfind("msg.").expect("dot") as u32 + 4;
+    let labels = complete_labels(text, at);
+    assert!(
+        !labels.contains(&"sender".to_string()),
+        "labels: {labels:?}"
+    );
+}
+
+#[test]
+fn global_member_access_stays_silent_in_diagnostics() {
+    let text = "contract C {\nfunction f() public {\nmsg.sender;\nblock.timestamp;\ntx.origin;\nabi.decode;\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn builtin_members_never_jump_to_dep_declarations() {
+    let dep = "contract D {\nfunction sender() public {}\nfunction length() public {}\nfunction selector() public {}\n}";
+    let cur = "contract C {\nbytes b;\nfunction greet(uint a) public {}\nfunction f() public {\nmsg.sender;\nb.length;\ngreet.selector;\n}\n}";
+    let mut workspace = open_workspace(&[("/D.sol", dep), ("/C.sol", cur)]);
+    workspace.set_file_deps(PathBuf::from("/C.sol"), vec![PathBuf::from("/D.sol")]);
+    for needle in ["msg.sender", "b.length", "greet.selector"] {
+        let owned = cur.to_string();
+        let buf = PathBuf::from("/C.sol");
+        let at = owned.rfind(needle).expect("needle") as u32
+            + needle.rfind('.').expect("dot") as u32
+            + 1;
+        let ctx = ProjectContext::new(buf.as_path(), &owned, at, &workspace);
+        assert!(
+            SolidityAnalyzer.goto_location(&ctx).is_none(),
+            "{needle} jumped"
+        );
+    }
+}
+
+#[test]
+fn type_member_never_jumps_to_dep_declarations() {
+    let dep = "contract D {\nfunction creationCode() public {}\n}";
+    let cur = "contract C {\nfunction f() public {\ntype(C).creationCode;\n}\n}";
+    let mut workspace = open_workspace(&[("/D.sol", dep), ("/C.sol", cur)]);
+    workspace.set_file_deps(PathBuf::from("/C.sol"), vec![PathBuf::from("/D.sol")]);
+    let owned = cur.to_string();
+    let buf = PathBuf::from("/C.sol");
+    let at = owned.rfind("creationCode").expect("needle") as u32;
+    let ctx = ProjectContext::new(buf.as_path(), &owned, at, &workspace);
+    assert!(SolidityAnalyzer.goto_location(&ctx).is_none());
+}

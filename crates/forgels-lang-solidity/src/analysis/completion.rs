@@ -49,7 +49,22 @@ pub fn completion_item_kind(kind: CompletionKind) -> CompletionItemKind {
 /// Shadowed names appear once with the innermost detail. Keywords whose
 /// spelling matches the prefix follow the symbols. Positions after a dot
 /// suggest members of the receiver type instead of scope symbols.
+/// `type(Inner).` positions suggest the inner dispatch set.
 pub fn complete_at(file: &SolidityFile, text: &str, offset: u32) -> Vec<CompletionItem> {
+    if let Some(type_ctx) = super::meta::type_context_at(text, offset) {
+        let kind = super::members::TypeKind::Meta(type_ctx.inner.clone());
+        let mut items: Vec<CompletionItem> = super::members::members_of(file, &kind)
+            .into_iter()
+            .filter(|member| member.name.starts_with(type_ctx.member.as_str()))
+            .map(|member| CompletionItem {
+                label: member.name,
+                detail: member.detail,
+                kind: CompletionKind::Symbol(member.kind),
+            })
+            .collect();
+        items.sort_by(|left, right| left.label.cmp(&right.label));
+        return items;
+    }
     if let Some(ctx) = super::members::member_context_at(text, offset) {
         return complete_members(file, offset, &ctx);
     }

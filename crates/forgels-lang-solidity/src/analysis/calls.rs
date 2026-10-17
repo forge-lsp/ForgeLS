@@ -1,4 +1,6 @@
-use super::{Scope, SymbolKind, address, array, forge, inheritance, members};
+use super::{
+    Scope, SymbolKind, address, array, bytes, forge, function, globals, inheritance, members, meta,
+};
 use crate::SolidityFile;
 use forgels_core::DiagnosticData;
 use forgels_syntax::AstNode;
@@ -79,7 +81,12 @@ pub fn arity_diagnostics(file: &SolidityFile, scope: &Scope) -> Vec<DiagnosticDa
 /// only: `length` calls and fixed array calls stay silent, unknown names
 /// stay silent. Addresses check `transfer`, `send`, `call`,
 /// `delegatecall`, and `staticcall` (1 each): `balance`, `code`, and
-/// `codehash` calls stay silent, unknown names stay silent. Target functions collect own plus linear order bases
+/// `codehash` calls stay silent, unknown names stay silent. Functions
+/// check `gas` and `value` (1 each): `selector` calls stay silent.
+/// Globals check `block.blobhash` (1), `abi.decode` (2), and
+/// `abi.encodeCall` (2): fields and variadic `abi.encode*` stay silent.
+/// Bytes `length`, string members, and `type()` metadata stay silent.
+/// Target functions collect own plus linear order bases
 /// across files, derived wins and first base wins. Same message as plain.
 pub fn member_arity_diagnostics(
     file: &SolidityFile,
@@ -138,6 +145,45 @@ pub fn member_arity_diagnostics(
                             ),
                         });
                     }
+                    continue;
+                }
+                if matches!(kind, members::TypeKind::Function) {
+                    let Some(expected) = function::function_expected_arity(&name) else {
+                        continue;
+                    };
+                    let actual = member.arg_count();
+                    if expected != actual {
+                        out.push(DiagnosticData {
+                            span: member.syntax().span,
+                            message: format!(
+                                "this function '{name}' takes {expected} arguments but {actual} supplied"
+                            ),
+                        });
+                    }
+                    continue;
+                }
+                if let members::TypeKind::Global(ref receiver_name) = kind {
+                    let Some(expected) = globals::global_expected_arity(receiver_name, &name)
+                    else {
+                        continue;
+                    };
+                    let actual = member.arg_count();
+                    if expected != actual {
+                        out.push(DiagnosticData {
+                            span: member.syntax().span,
+                            message: format!(
+                                "this function '{name}' takes {expected} arguments but {actual} supplied"
+                            ),
+                        });
+                    }
+                    continue;
+                }
+                if matches!(kind, members::TypeKind::Bytes | members::TypeKind::String) {
+                    let _ = bytes::bytes_expected_arity(&name);
+                    continue;
+                }
+                if let members::TypeKind::Meta(ref inner) = kind {
+                    let _ = meta::meta_expected_arity(inner, &name);
                     continue;
                 }
                 let members::TypeKind::Contract(target) = kind else {

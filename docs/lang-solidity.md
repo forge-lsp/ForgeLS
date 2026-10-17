@@ -136,6 +136,103 @@ Status: token kinds defined. Real lexer and parser are planned.
 - Limits: payable not distinguished, no signature help, chained `a.b.c`
   untouched.
 
+## Bytes and string members
+
+- Scope: `analysis::bytes` plus thin wiring in `members`, `hover`,
+  `goto`, `calls`, `mod`. No new `SymbolKind`, no new completion kind.
+- Shape: `TypeKind::Bytes` via `is_bytes_type` for `bytes` and `bytes1`
+  to `bytes32`. Array check runs first, so `bytes[]` stays an array.
+  `TypeKind::String` via `is_string_type` for `string` only. `string`
+  without brackets is not an array.
+- Members: bytes has `length` (Field, `uint256 length`) only. Fixed
+  `bytes32` shares the same set in V1: no push or pop. String has no
+  members by design: length needs `bytes(s).length`. Details add
+  ` - from solidity`, kind reuses Field (5).
+- Completion: `members_of` returns bytes members, string returns empty,
+  cross file stays empty.
+- Hover: bytes member shows detail with origin and uses the cursor member
+  span. String has no hover. Synthetic `0,0` spans never leak.
+- Goto: returns `None` by design with dep guards, so `length` never
+  jumps to coincidental same-name declarations.
+- Arity: all silent. `length` is a field so calls stay silent.
+  Unknown names stay silent.
+- Limits: fixed versus dynamic not split, no signature help, chained
+  `a.b.c` untouched.
+
+## Function type members
+
+- Scope: `analysis::function` plus thin wiring in `members`, `hover`,
+  `goto`, `calls`, `mod`. No new `SymbolKind`, no new completion kind.
+- Shape: `TypeKind::Function` via `is_external_function_type` (prefix
+  `function` plus `external`) for function-typed vars. Internal function
+  types stay unknown. Named functions resolve as `Function` too, so
+  `f.selector` works without a declared function type.
+- Members: `selector` (Field, `bytes4`), `gas` (Function, 1 arg),
+  `value` (Function, 1 arg). Details add ` - from solidity`, kinds
+  reuse Field (5) and Function (3).
+- Completion: `members_of` returns function members, cross file stays empty.
+- Hover: function member shows detail with origin and uses the cursor
+  member span. Synthetic `0,0` spans never leak.
+- Goto: returns `None` by design with a dep guard, so `selector` never
+  jumps to coincidental same-name declarations.
+- Arity: `gas` and `value` take 1, same message as plain calls.
+  `selector` calls stay silent. Unknown names stay silent.
+- Limits: no `address` member in V1, no visibility split for named
+  functions, no signature help, chained `a.b.c` untouched.
+
+## Type metadata
+
+- Scope: `analysis::meta` plus thin wiring in `members`, `hover`,
+  `goto`, `completion`, `mod`. No new `SymbolKind`, no new completion kind.
+- Shape: `type_context_at` scans `type(Inner).member` separately because
+  the normal receiver scan fails on `)`: no word precedes the dot. Inner
+  is the trimmed text between parens, nested parens return `None`. Empty
+  members (`type(X).`) return a context so completion still lists.
+- Dispatch: integer inners (`uint`, `int`, plus `8` to `256` in steps
+  of 8) yield `min` and `max` typed as the inner. All other inners yield
+  `name` (`string`), `creationCode` (`bytes`), `runtimeCode` (`bytes`),
+  and `interfaceId` (`bytes4`). V1 does not split contracts from
+  interfaces; enum inners fall into the contract set as follow-up.
+- Members: `TypeKind::Meta(inner)` via `members_of`, cross file stays
+  empty. Details add ` - from solidity`, kind reuses Field (5).
+- Completion: `type` branch in `complete_at` and `mod` lists the inner
+  set filtered by prefix.
+- Hover: meta member shows detail with origin and uses the cursor member
+  span. Synthetic `0,0` spans never leak.
+- Goto: returns `None` by design with a dep guard. `type()` calls are
+  not parsed as `Member` nodes, so member arity stays silent by absence.
+- Limits: no nested inner types, no enum split, no signature help.
+
+## Global members
+
+- Scope: `analysis::globals` plus thin wiring in `members`, `hover`,
+  `goto`, `calls`, `mod`. No new `SymbolKind`, no new completion kind.
+- Shape: `TypeKind::Global(name)` for undeclared `msg`, `block`, `tx`,
+  and `abi`. User declarations shadow globals via the scope check first.
+- Members:
+  - `msg` (4 fields): `sender` (`address`), `value` (`uint256`),
+    `data` (`bytes`), `sig` (`bytes4`).
+  - `block` (9 fields plus 1 method): `basefee`, `blobbasefee`,
+    `chainid`, `coinbase` (`address`), `difficulty`, `prevrandao`,
+    `gaslimit`, `number`, `timestamp` (all `uint256` except `coinbase`),
+    plus `blobhash` (Function, 1 arg). `blockhash` stays a plain global
+    function, not a block member.
+  - `tx` (2 fields): `gasprice` (`uint256`), `origin` (`address`).
+  - `abi` (6 methods): `decode` (2 args), `encode` (variadic),
+    `encodePacked` (variadic), `encodeWithSelector` (variadic),
+    `encodeWithSignature` (variadic), `encodeCall` (2 args).
+  - Details add ` - from solidity`, kinds reuse Field (5) and
+    Function (3).
+- Completion: `members_of` returns the receiver table, cross file stays empty.
+- Hover: global member shows detail with origin and uses the cursor
+  member span. Synthetic `0,0` spans never leak.
+- Goto: returns `None` by design with a dep guard, so `sender` never
+  jumps to coincidental same-name declarations.
+- Arity: `block.blobhash` takes 1, `abi.decode` and `abi.encodeCall`
+  take 2, same message as plain calls. Fields stay silent and variadic
+  `abi.encode*` stays silent by design. Unknown names stay silent.
+- Limits: no signature help, chained `a.b.c` untouched.
+
 ## Unknown identifiers
 
 - Source: `analysis::unknown::unknown_identifier_diagnostics` scans `Ident` tokens only, so comments and strings never lint.

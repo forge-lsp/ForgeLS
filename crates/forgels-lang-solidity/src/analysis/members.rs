@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use forgels_syntax::{AstNode, Span};
 
-use super::{Scope, SymbolKind, address, array, inheritance};
+use super::{Scope, SymbolKind, address, array, bytes, function, globals, inheritance};
 use crate::{SolidityFile, TypeNode};
 
 /// Receiver type for member access V1.
@@ -13,6 +13,11 @@ pub enum TypeKind {
     Struct(String),
     Array { dynamic: bool },
     Address,
+    Bytes,
+    String,
+    Function,
+    Meta(String),
+    Global(String),
     Unknown,
 }
 
@@ -150,6 +155,11 @@ fn var_type_of_detail(detail: &str) -> Option<String> {
 /// is already stripped from the stored type, so V1 ignores it. Address
 /// check runs after the array check so `address[]` stays an array.
 /// `address payable` matches `address`: V1 does not distinguish payable.
+/// `bytes` and `bytes32` share one set with `length` only, `string` has
+/// no members by design. External `function` types yield `Function`,
+/// internal ones stay unknown. Named functions resolve as `Function` so
+/// `f.selector` works. Undeclared `msg`, `block`, `tx`, and `abi` yield
+/// `Global`; user declarations shadow them.
 pub fn receiver_type(file: &SolidityFile, scope: &Scope, offset: u32, receiver: &str) -> TypeKind {
     if receiver == "this" {
         let Some(contract) = contract_at(file, offset) else {
@@ -167,8 +177,14 @@ pub fn receiver_type(file: &SolidityFile, scope: &Scope, offset: u32, receiver: 
         return TypeKind::Unknown;
     }
     let Some(symbol) = scope.resolve(receiver, offset) else {
+        if globals::is_global_receiver(receiver) {
+            return TypeKind::Global(receiver.to_string());
+        }
         return TypeKind::Unknown;
     };
+    if symbol.kind == SymbolKind::Function {
+        return TypeKind::Function;
+    }
     if !matches!(
         symbol.kind,
         SymbolKind::StateVar | SymbolKind::LocalVar | SymbolKind::Param
@@ -183,6 +199,15 @@ pub fn receiver_type(file: &SolidityFile, scope: &Scope, offset: u32, receiver: 
     }
     if address::is_address_type(&type_text) {
         return TypeKind::Address;
+    }
+    if bytes::is_bytes_type(&type_text) {
+        return TypeKind::Bytes;
+    }
+    if bytes::is_string_type(&type_text) {
+        return TypeKind::String;
+    }
+    if function::is_external_function_type(&type_text) {
+        return TypeKind::Function;
     }
     if !is_single_word(&type_text) {
         return TypeKind::Unknown;
@@ -200,8 +225,8 @@ pub fn receiver_type(file: &SolidityFile, scope: &Scope, offset: u32, receiver: 
 ///
 /// `super` stays unknown and chained receivers stay unknown. Dep lookup
 /// lets `Hello h; h.greet` resolve when `Hello` lives in an import.
-/// Arrays and addresses resolve locally via `receiver_type`, so no dep
-/// lookup applies.
+/// Arrays, addresses, bytes, strings, functions, and globals resolve
+/// locally via `receiver_type`, so no dep lookup applies.
 pub(crate) fn receiver_type_with_deps(
     file: &SolidityFile,
     scope: &Scope,
@@ -241,15 +266,22 @@ pub(crate) fn receiver_type_with_deps(
 }
 
 /// Members of a contract (state vars plus functions), struct (fields),
-/// array (`length` always, `push` and `pop` for dynamic only), or
-/// address (three fields plus five methods). Unknown types yield no
-/// members. Contract members include same file
+/// array (`length` always, `push` and `pop` for dynamic only),
+/// address (three fields plus five methods), bytes (`length` only,
+/// string has none), function (`selector`, `gas`, `value`), globals
+/// (`msg`, `block`, `tx`, `abi` tables), or `type()` metadata by inner.
+/// Unknown types yield no members. Contract members include same file
 /// inheritance with ` - from Base` origin, derived wins.
 pub fn members_of(file: &SolidityFile, kind: &TypeKind) -> Vec<MemberInfo> {
     match kind {
         TypeKind::Unknown => Vec::new(),
         TypeKind::Array { dynamic } => array::array_members(*dynamic),
         TypeKind::Address => address::address_members(),
+        TypeKind::Bytes => bytes::bytes_members(),
+        TypeKind::String => bytes::string_members(),
+        TypeKind::Function => function::function_members(),
+        TypeKind::Meta(inner) => super::meta::meta_members_for(inner),
+        TypeKind::Global(name) => globals::global_members(name),
         TypeKind::Contract(name) => {
             let Some(contract) = inheritance::find_contract(file, name) else {
                 return Vec::new();
@@ -392,9 +424,15 @@ pub(crate) fn collect_cross_file_members(
     let mut out: Vec<(MemberInfo, PathBuf)> = Vec::new();
     match kind {
         TypeKind::Unknown => Vec::new(),
-        // Arrays and addresses are builtin value types: no dep members.
+        // Builtin value types have no dep members: arrays, addresses,
+        // bytes, strings, functions, globals, and type() metadata.
         TypeKind::Array { .. } => Vec::new(),
         TypeKind::Address => Vec::new(),
+        TypeKind::Bytes => Vec::new(),
+        TypeKind::String => Vec::new(),
+        TypeKind::Function => Vec::new(),
+        TypeKind::Meta(_) => Vec::new(),
+        TypeKind::Global(_) => Vec::new(),
         TypeKind::Contract(name) => {
             if let Some((direct, Some(path))) =
                 inheritance::find_contract_across(name, primary, deps)
