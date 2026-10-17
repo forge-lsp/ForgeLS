@@ -2968,3 +2968,182 @@ fn address_cross_file_members_stay_empty() {
     assert!(!labels.contains(&"greet"), "labels: {labels:?}");
     assert!(hover_multi(&workspace, "/C.sol", cur, "balance").is_some());
 }
+
+#[test]
+fn contract_instance_completion_lists_state_and_function() {
+    let text = "contract Hello {\nuint total;\nfunction greet(uint a) public {}\n}\ncontract C {\nfunction f() public {\nHello h;\nh.\n}\n}";
+    let at = text.rfind("h.").expect("dot") as u32 + 2;
+    let labels = complete_labels(text, at);
+    assert!(labels.contains(&"total".to_string()), "labels: {labels:?}");
+    assert!(labels.contains(&"greet".to_string()), "labels: {labels:?}");
+}
+
+#[test]
+fn contract_instance_completion_filters_by_prefix() {
+    let text = "contract Hello {\nuint total;\nfunction greet(uint a) public {}\n}\ncontract C {\nfunction f() public {\nHello h;\nh.gre\n}\n}";
+    let at = text.rfind("h.gre").expect("dot") as u32 + 5;
+    let labels = complete_labels(text, at);
+    assert!(labels.contains(&"greet".to_string()), "labels: {labels:?}");
+    assert!(!labels.contains(&"total".to_string()), "labels: {labels:?}");
+}
+
+#[test]
+fn contract_instance_hover_shows_function_detail() {
+    let text = "contract Hello {\nfunction greet(uint a) public {}\n}\ncontract C {\nfunction f() public {\nHello h;\nh.greet;\n}\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let at = text.rfind("h.greet").expect("use") as u32 + 2;
+    let found = hover_at(&file, text, at).expect("hover");
+    assert_eq!(found.contents, "function greet(uint a)");
+}
+
+#[test]
+fn contract_instance_goto_jumps_to_decl() {
+    let text = "contract Hello {\nfunction greet(uint a) public {}\n}\ncontract C {\nfunction f() public {\nHello h;\nh.greet;\n}\n}";
+    let at_use = text.rfind("h.greet").expect("use") as u32 + 2;
+    let at_decl = text.find("greet").expect("decl") as u32;
+    let target = goto_target(text, at_use);
+    assert!(target.start <= at_decl && at_decl < target.end);
+}
+
+#[test]
+fn contract_instance_state_var_receiver_resolves() {
+    let text = "contract Hello {\nfunction greet() public {}\n}\ncontract C {\nHello hState;\nfunction f() public {\nhState.\n}\n}";
+    let at = text.rfind("hState.").expect("dot") as u32 + 7;
+    let labels = complete_labels(text, at);
+    assert!(labels.contains(&"greet".to_string()), "labels: {labels:?}");
+}
+
+#[test]
+fn contract_instance_param_receiver_resolves() {
+    let text = "contract Hello {\nfunction greet() public {}\n}\ncontract C {\nfunction f(Hello hParam) public {\nhParam.\n}\n}";
+    let at = text.rfind("hParam.").expect("dot") as u32 + 7;
+    let labels = complete_labels(text, at);
+    assert!(labels.contains(&"greet".to_string()), "labels: {labels:?}");
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let hover_at_pos = text.rfind("hParam.").expect("use") as u32 + 7;
+    let items = complete_at(&file, text, hover_at_pos);
+    assert!(items.iter().any(|item| item.label == "greet"));
+}
+
+#[test]
+fn cross_file_instance_hover_includes_origin() {
+    let dep = "contract Hello {\nfunction greet(uint a) public {}\n}";
+    let cur = "import \"./H.sol\";\ncontract C {\nfunction f() public {\nHello h;\nh.greet;\n}\n}";
+    let mut workspace = open_workspace(&[("/H.sol", dep), ("/C.sol", cur)]);
+    workspace.set_file_deps(PathBuf::from("/C.sol"), vec![PathBuf::from("/H.sol")]);
+    let hit = hover_multi(&workspace, "/C.sol", cur, "greet").expect("hover");
+    assert!(
+        hit.contents.contains("function greet"),
+        "contents: {}",
+        hit.contents
+    );
+    assert!(
+        hit.contents.contains("from Hello in H.sol"),
+        "contents: {}",
+        hit.contents
+    );
+}
+
+#[test]
+fn cross_file_instance_goto_jumps_to_dep() {
+    let dep = "contract Hello {\nfunction greet(uint a) public {}\n}";
+    let cur = "import \"./H.sol\";\ncontract C {\nfunction f() public {\nHello h;\nh.greet;\n}\n}";
+    let mut workspace = open_workspace(&[("/H.sol", dep), ("/C.sol", cur)]);
+    workspace.set_file_deps(PathBuf::from("/C.sol"), vec![PathBuf::from("/H.sol")]);
+    let hit = goto_multi(&workspace, "/C.sol", cur, "greet").expect("goto");
+    assert_eq!(hit.path, PathBuf::from("/H.sol"));
+    let want = dep.find("greet").expect("decl") as u32;
+    assert!(hit.span.contains(want));
+}
+
+#[test]
+fn cross_file_instance_signature_shows_dep() {
+    let dep = "contract Hello {\nfunction greet(uint a, uint b) public {}\n}";
+    let cur = "import \"./H.sol\";\ncontract C {\nfunction f() public {\nHello h;\nh.greet(\n}\n}";
+    let mut workspace = open_workspace(&[("/H.sol", dep), ("/C.sol", cur)]);
+    workspace.set_file_deps(PathBuf::from("/C.sol"), vec![PathBuf::from("/H.sol")]);
+    let found = signature_multi(&workspace, "/C.sol", cur, "h.greet(").expect("help");
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].label, "function greet(uint a, uint b)");
+    assert_eq!(found[0].active_param, 0);
+}
+
+#[test]
+fn inherited_via_instance_shows_base() {
+    let text = "contract B {\nuint baseVar;\nfunction baseFn(uint a) public {}\n}\ncontract D is B {\n}\ncontract C {\nfunction f() public {\nD d;\nd.\n}\n}";
+    let at = text.rfind("d.").expect("dot") as u32 + 2;
+    let labels = complete_labels(text, at);
+    assert!(labels.contains(&"baseFn".to_string()), "labels: {labels:?}");
+    assert!(
+        labels.contains(&"baseVar".to_string()),
+        "labels: {labels:?}"
+    );
+    let use_text = "contract B {\nuint baseVar;\nfunction baseFn(uint a) public {}\n}\ncontract D is B {\n}\ncontract C {\nfunction f() public {\nD d;\nd.baseFn;\n}\n}";
+    let use_tokens = SolidityLexer.tokenize(use_text);
+    let (use_file, use_errors) = SolidityParser.parse_with_errors(&use_tokens);
+    assert!(use_errors.is_empty(), "errors: {use_errors:?}");
+    let use_at = use_text.rfind("d.baseFn").expect("use") as u32 + 2;
+    let found = hover_at(&use_file, use_text, use_at).expect("hover");
+    assert!(
+        found.contents.contains("function baseFn"),
+        "contents: {}",
+        found.contents
+    );
+    assert!(
+        found.contents.contains("from B"),
+        "contents: {}",
+        found.contents
+    );
+}
+
+#[test]
+fn contract_instance_enum_receiver_stays_silent() {
+    let text = "contract C {\nenum Color { Red, Blue }\nfunction f() public {\nColor c;\nc.\n}\n}";
+    let at = text.rfind("c.").expect("dot") as u32 + 2;
+    let labels = complete_labels(text, at);
+    assert!(labels.is_empty(), "labels: {labels:?}");
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let hover_pos = text.rfind("c.").expect("use") as u32 + 2;
+    assert!(hover_at(&file, text, hover_pos).is_none());
+    assert!(goto_definition(&file, text, hover_pos).is_none());
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn contract_instance_mapping_receiver_stays_silent() {
+    let text =
+        "contract C {\nmapping(address => uint) balances;\nfunction f() public {\nbalances.\n}\n}";
+    let at = text.rfind("balances.").expect("dot") as u32 + 9;
+    let labels = complete_labels(text, at);
+    assert!(labels.is_empty(), "labels: {labels:?}");
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    assert!(hover_at(&file, text, at).is_none());
+    assert!(goto_definition(&file, text, at).is_none());
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn instance_hides_events_errors_modifiers() {
+    let text = "contract Hello {\nevent Transfer(address a);\nerror Oops();\nmodifier onlyOwner() { _; }\nfunction greet() public {}\nuint total;\n}\ncontract C {\nfunction f() public {\nHello h;\nh.\n}\n}";
+    let at = text.rfind("h.").expect("dot") as u32 + 2;
+    let labels = complete_labels(text, at);
+    assert!(labels.contains(&"greet".to_string()), "labels: {labels:?}");
+    assert!(labels.contains(&"total".to_string()), "labels: {labels:?}");
+    assert!(
+        !labels.contains(&"Transfer".to_string()),
+        "labels: {labels:?}"
+    );
+    assert!(!labels.contains(&"Oops".to_string()), "labels: {labels:?}");
+    assert!(
+        !labels.contains(&"onlyOwner".to_string()),
+        "labels: {labels:?}"
+    );
+}
