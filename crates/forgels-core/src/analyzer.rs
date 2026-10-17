@@ -506,6 +506,13 @@ pub trait Analyzer: std::fmt::Debug {
     fn references(&self, _ctx: &ProjectContext) -> Option<Vec<ReferenceData>> {
         None
     }
+    /// Rename edits for the symbol at the cursor. Default is none so
+    /// languages without support keep working. Languages validate
+    /// `new_name` (ident shape plus keyword guard) and reuse their
+    /// reference search for the edit list.
+    fn rename(&self, _ctx: &ProjectContext, _new_name: &str) -> Option<Vec<ReferenceData>> {
+        None
+    }
 }
 
 /// Registered analyzers by language. Empty when the binary wires none.

@@ -33,6 +33,7 @@ fn advertises_exact_beta_capabilities() {
             "documentSymbolProvider",
             "hoverProvider",
             "referencesProvider",
+            "renameProvider",
             "signatureHelpProvider",
             "textDocumentSync",
             "workspaceSymbolProvider"

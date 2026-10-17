@@ -24,6 +24,7 @@ pub(crate) mod inheritance;
 pub(crate) mod members;
 pub(crate) mod meta;
 mod references;
+mod rename;
 mod signature;
 mod symbols;
 mod unknown;
@@ -39,6 +40,7 @@ pub use goto::{goto_definition, resolve_in_dep};
 pub use hover::{Hover, hover_at};
 pub use imports::imports_in;
 pub use references::find_references;
+pub use rename::{find_rename, is_valid_rename};
 pub use signature::signature_at;
 pub use symbols::document_symbols_in;
 
@@ -894,5 +896,15 @@ impl Analyzer for SolidityAnalyzer {
         let file = Self::parse_file(ctx.text);
         let deps = Self::dep_files(ctx);
         references::find_references(&file, ctx.text, ctx.offset, ctx.path, &deps, ctx)
+    }
+
+    fn rename(
+        &self,
+        ctx: &ProjectContext,
+        new_name: &str,
+    ) -> Option<Vec<forgels_core::ReferenceData>> {
+        let file = Self::parse_file(ctx.text);
+        let deps = Self::dep_files(ctx);
+        rename::find_rename(&file, ctx.text, ctx.offset, new_name, ctx.path, &deps, ctx)
     }
 }

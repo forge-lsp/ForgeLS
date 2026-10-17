@@ -64,6 +64,28 @@ impl crate::analyzer::Analyzer for StubAnalyzer {
             Vec::new()
         }
     }
+
+    fn rename(
+        &self,
+        ctx: &crate::analyzer::ProjectContext,
+        new_name: &str,
+    ) -> Option<Vec<crate::analyzer::ReferenceData>> {
+        if !self.found || new_name.is_empty() {
+            return None;
+        }
+        Some(vec![
+            crate::analyzer::ReferenceData::new(
+                ctx.path.to_path_buf(),
+                forgels_syntax::Span::new(9, 10),
+                true,
+            ),
+            crate::analyzer::ReferenceData::new(
+                ctx.path.to_path_buf(),
+                forgels_syntax::Span::new(0, 1),
+                false,
+            ),
+        ])
+    }
 }
 
 pub(crate) fn session_with_stub(found: bool) -> Session {

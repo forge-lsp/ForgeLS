@@ -15,7 +15,7 @@ mod tests;
 pub use publish::{drain_due, flush_all, immediate_notifications};
 pub(crate) use requests::{
     completion_response, definition_response, document_symbol_response, hover_response,
-    references_response, signature_response, workspace_symbol_response,
+    references_response, rename_response, signature_response, workspace_symbol_response,
 };
 pub(crate) use sync::{
     apply_did_change, apply_did_close, apply_did_open, apply_folder_change, apply_initialize_roots,
@@ -33,7 +33,8 @@ pub fn server_capabilities() -> Value {
         "definitionProvider": true,
         "referencesProvider": true,
         "documentSymbolProvider": true,
-        "workspaceSymbolProvider": true
+        "workspaceSymbolProvider": true,
+        "renameProvider": true
     })
 }
 
@@ -180,6 +181,9 @@ pub fn handle_message(
         }
         "textDocument/references" => {
             return references_response(session, workspace, &params, value.get("id"));
+        }
+        "textDocument/rename" => {
+            return rename_response(session, workspace, &params, value.get("id"));
         }
         "textDocument/signatureHelp" => {
             return signature_response(session, workspace, &params, value.get("id"));
