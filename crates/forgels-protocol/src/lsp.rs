@@ -56,6 +56,47 @@ pub enum DiagnosticSeverity {
     Hint = 4,
 }
 
+/// LSP symbol kind, passed through as a plain number.
+///
+/// Core and language crates forward the value only. No mapping here.
+/// Numbers follow LSP 3.17 in declaration order: File is 1 through
+/// TypeParameter is 26.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SymbolKind(pub u8);
+
+impl SymbolKind {
+    pub const FILE: Self = Self(1);
+    pub const MODULE: Self = Self(2);
+    pub const NAMESPACE: Self = Self(3);
+    pub const PACKAGE: Self = Self(4);
+    pub const CLASS: Self = Self(5);
+    pub const METHOD: Self = Self(6);
+    pub const PROPERTY: Self = Self(7);
+    pub const FIELD: Self = Self(8);
+    pub const CONSTRUCTOR: Self = Self(9);
+    pub const ENUM: Self = Self(10);
+    pub const INTERFACE: Self = Self(11);
+    pub const FUNCTION: Self = Self(12);
+    pub const VARIABLE: Self = Self(13);
+    pub const CONSTANT: Self = Self(14);
+    pub const STRING: Self = Self(15);
+    pub const NUMBER: Self = Self(16);
+    pub const BOOLEAN: Self = Self(17);
+    pub const ARRAY: Self = Self(18);
+    pub const OBJECT: Self = Self(19);
+    pub const KEY: Self = Self(20);
+    pub const NULL: Self = Self(21);
+    pub const ENUM_MEMBER: Self = Self(22);
+    pub const STRUCT: Self = Self(23);
+    pub const EVENT: Self = Self(24);
+    pub const OPERATOR: Self = Self(25);
+    pub const TYPE_PARAMETER: Self = Self(26);
+
+    pub fn value(self) -> u8 {
+        self.0
+    }
+}
+
 /// LSP completion kind, passed through as a plain number.
 ///
 /// Core and language crates forward the value only. No mapping here.

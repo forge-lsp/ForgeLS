@@ -14,7 +14,8 @@ mod tests;
 
 pub use publish::{drain_due, flush_all, immediate_notifications};
 pub(crate) use requests::{
-    completion_response, definition_response, hover_response, signature_response,
+    completion_response, definition_response, document_symbol_response, hover_response,
+    signature_response,
 };
 pub(crate) use sync::{
     apply_did_change, apply_did_close, apply_did_open, apply_folder_change, apply_initialize_roots,
@@ -29,7 +30,8 @@ pub fn server_capabilities() -> Value {
         "hoverProvider": true,
         "completionProvider": { "triggerCharacters": ["\"", "'", "/", "."] },
         "signatureHelpProvider": { "triggerCharacters": ["(", ","] },
-        "definitionProvider": true
+        "definitionProvider": true,
+        "documentSymbolProvider": true
     })
 }
 
@@ -176,6 +178,9 @@ pub fn handle_message(
         }
         "textDocument/signatureHelp" => {
             return signature_response(session, workspace, &params, value.get("id"));
+        }
+        "textDocument/documentSymbol" => {
+            return document_symbol_response(session, workspace, &params, value.get("id"));
         }
         "workspace/didChangeWorkspaceFolders" => {
             apply_folder_change(workspace, &params);

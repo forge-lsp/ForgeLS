@@ -10,8 +10,9 @@ pub mod parser;
 
 pub use analysis::{
     CompletionItem, CompletionKind, Hover, Scope, SolidityAnalyzer, Symbol, SymbolKind,
-    collect_symbols, complete_at, complete_import_paths, completion_item_kind, exports_of,
-    goto_definition, hover_at, import_path_at, imports_in, resolve_in_dep, signature_at,
+    collect_symbols, complete_at, complete_import_paths, completion_item_kind, document_symbols_in,
+    exports_of, goto_definition, hover_at, import_path_at, imports_in, resolve_in_dep,
+    signature_at,
 };
 
 pub use ast::{
