@@ -3147,3 +3147,167 @@ fn instance_hides_events_errors_modifiers() {
         "labels: {labels:?}"
     );
 }
+
+#[test]
+fn variable_completion_shows_param_and_local_types() {
+    let text = "contract C {\nfunction f(uint amount) public {\nuint count = 1;\namo\n}\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let at_param = text.rfind("amo").expect("prefix") as u32 + 3;
+    let items = complete_at(&file, text, at_param);
+    let hit = items
+        .iter()
+        .find(|item| item.label == "amount")
+        .expect("param hit");
+    assert_eq!(hit.detail, "uint amount");
+    assert_eq!(completion_item_kind(hit.kind).value(), 6);
+    let local_text = "contract C {\nfunction f(uint amount) public {\nuint count = 1;\ncou\n}\n}";
+    let local_tokens = SolidityLexer.tokenize(local_text);
+    let (local_file, local_errors) = SolidityParser.parse_with_errors(&local_tokens);
+    assert!(local_errors.is_empty(), "errors: {local_errors:?}");
+    let at_local = local_text.rfind("cou").expect("prefix") as u32 + 3;
+    let local_items = complete_at(&local_file, local_text, at_local);
+    let local_hit = local_items
+        .iter()
+        .find(|item| item.label == "count")
+        .expect("local hit");
+    assert_eq!(local_hit.detail, "uint count");
+    assert_eq!(completion_item_kind(local_hit.kind).value(), 6);
+}
+
+#[test]
+fn member_completion_shows_state_and_field_types() {
+    let text = "contract Hello {\nuint total;\nfunction greet(uint a) public {}\n}\ncontract C {\nfunction f() public {\nHello h;\nh.\n}\n}";
+    let at = text.rfind("h.").expect("dot") as u32 + 2;
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let items = complete_at(&file, text, at);
+    let total = items
+        .iter()
+        .find(|item| item.label == "total")
+        .expect("total hit");
+    assert_eq!(total.detail, "uint total");
+    assert_eq!(completion_item_kind(total.kind).value(), 6);
+    let struct_text = "struct Person {\nuint age;\nstring name;\n}\ncontract C {\nfunction f() public {\nPerson p;\np.\n}\n}";
+    let struct_at = struct_text.rfind("p.").expect("dot") as u32 + 2;
+    let struct_tokens = SolidityLexer.tokenize(struct_text);
+    let (struct_file, struct_errors) = SolidityParser.parse_with_errors(&struct_tokens);
+    assert!(struct_errors.is_empty(), "errors: {struct_errors:?}");
+    let struct_items = complete_at(&struct_file, struct_text, struct_at);
+    let age = struct_items
+        .iter()
+        .find(|item| item.label == "age")
+        .expect("age hit");
+    assert_eq!(age.detail, "uint age");
+    let name = struct_items
+        .iter()
+        .find(|item| item.label == "name")
+        .expect("name hit");
+    assert_eq!(name.detail, "string name");
+}
+
+#[test]
+fn this_completion_shows_state_var_type() {
+    let text =
+        "contract C {\nuint total;\nfunction foo() public {}\nfunction f() public {\nthis.\n}\n}";
+    let at = text.rfind("this.").expect("dot") as u32 + 5;
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let items = complete_at(&file, text, at);
+    let total = items
+        .iter()
+        .find(|item| item.label == "total")
+        .expect("total hit");
+    assert_eq!(total.detail, "uint total");
+    let foo = items
+        .iter()
+        .find(|item| item.label == "foo")
+        .expect("foo hit");
+    assert!(
+        foo.detail.contains("function foo"),
+        "detail: {}",
+        foo.detail
+    );
+}
+
+#[test]
+fn cross_file_member_state_var_shows_type_and_origin() {
+    let dep = "contract Hello {\nuint total;\n}";
+    let cur = "import \"./H.sol\";\ncontract C {\nfunction f() public {\nHello h;\nh.\n}\n}";
+    let mut workspace = open_workspace(&[("/H.sol", dep), ("/C.sol", cur)]);
+    workspace.set_file_deps(PathBuf::from("/C.sol"), vec![PathBuf::from("/H.sol")]);
+    let found = member_complete_multi(&workspace, "/C.sol", cur, "h.");
+    let hit = found
+        .iter()
+        .find(|(label, _)| label == "total")
+        .expect("total hit");
+    assert!(hit.1.starts_with("uint total"), "detail: {}", hit.1);
+    assert!(hit.1.contains("from Hello in H.sol"), "detail: {}", hit.1);
+}
+
+#[test]
+fn hover_shows_param_and_local_types() {
+    let text =
+        "contract C {\nfunction f(uint amount) public {\nuint count = 1;\namount;\ncount;\n}\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let at_param = text.rfind("amount;").expect("use") as u32;
+    let param = hover_at(&file, text, at_param).expect("hover");
+    assert_eq!(param.contents, "uint amount");
+    let decl_param = text.find("amount").expect("decl") as u32;
+    assert!(param.span.start <= decl_param && decl_param < param.span.end);
+    let at_local = text.rfind("count;").expect("use") as u32;
+    let local = hover_at(&file, text, at_local).expect("hover");
+    assert_eq!(local.contents, "uint count");
+    let decl_local = text.find("count").expect("decl") as u32;
+    assert!(local.span.start <= decl_local && decl_local < local.span.end);
+}
+
+#[test]
+fn cross_file_member_hover_shows_var_type_and_origin() {
+    let dep = "contract Hello {\nuint total;\n}";
+    let cur = "import \"./H.sol\";\ncontract C {\nfunction f() public {\nHello h;\nh.total;\n}\n}";
+    let mut workspace = open_workspace(&[("/H.sol", dep), ("/C.sol", cur)]);
+    workspace.set_file_deps(PathBuf::from("/C.sol"), vec![PathBuf::from("/H.sol")]);
+    let hit = hover_multi(&workspace, "/C.sol", cur, "total").expect("hover");
+    assert!(
+        hit.contents.contains("uint total"),
+        "contents: {}",
+        hit.contents
+    );
+    assert!(
+        hit.contents.contains("from Hello in H.sol"),
+        "contents: {}",
+        hit.contents
+    );
+}
+
+#[test]
+fn non_variable_details_stay_keyword_and_file() {
+    let text = "contract C {\nfun";
+    let at = text.len() as u32;
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, _) = SolidityParser.parse_with_errors(&tokens);
+    let items = complete_at(&file, text, at);
+    let hit = items
+        .iter()
+        .find(|item| item.label == "function")
+        .expect("keyword hit");
+    assert_eq!(hit.detail, "keyword");
+    assert_eq!(completion_item_kind(hit.kind).value(), 14);
+    let root = fresh_sol_root("forgels-sol-var-nonvar");
+    let current = root.join("A.sol");
+    let paths = complete_import_paths(&current, std::slice::from_ref(&root), "");
+    assert!(!paths.is_empty());
+    assert!(paths.iter().all(|item| item.detail == "file"));
+    assert!(
+        paths
+            .iter()
+            .all(|item| completion_item_kind(item.kind).value() == 17)
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
