@@ -31,13 +31,15 @@ pub fn completion_item_kind(kind: CompletionKind) -> CompletionItemKind {
         CompletionKind::Package => CompletionItemKind::FOLDER,
         CompletionKind::Symbol(symbol) => match symbol {
             SymbolKind::Contract => CompletionItemKind::CLASS,
-            SymbolKind::Function => CompletionItemKind::FUNCTION,
+            SymbolKind::Function | SymbolKind::Modifier => CompletionItemKind::FUNCTION,
             SymbolKind::StateVar | SymbolKind::LocalVar | SymbolKind::Param => {
                 CompletionItemKind::VARIABLE
             }
             SymbolKind::Field => CompletionItemKind::FIELD,
             SymbolKind::Struct => CompletionItemKind::STRUCT,
             SymbolKind::Enum => CompletionItemKind::ENUM,
+            SymbolKind::Error | SymbolKind::Event => CompletionItemKind::EVENT,
+            SymbolKind::UserType => CompletionItemKind::TYPE_PARAMETER,
         },
     }
 }

@@ -1,5 +1,5 @@
 use super::members::{FunctionDef, StateVar};
-use super::user_types::{EnumDef, StructDef};
+use super::user_types::{EnumDef, ErrorDef, EventDef, ModifierDef, StructDef, UserTypeDef};
 use super::{SolidityNode, cast_node};
 use crate::lexer::SolidityKind;
 use forgels_syntax::{AstNode, SyntaxElement, SyntaxNode};
@@ -49,6 +49,22 @@ impl ContractDef {
         })
     }
 
+    /// Contract flavor for hover: `contract`, `interface`, or `library`.
+    /// Stored keyword decides; missing keyword means plain contract.
+    pub fn kind_label(&self) -> &'static str {
+        for element in &self.syntax.children {
+            if let SyntaxElement::Token(token) = element {
+                if token.kind == SolidityKind::Interface.as_u16() {
+                    return "interface";
+                }
+                if token.kind == SolidityKind::Library.as_u16() {
+                    return "library";
+                }
+            }
+        }
+        "contract"
+    }
+
     fn members_of(&self, kind: SolidityNode) -> Vec<SyntaxNode> {
         self.syntax
             .children
@@ -85,6 +101,34 @@ impl ContractDef {
         self.members_of(SolidityNode::Enum)
             .into_iter()
             .filter_map(EnumDef::cast)
+            .collect()
+    }
+
+    pub fn errors(&self) -> Vec<ErrorDef> {
+        self.members_of(SolidityNode::Error)
+            .into_iter()
+            .filter_map(ErrorDef::cast)
+            .collect()
+    }
+
+    pub fn user_types(&self) -> Vec<UserTypeDef> {
+        self.members_of(SolidityNode::UserType)
+            .into_iter()
+            .filter_map(UserTypeDef::cast)
+            .collect()
+    }
+
+    pub fn events(&self) -> Vec<EventDef> {
+        self.members_of(SolidityNode::Event)
+            .into_iter()
+            .filter_map(EventDef::cast)
+            .collect()
+    }
+
+    pub fn modifiers(&self) -> Vec<ModifierDef> {
+        self.members_of(SolidityNode::Modifier)
+            .into_iter()
+            .filter_map(ModifierDef::cast)
             .collect()
     }
 }

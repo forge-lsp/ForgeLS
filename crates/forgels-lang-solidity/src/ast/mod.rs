@@ -12,7 +12,7 @@ pub use contract::ContractDef;
 pub use file::{ImportDirective, PragmaDirective, SolidityFile};
 pub use members::{FunctionDef, LocalVar, MemberExpr, Param, Returns, StateVar};
 pub use types::{BlockNode, TypeNode};
-pub use user_types::{EnumDef, StructDef};
+pub use user_types::{EnumDef, ErrorDef, EventDef, ModifierDef, StructDef, UserTypeDef};
 
 /// Node kinds for the Solidity skeleton. Start at 1000 so token kinds
 /// from [`crate::SolidityKind`] never collide.
@@ -34,6 +34,10 @@ pub enum SolidityNode {
     Struct,
     Enum,
     Member,
+    Error,
+    UserType,
+    Event,
+    Modifier,
 }
 
 impl SolidityNode {
