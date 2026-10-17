@@ -90,6 +90,28 @@ Status: token kinds defined. Real lexer and parser are planned.
   - Message-string assert overloads (for example 3-arg `assertEq`) are
     follow-up. V1 checks the canonical fixed arity only.
 
+## Array members
+
+- Scope: `analysis::array` plus thin wiring in `members`, `hover`,
+  `goto`, `calls`, `mod`. No new `SymbolKind`, no new completion kind.
+- Shape: `TypeKind::Array { dynamic }` via `array_shape` outer suffix
+  only. `uint[]` and `uint[2][]` are dynamic, `uint[2]` and `uint[][2]`
+  are fixed. `string` without brackets is not an array.
+- Members: dynamic has `length` (Field, `uint256 length`), `push`
+  (Function, 1 arg), `pop` (Function, 0 args). Fixed has `length`
+  only. Details add ` - from solidity`, kinds reuse Field (5) and
+  Function (3).
+- Completion: `members_of` returns array members, cross file stays empty.
+- Hover: array member shows detail with origin and uses the cursor member
+  span. Synthetic `0,0` spans never leak.
+- Goto: returns `None` by design with a dep guard, so array names never
+  jump to coincidental same-name declarations.
+- Arity: `push` takes 1, `pop` takes 0, same message as plain calls.
+  `length` calls and fixed `push`/`pop` stay silent. Unknown names stay
+  silent.
+- Limits: data location (`memory`, `storage`, `calldata`) ignored,
+  element type ignored, no signature help, chained `a.b.c` untouched.
+
 ## Unknown identifiers
 
 - Source: `analysis::unknown::unknown_identifier_diagnostics` scans `Ident` tokens only, so comments and strings never lint.

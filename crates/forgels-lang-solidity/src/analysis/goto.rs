@@ -5,8 +5,10 @@ use forgels_syntax::{Lexer, Span};
 /// Jump target for the word at `offset`: the declaration span.
 ///
 /// Member positions after a dot jump to the field or contract member.
-/// Emit name slots jump to the event declaration only. Positions on
-/// whitespace, operators, or undeclared words return `None`.
+/// Array members (`length`, `push`, `pop`) return `None` by design: their
+/// spans are synthetic with no declaration in the workspace. Emit name
+/// slots jump to the event declaration only. Positions on whitespace,
+/// operators, or undeclared words return `None`.
 /// Forge builtins (`vm.*`, `console.*`, `Test` asserts) return `None` by
 /// design: they have no declaration in the workspace. The caller guards
 /// dep lookup the same way so builtins never jump to coincidental matches.
@@ -17,6 +19,9 @@ pub fn goto_definition(file: &SolidityFile, text: &str, offset: u32) -> Option<S
     {
         let scope = collect_symbols(file);
         let kind = super::members::receiver_type(file, &scope, offset, &ctx.receiver);
+        if matches!(kind, super::members::TypeKind::Array { .. }) {
+            return None;
+        }
         let found = super::members::members_of(file, &kind)
             .into_iter()
             .find(|member| member.name == ctx.member)?;
