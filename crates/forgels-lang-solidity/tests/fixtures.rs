@@ -3238,3 +3238,72 @@ fn sbe_echidna_property_bool() {
         hover.contents
     );
 }
+
+#[test]
+fn sbe_forge_vm_prank_builtin() {
+    let (text, file) = parse_sbe("FoundryCounterTest.sol");
+    let at = text.find("vm.prank").expect("member") as u32 + 3;
+    let found = hover_at(&file, &text, at).expect("hover");
+    assert!(
+        found.contents.contains("function prank"),
+        "contents: {}",
+        found.contents
+    );
+    assert!(
+        found.contents.contains("forge-std"),
+        "contents: {}",
+        found.contents
+    );
+    let complete_off = text.find("vm.prank").expect("member") as u32 + 8;
+    let labels: Vec<String> = complete_at(&file, &text, complete_off)
+        .iter()
+        .map(|item| item.label.clone())
+        .collect();
+    assert!(labels.contains(&"prank".to_string()), "labels: {labels:?}");
+    assert!(goto_definition(&file, &text, at).is_none());
+}
+
+#[test]
+fn sbe_forge_vm_label_builtin() {
+    let (text, file) = parse_sbe("FoundryLabelMockStore.sol");
+    let at = text.find("vm.label").expect("member") as u32 + 3;
+    let found = hover_at(&file, &text, at).expect("hover");
+    assert!(
+        found.contents.contains("function label"),
+        "contents: {}",
+        found.contents
+    );
+    assert!(
+        found.contents.contains("forge-std"),
+        "contents: {}",
+        found.contents
+    );
+    assert!(goto_definition(&file, &text, at).is_none());
+}
+
+#[test]
+fn sbe_forge_plain_patterns_stay_silent() {
+    // SBE fixtures keep non-vm cheatcodes as plain calls. They are not
+    // forge asserts, so they stay silent instead of erroring.
+    for name in [
+        "FoundryTimeTest.sol",
+        "FoundrySendEthTest.sol",
+        "FoundrySigTest.sol",
+        "FoundryErrorTest.sol",
+        "FoundryEventTest.sol",
+    ] {
+        let (_, file) = parse_sbe(name);
+        assert!(
+            file.contracts()
+                .iter()
+                .any(|c| c.heritage().contains(&"Test".to_string())),
+            "{name} keeps Test heritage"
+        );
+    }
+    let (time_text, time_file) = parse_sbe("FoundryTimeTest.sol");
+    let at = time_text.find("warp(kept)").expect("call") as u32;
+    assert!(hover_at(&time_file, &time_text, at).is_none());
+    let (hevm_text, hevm_file) = parse_sbe("EchidnaFuzz.sol");
+    let hevm_at = hevm_text.find("hevm.warp").expect("member") as u32 + 5;
+    assert!(hover_at(&hevm_file, &hevm_text, hevm_at).is_none());
+}

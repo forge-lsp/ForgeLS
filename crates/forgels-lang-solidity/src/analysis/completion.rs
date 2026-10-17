@@ -73,6 +73,18 @@ pub fn complete_at(file: &SolidityFile, text: &str, offset: u32) -> Vec<Completi
             });
         }
     }
+    for builtin in super::forge::plain_builtin_list(file, &prefix, &scope, offset) {
+        let label = builtin.name.to_string();
+        if seen.contains(&label) {
+            continue;
+        }
+        seen.push(label.clone());
+        items.push(CompletionItem {
+            label,
+            detail: super::forge::builtin_detail(builtin),
+            kind: CompletionKind::Symbol(SymbolKind::Function),
+        });
+    }
     let mut keywords: Vec<&str> = crate::lexer::KEYWORDS
         .iter()
         .copied()
@@ -96,15 +108,25 @@ fn complete_members(
 ) -> Vec<CompletionItem> {
     let scope = collect_symbols(file);
     let kind = super::members::receiver_type(file, &scope, offset, &ctx.receiver);
-    let mut items: Vec<CompletionItem> = super::members::members_of(file, &kind)
-        .into_iter()
-        .filter(|member| member.name.starts_with(ctx.member.as_str()))
-        .map(|member| CompletionItem {
-            label: member.name,
-            detail: member.detail,
-            kind: CompletionKind::Symbol(member.kind),
-        })
-        .collect();
+    let mut items: Vec<CompletionItem> =
+        super::forge::member_builtin_list(&ctx.receiver, &ctx.member, &scope, offset)
+            .into_iter()
+            .map(|builtin| CompletionItem {
+                label: builtin.name.to_string(),
+                detail: super::forge::builtin_detail(builtin),
+                kind: CompletionKind::Symbol(SymbolKind::Function),
+            })
+            .collect();
+    items.extend(
+        super::members::members_of(file, &kind)
+            .into_iter()
+            .filter(|member| member.name.starts_with(ctx.member.as_str()))
+            .map(|member| CompletionItem {
+                label: member.name,
+                detail: member.detail,
+                kind: CompletionKind::Symbol(member.kind),
+            }),
+    );
     items.sort_by(|left, right| left.label.cmp(&right.label));
     items
 }

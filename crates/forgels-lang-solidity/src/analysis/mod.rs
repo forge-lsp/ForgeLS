@@ -11,6 +11,7 @@ use crate::{
 mod calls;
 mod completion;
 mod emits;
+pub(crate) mod forge;
 mod goto;
 mod hover;
 mod imports;
@@ -476,6 +477,21 @@ impl SolidityAnalyzer {
         let kind = members::receiver_type_with_deps(file, &scope, offset, &member.receiver, deps);
         let mut seen: Vec<String> = Vec::new();
         let mut out: Vec<CompletionData> = Vec::new();
+        for builtin in forge::member_builtin_list(&member.receiver, &member.member, &scope, offset)
+        {
+            if seen.contains(&builtin.name.to_string()) {
+                continue;
+            }
+            seen.push(builtin.name.to_string());
+            out.push(CompletionData {
+                label: builtin.name.to_string(),
+                detail: forge::builtin_detail(builtin),
+                kind: completion::completion_item_kind(completion::CompletionKind::Symbol(
+                    SymbolKind::Function,
+                )),
+                text_edit: None,
+            });
+        }
         for item in members::members_of(file, &kind) {
             if !item.name.starts_with(member.member.as_str()) {
                 continue;
@@ -573,6 +589,9 @@ impl SolidityAnalyzer {
             })
             .collect();
         out.extend(calls::arity_diagnostics(file, scope));
+        // Plain asserts only: member cheatcodes (`vm.*`) carry no arg
+        // count in `MemberExpr`, so member arity waits for parser support.
+        out.extend(forge::assert_arity_diagnostics(file, scope));
         out.extend(emits::emit_arity_diagnostics(file));
         out.extend(emits::unknown_emit_diagnostics(file, deps));
         out.sort_by(|left, right| {
@@ -738,6 +757,14 @@ impl Analyzer for SolidityAnalyzer {
         let file = Self::parse_file(ctx.text);
         if let Some(span) = goto::goto_definition(&file, ctx.text, ctx.offset) {
             return Some(GotoTarget::new(ctx.path.to_path_buf(), span));
+        }
+        // Builtins have no target by design. Skip dep lookup so builtin
+        // names never jump to coincidental same-name declarations.
+        {
+            let scope = collect_symbols(&file);
+            if forge::is_builtin_at(&file, ctx.text, ctx.offset, &scope) {
+                return None;
+            }
         }
         if let Some((name, _)) = emits::emit_name_at(ctx.text, ctx.offset) {
             let deps = Self::dep_files(ctx);
