@@ -1,3 +1,4 @@
+use super::forge::{ASSERT_TABLE, CONSOLE_TABLE, VM_TABLE};
 use super::{
     CompletionItem, CompletionKind, Scope, SolidityAnalyzer, SymbolKind, collect_symbols,
     complete_at, complete_bare_imports, complete_import_paths, completion_item_kind, exports_of,
@@ -2008,4 +2009,266 @@ fn emit_dep_goto_jumps_to_other_file() {
     assert_eq!(hit.path, PathBuf::from("/B.sol"));
     let want = b.find("Transfer").expect("decl") as u32;
     assert!(hit.span.contains(want));
+}
+
+fn forge_body(body: &str) -> String {
+    format!("contract T is Test {{\nfunction f() public {{\n{body}\n}}\n}}")
+}
+
+fn forge_plain(body: &str) -> String {
+    format!("contract C {{\nfunction f() public {{\n{body}\n}}\n}}")
+}
+
+fn builtin_hit(text: &str, offset: u32, label: &str) -> CompletionItem {
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, _) = SolidityParser.parse_with_errors(&tokens);
+    complete_at(&file, text, offset)
+        .into_iter()
+        .find(|item| item.label == label)
+        .unwrap_or_else(|| panic!("missing builtin {label}"))
+}
+
+#[test]
+fn vm_completion_covers_every_table_entry() {
+    let text = forge_body("vm.");
+    let at = text.rfind("vm.").expect("dot") as u32 + 3;
+    let tokens = SolidityLexer.tokenize(&text);
+    let (file, _) = SolidityParser.parse_with_errors(&tokens);
+    let items = complete_at(&file, &text, at);
+    for builtin in VM_TABLE {
+        let hit = items
+            .iter()
+            .find(|item| item.label == builtin.name)
+            .unwrap_or_else(|| panic!("missing {}", builtin.name));
+        assert_eq!(completion_item_kind(hit.kind).value(), 3);
+        assert!(hit.detail.contains("forge-std"), "detail: {}", hit.detail);
+    }
+}
+
+#[test]
+fn console_completion_covers_every_table_entry() {
+    let text = forge_body("console.");
+    let at = text.rfind("console.").expect("dot") as u32 + 8;
+    let tokens = SolidityLexer.tokenize(&text);
+    let (file, _) = SolidityParser.parse_with_errors(&tokens);
+    let items = complete_at(&file, &text, at);
+    for builtin in CONSOLE_TABLE {
+        let hit = items
+            .iter()
+            .find(|item| item.label == builtin.name)
+            .unwrap_or_else(|| panic!("missing {}", builtin.name));
+        assert_eq!(completion_item_kind(hit.kind).value(), 3);
+        assert!(hit.detail.contains("forge-std"), "detail: {}", hit.detail);
+    }
+}
+
+#[test]
+fn assert_completion_covers_every_table_entry() {
+    for builtin in ASSERT_TABLE {
+        let text = forge_body(builtin.name);
+        let at = text.rfind(builtin.name).expect("prefix") as u32 + builtin.name.len() as u32;
+        let hit = builtin_hit(&text, at, builtin.name);
+        assert_eq!(completion_item_kind(hit.kind).value(), 3);
+        assert!(hit.detail.contains("forge-std"), "detail: {}", hit.detail);
+    }
+}
+
+#[test]
+fn vm_hover_covers_every_table_entry() {
+    for builtin in VM_TABLE {
+        let text = forge_body(&format!("vm.{}(x);", builtin.name));
+        let tokens = SolidityLexer.tokenize(&text);
+        let (file, _) = SolidityParser.parse_with_errors(&tokens);
+        let at = text.rfind(builtin.name).expect("member") as u32;
+        let found = hover_at(&file, &text, at).expect("hover");
+        assert!(
+            found.contents.contains(builtin.detail),
+            "contents: {}",
+            found.contents
+        );
+        assert!(
+            found.contents.contains("forge-std"),
+            "contents: {}",
+            found.contents
+        );
+    }
+}
+
+#[test]
+fn assert_hover_covers_every_table_entry() {
+    for builtin in ASSERT_TABLE {
+        let text = forge_body(&format!("{}(x);", builtin.name));
+        let tokens = SolidityLexer.tokenize(&text);
+        let (file, _) = SolidityParser.parse_with_errors(&tokens);
+        let at = text.rfind(builtin.name).expect("callee") as u32;
+        let found = hover_at(&file, &text, at).expect("hover");
+        assert!(
+            found.contents.contains(builtin.detail),
+            "contents: {}",
+            found.contents
+        );
+        assert!(
+            found.contents.contains("forge-std"),
+            "contents: {}",
+            found.contents
+        );
+    }
+}
+
+#[test]
+fn builtin_goto_returns_none_by_design() {
+    let member_text = forge_body("vm.prank(x);");
+    let tokens = SolidityLexer.tokenize(&member_text);
+    let (member_file, _) = SolidityParser.parse_with_errors(&tokens);
+    let member_at = member_text.rfind("prank").expect("member") as u32;
+    assert!(goto_definition(&member_file, &member_text, member_at).is_none());
+    let plain_text = forge_body("assertEq(a, b);");
+    let plain_tokens = SolidityLexer.tokenize(&plain_text);
+    let (plain_file, _) = SolidityParser.parse_with_errors(&plain_tokens);
+    let plain_at = plain_text.rfind("assertEq").expect("callee") as u32;
+    assert!(goto_definition(&plain_file, &plain_text, plain_at).is_none());
+    let workspace = open_workspace(&[("/repo/C.sol", plain_text.as_str())]);
+    assert!(goto_multi(&workspace, "/repo/C.sol", &plain_text, "assertEq").is_none());
+}
+
+#[test]
+fn goto_skips_coincidental_dep_match() {
+    let dep =
+        "contract B {\nfunction assertEq(uint a) public {}\nfunction prank(address x) public {}\n}";
+    let cur = "import \"./B.sol\";\ncontract T is Test {\nfunction f() public {\nassertEq(a, b);\nvm.prank(x);\n}\n}";
+    let mut workspace = open_workspace(&[("/A.sol", cur), ("/B.sol", dep)]);
+    workspace.set_file_deps(PathBuf::from("/A.sol"), vec![PathBuf::from("/B.sol")]);
+    assert!(goto_multi(&workspace, "/A.sol", cur, "assertEq(a").is_none());
+    assert!(goto_multi(&workspace, "/A.sol", cur, "prank(x)").is_none());
+}
+
+#[test]
+fn user_receiver_shadows_vm_builtin() {
+    let text = "contract T is Test {\nuint vm;\nfunction f() public {\nvm.\n}\n}";
+    let at = text.rfind("vm.").expect("dot") as u32 + 3;
+    let labels = complete_labels(text, at);
+    assert!(!labels.contains(&"prank".to_string()), "labels: {labels:?}");
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, _) = SolidityParser.parse_with_errors(&tokens);
+    let member_at = at - 1;
+    assert!(hover_at(&file, text, member_at).is_none());
+}
+
+#[test]
+fn user_function_shadows_assert_builtin() {
+    let text = "contract T is Test {\nfunction assertEq(uint a) public {}\nfunction f() public {\nassertEq;\n}\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let at = text.rfind("assertEq;").expect("use") as u32;
+    let found = hover_at(&file, text, at).expect("hover");
+    assert!(
+        !found.contents.contains("forge-std"),
+        "local wins: {}",
+        found.contents
+    );
+    assert_eq!(found.contents, "function assertEq(uint a)");
+    let complete_at_use = text.rfind("assertEq;").expect("prefix") as u32 + 6;
+    let items = complete_at(&file, text, complete_at_use);
+    let hits: Vec<&CompletionItem> = items
+        .iter()
+        .filter(|item| item.label == "assertEq")
+        .collect();
+    assert_eq!(hits.len(), 1);
+    assert!(
+        !hits[0].detail.contains("forge-std"),
+        "detail: {}",
+        hits[0].detail
+    );
+}
+
+#[test]
+fn asserts_stay_hidden_without_test_heritage() {
+    let text = forge_plain("assertEq(a, b);");
+    let at = text.rfind("assertEq").expect("callee") as u32;
+    let tokens = SolidityLexer.tokenize(&text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    assert!(hover_at(&file, &text, at).is_none());
+    let complete_at_end = at + 8;
+    let labels = complete_labels(&text, complete_at_end);
+    assert!(
+        !labels.contains(&"assertEq".to_string()),
+        "labels: {labels:?}"
+    );
+    let wrong = forge_plain("assertEq(a);");
+    assert!(diagnostics_of(&wrong).is_empty());
+}
+
+#[test]
+fn transitive_test_heritage_enables_asserts() {
+    let text = "contract Base is Test {\n}\ncontract T is Base {\nfunction f() public {\nassertEq(a, b);\n}\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let at = text.rfind("assertEq(a").expect("callee") as u32;
+    let found = hover_at(&file, text, at).expect("hover");
+    assert!(
+        found.contents.contains("forge-std"),
+        "contents: {}",
+        found.contents
+    );
+}
+
+#[test]
+fn unknown_forge_names_stay_silent() {
+    let member_text = forge_body("vm.bogus(x);");
+    let tokens = SolidityLexer.tokenize(&member_text);
+    let (member_file, _) = SolidityParser.parse_with_errors(&tokens);
+    let member_at = member_text.rfind("bogus").expect("member") as u32;
+    assert!(hover_at(&member_file, &member_text, member_at).is_none());
+    let plain_text = forge_body("assertBogus(a);");
+    assert!(diagnostics_of(&plain_text).is_empty());
+    let hevm_text = forge_body("hevm.warp(x);");
+    let hevm_tokens = SolidityLexer.tokenize(&hevm_text);
+    let (hevm_file, _) = SolidityParser.parse_with_errors(&hevm_tokens);
+    let hevm_at = hevm_text.rfind("warp").expect("member") as u32;
+    assert!(hover_at(&hevm_file, &hevm_text, hevm_at).is_none());
+    let hevm_dot = hevm_text.rfind("hevm.").expect("dot") as u32 + 5;
+    let labels = complete_labels(&hevm_text, hevm_dot);
+    assert!(labels.is_empty(), "labels: {labels:?}");
+}
+
+#[test]
+fn assert_arity_reports_exact_message() {
+    let short = forge_body("assertEq(a);");
+    let found = diagnostics_of(&short);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "this function 'assertEq' takes 2 arguments but 1 supplied"
+    );
+    let long = forge_body("assertTrue(a, b);");
+    let too_many = diagnostics_of(&long);
+    assert_eq!(too_many.len(), 1, "diags: {too_many:?}");
+    assert_eq!(
+        too_many[0].message,
+        "this function 'assertTrue' takes 1 arguments but 2 supplied"
+    );
+    let ok = forge_body("assertEq(a, b);");
+    assert!(diagnostics_of(&ok).is_empty());
+}
+
+#[test]
+fn builtin_completion_beats_coincidental_dep() {
+    let dep = "contract B {\nfunction assertEq(uint a) public {}\n}";
+    let cur = "import \"./B.sol\";\ncontract T is Test {\nfunction f() public {\nassertEq\n}\n}";
+    let mut workspace = open_workspace(&[("/A.sol", cur), ("/B.sol", dep)]);
+    workspace.set_file_deps(PathBuf::from("/A.sol"), vec![PathBuf::from("/B.sol")]);
+    let found = complete_multi(&workspace, "/A.sol", cur, "assertEq");
+    let hits: Vec<&(String, String)> = found
+        .iter()
+        .filter(|(label, _)| label == "assertEq")
+        .collect();
+    assert_eq!(hits.len(), 1);
+    assert!(
+        hits[0].1.contains("forge-std"),
+        "builtin wins: {}",
+        hits[0].1
+    );
 }

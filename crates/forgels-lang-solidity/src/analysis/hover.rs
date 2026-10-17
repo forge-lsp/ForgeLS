@@ -22,13 +22,24 @@ pub fn hover_at(file: &SolidityFile, text: &str, offset: u32) -> Option<Hover> {
     {
         let scope = collect_symbols(file);
         let kind = super::members::receiver_type(file, &scope, offset, &ctx.receiver);
-        let found = super::members::members_of(file, &kind)
+        if let Some(found) = super::members::members_of(file, &kind)
             .into_iter()
-            .find(|member| member.name == ctx.member)?;
-        return Some(Hover {
-            contents: found.detail,
-            span: found.span,
-        });
+            .find(|member| member.name == ctx.member)
+        {
+            return Some(Hover {
+                contents: found.detail,
+                span: found.span,
+            });
+        }
+        if let Some(builtin) =
+            super::forge::member_builtin(&ctx.receiver, &ctx.member, &scope, offset)
+        {
+            return Some(Hover {
+                contents: super::forge::builtin_detail(builtin),
+                span: ctx.member_span,
+            });
+        }
+        return None;
     }
     if let Some((name, span)) = super::emits::emit_name_at(text, offset) {
         let found = super::emits::resolve_local_emit(file, offset, &name)?;
@@ -37,11 +48,17 @@ pub fn hover_at(file: &SolidityFile, text: &str, offset: u32) -> Option<Hover> {
             span,
         });
     }
-    let (word, _) = word_at(text, offset)?;
+    let (word, span) = word_at(text, offset)?;
     let scope = collect_symbols(file);
-    let symbol = scope.resolve(&word, offset)?;
+    if let Some(symbol) = scope.resolve(&word, offset) {
+        return Some(Hover {
+            contents: symbol.detail.clone(),
+            span: symbol.span,
+        });
+    }
+    let builtin = super::forge::plain_builtin(file, &scope, offset, &word)?;
     Some(Hover {
-        contents: symbol.detail.clone(),
-        span: symbol.span,
+        contents: super::forge::builtin_detail(builtin),
+        span,
     })
 }

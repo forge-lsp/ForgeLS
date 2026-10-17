@@ -60,6 +60,35 @@ Status: token kinds defined. Real lexer and parser are planned.
 - Arity: `calls::arity_diagnostics` follows the same chain, derived wins.
 - Exports: `exports_of` stays own members only, no flatten.
 
+## Forge-std cheatcodes
+
+- Scope: `analysis::forge` tables plus thin wiring in `completion`,
+  `hover`, `mod` (member completion, goto guard, diagnostics).
+- Subset:
+  - `vm.*` member cheatcodes (10): `prank`, `startPrank`, `stopPrank`,
+    `warp`, `roll`, `deal`, `label`, `mockCall`, `expectRevert`,
+    `expectEmit`.
+  - `Test` plain asserts (6): `assertTrue`, `assertFalse`, `assertEq`,
+    `assertNotEq`, `assertGt`, `assertLt` with fixed arity 1 or 2.
+  - `console.*` members (3): `log`, `logUint`, `logAddress`.
+- Rules:
+  - User definitions always win: any scope hit on the receiver
+    (`vm`, `console`) or the assert name hides the builtin.
+  - Unknown names stay silent: no completion, no hover, no diagnostic.
+  - Plain asserts need `Test` heritage: direct or transitive same file
+    bases. Other files never see them.
+  - Completion and hover tag builtins with ` - from forge-std` and reuse
+    kind Function (3). No new completion kind.
+  - Goto returns `None` for builtins by design and skips dep lookup, so
+    builtin names never jump to coincidental same-name declarations.
+- Limits:
+  - Member arity is postponed: `MemberExpr` stores receiver, dot, and
+    member only with no arg count, so `vm.*` arity waits for parser
+    support. Plain asserts check arity with the same message shape as
+    plain calls.
+  - Message-string assert overloads (for example 3-arg `assertEq`) are
+    follow-up. V1 checks the canonical fixed arity only.
+
 ## V1 limits
 
 - Tracked only: `dep_texts` skips untracked and missing files.

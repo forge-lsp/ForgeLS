@@ -7,6 +7,9 @@ use forgels_syntax::{Lexer, Span};
 /// Member positions after a dot jump to the field or contract member.
 /// Emit name slots jump to the event declaration only. Positions on
 /// whitespace, operators, or undeclared words return `None`.
+/// Forge builtins (`vm.*`, `console.*`, `Test` asserts) return `None` by
+/// design: they have no declaration in the workspace. The caller guards
+/// dep lookup the same way so builtins never jump to coincidental matches.
 /// The caller attaches the document URI; the span alone locates the jump.
 pub fn goto_definition(file: &SolidityFile, text: &str, offset: u32) -> Option<Span> {
     if let Some(ctx) = super::members::member_context_at(text, offset)
