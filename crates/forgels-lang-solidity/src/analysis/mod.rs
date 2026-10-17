@@ -113,10 +113,12 @@ impl Scope {
     }
 
     /// Resolve `name` at `offset`. The deepest scope wins, so locals
-    /// shadow params and params shadow state variables.
+    /// shadow params and params shadow state variables. Cursor at the
+    /// scope end edge counts as inside, same as `collect_visible`:
+    /// typing happens at offsets no token covers yet.
     pub fn resolve(&self, name: &str, offset: u32) -> Option<&Symbol> {
         for child in &self.children {
-            if child.span.contains(offset)
+            if (child.span.contains(offset) || child.span.end == offset)
                 && let Some(found) = child.resolve(name, offset)
             {
                 return Some(found);
