@@ -12,8 +12,8 @@ pub struct Hover {
 /// Hover info for the word at `offset`, if it names a visible declaration.
 ///
 /// Member positions after a dot resolve against the receiver type first.
-/// Array members use the cursor member span since their detail spans are
-/// synthetic. Emit name slots resolve to event declarations only, so a
+/// Array and address members use the cursor member span since their
+/// detail spans are synthetic. Emit name slots resolve to event declarations only, so a
 /// function with the same name never shadows the event. Positions on
 /// whitespace, operators, or undeclared words return `None`.
 pub fn hover_at(file: &SolidityFile, text: &str, offset: u32) -> Option<Hover> {
@@ -25,6 +25,14 @@ pub fn hover_at(file: &SolidityFile, text: &str, offset: u32) -> Option<Hover> {
         let kind = super::members::receiver_type(file, &scope, offset, &ctx.receiver);
         if let super::members::TypeKind::Array { dynamic } = kind
             && let Some(found) = super::array::array_member(&ctx.member, dynamic)
+        {
+            return Some(Hover {
+                contents: found.detail,
+                span: ctx.member_span,
+            });
+        }
+        if matches!(kind, super::members::TypeKind::Address)
+            && let Some(found) = super::address::address_member(&ctx.member)
         {
             return Some(Hover {
                 contents: found.detail,

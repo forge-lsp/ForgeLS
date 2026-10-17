@@ -2822,3 +2822,149 @@ fn array_cross_file_members_stay_empty() {
     assert!(!labels.contains(&"greet"), "labels: {labels:?}");
     assert!(hover_multi(&workspace, "/C.sol", cur, "length").is_some());
 }
+
+#[test]
+fn address_completion_lists_all_members() {
+    let text = "contract C {\nfunction f() public {\naddress wallet;\nwallet.\n}\n}";
+    let at = text.rfind("wallet.").expect("dot") as u32 + 7;
+    let labels = complete_labels(text, at);
+    for want in [
+        "balance",
+        "code",
+        "codehash",
+        "transfer",
+        "send",
+        "call",
+        "delegatecall",
+        "staticcall",
+    ] {
+        assert!(labels.contains(&want.to_string()), "labels: {labels:?}");
+    }
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, _) = SolidityParser.parse_with_errors(&tokens);
+    let items = complete_at(&file, text, at);
+    let balance = items
+        .iter()
+        .find(|item| item.label == "balance")
+        .expect("hit");
+    assert_eq!(completion_item_kind(balance.kind).value(), 5);
+    assert!(
+        balance.detail.contains("uint256 balance"),
+        "detail: {}",
+        balance.detail
+    );
+    let transfer = items
+        .iter()
+        .find(|item| item.label == "transfer")
+        .expect("hit");
+    assert_eq!(completion_item_kind(transfer.kind).value(), 3);
+}
+
+#[test]
+fn address_payable_matches_plain_address() {
+    let text = "contract C {\nfunction f() public {\naddress payable wallet;\nwallet.\n}\n}";
+    let at = text.rfind("wallet.").expect("dot") as u32 + 7;
+    let labels = complete_labels(text, at);
+    for want in [
+        "balance",
+        "code",
+        "codehash",
+        "transfer",
+        "send",
+        "call",
+        "delegatecall",
+        "staticcall",
+    ] {
+        assert!(labels.contains(&want.to_string()), "labels: {labels:?}");
+    }
+}
+
+#[test]
+fn address_array_stays_array() {
+    let text = "contract C {\nfunction f() public {\naddress[] wallets;\nwallets.\n}\n}";
+    let at = text.rfind("wallets.").expect("dot") as u32 + 8;
+    let labels = complete_labels(text, at);
+    assert!(labels.contains(&"length".to_string()), "labels: {labels:?}");
+    assert!(labels.contains(&"push".to_string()), "labels: {labels:?}");
+    assert!(
+        !labels.contains(&"balance".to_string()),
+        "labels: {labels:?}"
+    );
+    assert!(
+        !labels.contains(&"transfer".to_string()),
+        "labels: {labels:?}"
+    );
+}
+
+#[test]
+fn address_hover_shows_solidity_origin_with_member_span() {
+    let text = "contract C {\nfunction f() public {\naddress wallet;\nwallet.balance;\n}\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let at = text.rfind("wallet.balance").expect("use") as u32 + 7;
+    let found = hover_at(&file, text, at).expect("hover");
+    assert_eq!(found.contents, "uint256 balance - from solidity");
+    assert!(found.span.contains(at));
+    assert_eq!(found.span.start, at);
+    assert_eq!(found.span.end, at + 7);
+}
+
+#[test]
+fn address_goto_returns_none_and_skips_coincidental_dep() {
+    let text = "contract C {\nfunction f() public {\naddress wallet;\nwallet.balance;\n}\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let at = text.rfind("wallet.balance").expect("use") as u32 + 7;
+    assert!(goto_definition(&file, text, at).is_none());
+    let dep = "contract B {\nfunction balance() public {}\nfunction transfer() public {}\n}";
+    let cur = "import \"./B.sol\";\ncontract C {\nfunction f() public {\naddress wallet;\nwallet.balance;\nwallet.transfer;\n}\n}";
+    let mut workspace = open_workspace(&[("/A.sol", cur), ("/B.sol", dep)]);
+    workspace.set_file_deps(PathBuf::from("/A.sol"), vec![PathBuf::from("/B.sol")]);
+    assert!(goto_multi(&workspace, "/A.sol", cur, "balance").is_none());
+    assert!(goto_multi(&workspace, "/A.sol", cur, "transfer").is_none());
+}
+
+#[test]
+fn address_methods_wrong_arity_reports_exact_message() {
+    for name in ["transfer", "send", "call", "delegatecall", "staticcall"] {
+        let text = format!(
+            "contract C {{\nfunction f() public {{\naddress wallet;\nwallet.{name}();\n}}\n}}"
+        );
+        let found = diagnostics_of(&text);
+        assert_eq!(found.len(), 1, "{name}: {found:?}");
+        assert_eq!(
+            found[0].message,
+            format!("this function '{name}' takes 1 arguments but 0 supplied")
+        );
+        let covered = &text[found[0].span.start as usize..found[0].span.end as usize];
+        assert!(
+            covered.starts_with(&format!("wallet.{name}")) && covered.ends_with(')'),
+            "span: {covered}"
+        );
+        let ok = format!(
+            "contract C {{\nfunction f() public {{\naddress wallet;\nwallet.{name}(1);\n}}\n}}"
+        );
+        assert!(diagnostics_of(&ok).is_empty(), "{name}: ok");
+    }
+}
+
+#[test]
+fn address_fields_and_unknown_calls_stay_silent() {
+    let text = "contract C {\nfunction f() public {\naddress wallet;\nwallet.balance(1);\nwallet.code(1);\nwallet.codehash(1);\nwallet.bogus(1, 2);\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn address_cross_file_members_stay_empty() {
+    let dep = "contract Hello {\nfunction greet() public {}\n}";
+    let cur = "import \"./H.sol\";\ncontract C {\nfunction f() public {\naddress wallet;\nwallet.balance;\nwallet.\n}\n}";
+    let mut workspace = open_workspace(&[("/H.sol", dep), ("/C.sol", cur)]);
+    workspace.set_file_deps(PathBuf::from("/C.sol"), vec![PathBuf::from("/H.sol")]);
+    let found = member_complete_multi(&workspace, "/C.sol", cur, "wallet.");
+    let labels: Vec<&str> = found.iter().map(|item| item.0.as_str()).collect();
+    assert!(labels.contains(&"balance"), "labels: {labels:?}");
+    assert!(!labels.contains(&"greet"), "labels: {labels:?}");
+    assert!(hover_multi(&workspace, "/C.sol", cur, "balance").is_some());
+}

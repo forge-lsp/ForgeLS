@@ -1,4 +1,4 @@
-use super::{Scope, SymbolKind, array, forge, inheritance, members};
+use super::{Scope, SymbolKind, address, array, forge, inheritance, members};
 use crate::SolidityFile;
 use forgels_core::DiagnosticData;
 use forgels_syntax::AstNode;
@@ -77,7 +77,9 @@ pub fn arity_diagnostics(file: &SolidityFile, scope: &Scope) -> Vec<DiagnosticDa
 /// stay silent. Receiver resolves with deps, structs stay silent, unknown
 /// types stay silent. Arrays check `push` (1) and `pop` (0) on dynamic
 /// only: `length` calls and fixed array calls stay silent, unknown names
-/// stay silent. Target functions collect own plus linear order bases
+/// stay silent. Addresses check `transfer`, `send`, `call`,
+/// `delegatecall`, and `staticcall` (1 each): `balance`, `code`, and
+/// `codehash` calls stay silent, unknown names stay silent. Target functions collect own plus linear order bases
 /// across files, derived wins and first base wins. Same message as plain.
 pub fn member_arity_diagnostics(
     file: &SolidityFile,
@@ -110,6 +112,21 @@ pub fn member_arity_diagnostics(
                 let kind = members::receiver_type_with_deps(file, scope, offset, &receiver, deps);
                 if let members::TypeKind::Array { dynamic } = &kind {
                     let Some(expected) = array::array_expected_arity(&name, *dynamic) else {
+                        continue;
+                    };
+                    let actual = member.arg_count();
+                    if expected != actual {
+                        out.push(DiagnosticData {
+                            span: member.syntax().span,
+                            message: format!(
+                                "this function '{name}' takes {expected} arguments but {actual} supplied"
+                            ),
+                        });
+                    }
+                    continue;
+                }
+                if matches!(kind, members::TypeKind::Address) {
+                    let Some(expected) = address::address_expected_arity(&name) else {
                         continue;
                     };
                     let actual = member.arg_count();
