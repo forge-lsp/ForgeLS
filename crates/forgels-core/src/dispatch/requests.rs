@@ -268,3 +268,63 @@ fn symbol_value(text: &str, item: &crate::analyzer::DocumentSymbolData) -> Value
         "children": children,
     })
 }
+
+/// Answer `workspace/symbol` with classic `SymbolInformation`.
+/// Empty query returns an empty list. Notifications without id stay silent.
+pub(crate) fn workspace_symbol_response(
+    session: &Session,
+    workspace: &Workspace,
+    params: &Value,
+    id: Option<&Value>,
+) -> Option<String> {
+    let id = id?.clone();
+    let result =
+        workspace_symbol_result(session, workspace, params).unwrap_or(Value::Array(Vec::new()));
+    let response = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "result": result
+    });
+    Some(response.to_string())
+}
+
+fn workspace_symbol_result(
+    session: &Session,
+    workspace: &Workspace,
+    params: &Value,
+) -> Option<Value> {
+    let query = params.get("query").and_then(Value::as_str).unwrap_or("");
+    if query.is_empty() {
+        return Some(Value::Array(Vec::new()));
+    }
+    let found = crate::analyzer::workspace_symbols(workspace, &session.analyzers, query);
+    let mut items = Vec::with_capacity(found.len());
+    for entry in &found {
+        let Some(text) = workspace.get_text(&entry.path) else {
+            continue;
+        };
+        if text
+            .get(entry.span.start as usize..entry.span.end as usize)
+            .is_none()
+        {
+            continue;
+        }
+        let range = span_to_range(text, entry.span);
+        let mut value = serde_json::json!({
+            "name": entry.name,
+            "kind": entry.kind.value(),
+            "location": {
+                "uri": path_to_uri(&entry.path),
+                "range": {
+                    "start": { "line": range.start.line, "character": range.start.character },
+                    "end": { "line": range.end.line, "character": range.end.character },
+                },
+            },
+        });
+        if let Some(container) = entry.container.as_ref() {
+            value["containerName"] = Value::String(container.clone());
+        }
+        items.push(value);
+    }
+    Some(Value::Array(items))
+}

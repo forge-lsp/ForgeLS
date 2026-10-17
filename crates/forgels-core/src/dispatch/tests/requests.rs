@@ -949,3 +949,370 @@ fn document_symbol_default_is_empty_list() {
         .expect("array");
     assert!(items.is_empty());
 }
+
+fn workspace_body(id: u32, query: &str) -> String {
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": "workspace/symbol",
+        "params": { "query": query },
+    })
+    .to_string()
+}
+
+fn open_text(
+    session: &mut super::super::Session,
+    workspace: &mut Workspace,
+    uri: &str,
+    text: &str,
+) {
+    let open = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "textDocument/didOpen",
+        "params": { "textDocument": {
+            "uri": uri, "languageId": "solidity", "version": 1, "text": text,
+        } },
+    })
+    .to_string();
+    assert!(handle_message(session, workspace, &open).is_none());
+}
+
+#[derive(Debug)]
+struct WsAnalyzer;
+
+fn ws_symbol(
+    text: &str,
+    name: &str,
+    kind: forgels_protocol::SymbolKind,
+    children: Vec<crate::analyzer::DocumentSymbolData>,
+) -> Option<crate::analyzer::DocumentSymbolData> {
+    let start = text.find(name)? as u32;
+    let end = start + name.len() as u32;
+    Some(crate::analyzer::DocumentSymbolData::new(
+        name.to_string(),
+        String::new(),
+        kind,
+        Span::new(0, text.len() as u32),
+        Span::new(start, end),
+        children,
+    ))
+}
+
+impl crate::analyzer::Analyzer for WsAnalyzer {
+    fn hover(&self, _ctx: &crate::analyzer::ProjectContext) -> Option<crate::analyzer::HoverData> {
+        None
+    }
+
+    fn complete(
+        &self,
+        _ctx: &crate::analyzer::ProjectContext,
+    ) -> Vec<crate::analyzer::CompletionData> {
+        Vec::new()
+    }
+
+    fn goto(&self, _ctx: &crate::analyzer::ProjectContext) -> Option<Span> {
+        None
+    }
+
+    fn diagnostics(&self, _text: &str) -> Vec<crate::analyzer::DiagnosticData> {
+        Vec::new()
+    }
+
+    fn document_symbols(&self, text: &str) -> Vec<crate::analyzer::DocumentSymbolData> {
+        if text.starts_with("many") {
+            let mut out = Vec::new();
+            for index in 0..60 {
+                let name = format!("Sym{index:02}");
+                out.push(crate::analyzer::DocumentSymbolData::new(
+                    name,
+                    String::new(),
+                    forgels_protocol::SymbolKind::CLASS,
+                    Span::new(0, 4),
+                    Span::new(0, 4),
+                    Vec::new(),
+                ));
+            }
+            return out;
+        }
+        if text.contains("Bad") {
+            let mut out = Vec::new();
+            if let Some(item) = ws_symbol(
+                text,
+                "GoodOne",
+                forgels_protocol::SymbolKind::CLASS,
+                Vec::new(),
+            ) {
+                out.push(item);
+            }
+            out.push(crate::analyzer::DocumentSymbolData::new(
+                "GoodBad".to_string(),
+                String::new(),
+                forgels_protocol::SymbolKind::CLASS,
+                Span::new(500, 510),
+                Span::new(500, 510),
+                Vec::new(),
+            ));
+            return out;
+        }
+        let mut out = Vec::new();
+        if text.contains("Token")
+            && let Some(child) = ws_symbol(
+                text,
+                "mint",
+                forgels_protocol::SymbolKind::METHOD,
+                Vec::new(),
+            )
+            && let Some(top) = ws_symbol(
+                text,
+                "Token",
+                forgels_protocol::SymbolKind::CLASS,
+                vec![child],
+            )
+        {
+            out.push(top);
+        }
+        if text.contains("Vault")
+            && let Some(child) = ws_symbol(
+                text,
+                "deposit",
+                forgels_protocol::SymbolKind::METHOD,
+                vec![crate::analyzer::DocumentSymbolData::new(
+                    "inner".to_string(),
+                    String::new(),
+                    forgels_protocol::SymbolKind::FUNCTION,
+                    Span::new(0, 4),
+                    Span::new(0, 4),
+                    Vec::new(),
+                )],
+            )
+            && let Some(top) = ws_symbol(
+                text,
+                "Vault",
+                forgels_protocol::SymbolKind::CLASS,
+                vec![child],
+            )
+        {
+            out.push(top);
+        }
+        if text.contains("Alpha")
+            && let Some(item) = ws_symbol(
+                text,
+                "Alpha",
+                forgels_protocol::SymbolKind::CLASS,
+                Vec::new(),
+            )
+        {
+            out.push(item);
+        }
+        out
+    }
+}
+
+fn session_with_ws() -> super::super::Session {
+    let mut session = super::super::Session::new();
+    session
+        .analyzers
+        .insert(crate::routing::Language::Solidity, Box::new(WsAnalyzer));
+    session
+}
+
+fn workspace_items(reply: &str) -> Vec<Value> {
+    let value: Value = serde_json::from_str(reply).expect("reply is json");
+    value
+        .pointer("/result")
+        .expect("has result")
+        .as_array()
+        .expect("array")
+        .clone()
+}
+
+#[test]
+fn workspace_symbol_empty_query_returns_empty() {
+    let mut session = session_with_ws();
+    let mut workspace = Workspace::new();
+    super::stub::init(&mut session, &mut workspace);
+    open_text(
+        &mut session,
+        &mut workspace,
+        "file:///repo/A.sol",
+        "contract Token { function mint() {} }",
+    );
+    let reply =
+        handle_message(&mut session, &mut workspace, &workspace_body(20, "")).expect("must reply");
+    assert!(workspace_items(&reply).is_empty());
+}
+
+#[test]
+fn workspace_symbol_matches_case_insensitive() {
+    let mut session = session_with_ws();
+    let mut workspace = Workspace::new();
+    super::stub::init(&mut session, &mut workspace);
+    open_text(
+        &mut session,
+        &mut workspace,
+        "file:///repo/A.sol",
+        "contract Token { function mint() {} }",
+    );
+    let reply = handle_message(&mut session, &mut workspace, &workspace_body(21, "token"))
+        .expect("must reply");
+    let items = workspace_items(&reply);
+    assert_eq!(items.len(), 1);
+    assert_eq!(
+        items[0].pointer("/name").expect("has name"),
+        &serde_json::json!("Token")
+    );
+    assert_eq!(
+        items[0].pointer("/kind").expect("has kind"),
+        &serde_json::json!(5)
+    );
+    assert_eq!(
+        items[0].pointer("/location/uri").expect("has uri"),
+        &serde_json::json!("file:///repo/A.sol")
+    );
+}
+
+#[test]
+fn workspace_symbol_flattens_child_with_container() {
+    let mut session = session_with_ws();
+    let mut workspace = Workspace::new();
+    super::stub::init(&mut session, &mut workspace);
+    open_text(
+        &mut session,
+        &mut workspace,
+        "file:///repo/A.sol",
+        "contract Vault { function deposit() {} }",
+    );
+    let reply = handle_message(&mut session, &mut workspace, &workspace_body(22, "deposit"))
+        .expect("must reply");
+    let items = workspace_items(&reply);
+    assert_eq!(items.len(), 1);
+    assert_eq!(
+        items[0].pointer("/name").expect("has name"),
+        &serde_json::json!("deposit")
+    );
+    assert_eq!(
+        items[0].pointer("/containerName").expect("has container"),
+        &serde_json::json!("Vault")
+    );
+    let top_reply = handle_message(&mut session, &mut workspace, &workspace_body(23, "vault"))
+        .expect("must reply");
+    let top_items = workspace_items(&top_reply);
+    assert_eq!(top_items.len(), 1);
+    assert!(top_items[0].get("containerName").is_none());
+}
+
+#[test]
+fn workspace_symbol_skips_grandchild_beyond_depth_one() {
+    let mut session = session_with_ws();
+    let mut workspace = Workspace::new();
+    super::stub::init(&mut session, &mut workspace);
+    open_text(
+        &mut session,
+        &mut workspace,
+        "file:///repo/A.sol",
+        "contract Vault { function deposit() {} }",
+    );
+    let reply = handle_message(&mut session, &mut workspace, &workspace_body(24, "inner"))
+        .expect("must reply");
+    assert!(workspace_items(&reply).is_empty());
+}
+
+#[test]
+fn workspace_symbol_sorts_by_path() {
+    let mut session = session_with_ws();
+    let mut workspace = Workspace::new();
+    super::stub::init(&mut session, &mut workspace);
+    open_text(
+        &mut session,
+        &mut workspace,
+        "file:///repo/B.sol",
+        "contract Alpha {}",
+    );
+    open_text(
+        &mut session,
+        &mut workspace,
+        "file:///repo/A.sol",
+        "contract Alpha {}",
+    );
+    let reply = handle_message(&mut session, &mut workspace, &workspace_body(25, "alpha"))
+        .expect("must reply");
+    let items = workspace_items(&reply);
+    assert_eq!(items.len(), 2);
+    assert_eq!(
+        items[0].pointer("/location/uri").expect("has uri"),
+        &serde_json::json!("file:///repo/A.sol")
+    );
+    assert_eq!(
+        items[1].pointer("/location/uri").expect("has uri"),
+        &serde_json::json!("file:///repo/B.sol")
+    );
+}
+
+#[test]
+fn workspace_symbol_caps_at_fifty() {
+    let mut session = session_with_ws();
+    let mut workspace = Workspace::new();
+    super::stub::init(&mut session, &mut workspace);
+    open_text(&mut session, &mut workspace, "file:///repo/A.sol", "many");
+    let reply = handle_message(&mut session, &mut workspace, &workspace_body(26, "sym"))
+        .expect("must reply");
+    assert_eq!(workspace_items(&reply).len(), 50);
+}
+
+#[test]
+fn workspace_symbol_skips_bad_span() {
+    let mut session = session_with_ws();
+    let mut workspace = Workspace::new();
+    super::stub::init(&mut session, &mut workspace);
+    open_text(
+        &mut session,
+        &mut workspace,
+        "file:///repo/A.sol",
+        "contract Bad { contract GoodOne {} }",
+    );
+    let reply = handle_message(&mut session, &mut workspace, &workspace_body(27, "good"))
+        .expect("must reply");
+    let items = workspace_items(&reply);
+    assert_eq!(items.len(), 1);
+    assert_eq!(
+        items[0].pointer("/name").expect("has name"),
+        &serde_json::json!("GoodOne")
+    );
+}
+
+#[test]
+fn workspace_symbol_without_id_stays_silent() {
+    let mut session = session_with_ws();
+    let mut workspace = Workspace::new();
+    super::stub::init(&mut session, &mut workspace);
+    open_text(
+        &mut session,
+        &mut workspace,
+        "file:///repo/A.sol",
+        "contract Token { function mint() {} }",
+    );
+    let body = r#"{"jsonrpc":"2.0","method":"workspace/symbol","params":{"query":"token"}}"#;
+    assert!(handle_message(&mut session, &mut workspace, body).is_none());
+}
+
+#[test]
+fn workspace_symbol_missing_query_returns_empty() {
+    let mut session = session_with_ws();
+    let mut workspace = Workspace::new();
+    super::stub::init(&mut session, &mut workspace);
+    open_text(
+        &mut session,
+        &mut workspace,
+        "file:///repo/A.sol",
+        "contract Token { function mint() {} }",
+    );
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 28,
+        "method": "workspace/symbol",
+        "params": {},
+    })
+    .to_string();
+    let reply = handle_message(&mut session, &mut workspace, &body).expect("must reply");
+    assert!(workspace_items(&reply).is_empty());
+}

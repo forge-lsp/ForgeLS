@@ -33,7 +33,8 @@ fn advertises_exact_beta_capabilities() {
             "documentSymbolProvider",
             "hoverProvider",
             "signatureHelpProvider",
-            "textDocumentSync"
+            "textDocumentSync",
+            "workspaceSymbolProvider"
         ]
     );
     let triggers = caps

@@ -46,6 +46,7 @@ flowchart LR
 - Remap: `resolve_with_remappings` tries relative first, then longest prefix match joined to root. Join is lexical only.
 - Root: `resolve_root_for` picks owning workspace root, else config root, else importer parent.
 - Fan-out: `dependents_to_refresh` filters `transitive_dependents` to tracked files. Cap is `MAX_DEPENDENT_REPUBLISH = 32`. Each target republishes with its own version.
+- Symbol: `workspace_symbols(workspace, analyzers, query)` scans tracked files path-sorted, reuses `Analyzer::document_symbols` per file, flattens depth 0-1. Substring case-insensitive on name, empty query returns empty, caps at `MAX_WORKSPACE_SYMBOLS = 50` with early exit. Skips missing analyzers and out-of-bounds spans. Dispatch answers `workspace/symbol` with classic `SymbolInformation` and capability `workspaceSymbolProvider: true`.
 
 ```mermaid
 flowchart LR
