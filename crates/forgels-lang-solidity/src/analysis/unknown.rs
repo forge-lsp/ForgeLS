@@ -1,0 +1,409 @@
+use std::collections::HashSet;
+use std::path::PathBuf;
+
+use forgels_core::DiagnosticData;
+use forgels_syntax::{AstNode, Lexer, Span};
+
+use super::{Scope, collect_symbols, forge};
+use crate::lexer::SolidityKind;
+use crate::{SolidityFile, SolidityLexer};
+
+/// Receivers that never error, even with no declaration.
+///
+/// Covers `msg.sender`, `block.timestamp`, `abi.encode`, `vm.*`,
+/// `console.*`, plus `this` and `super`. User declarations shadow
+/// them via the scope check first.
+pub(crate) const GLOBAL_RECEIVERS: &[&str] = &[
+    "msg", "block", "tx", "abi", "vm", "console", "this", "super",
+];
+
+/// Plain globals that never error.
+///
+/// Covers builtin calls, hash helpers, and the `Test` base from
+/// forge-std which lives outside the workspace. User declarations
+/// still win via the scope check first.
+pub(crate) const ALWAYS_OK: &[&str] = &[
+    "require",
+    "assert",
+    "revert",
+    "keccak256",
+    "sha256",
+    "ripemd160",
+    "ecrecover",
+    "addmod",
+    "mulmod",
+    "selfdestruct",
+    "gasleft",
+    "blockhash",
+    "now",
+    "Test",
+];
+
+/// Unknown identifier errors: every `Ident` token must resolve.
+///
+/// Resolve order is scope, dep exports, forge asserts, allowlists,
+/// then one way prefix escape for typing state. Member names after
+/// a dot stay silent so member arity owns them. Emit names stay
+/// silent so `unknown_emit` owns them without doubles.
+pub fn unknown_identifier_diagnostics(
+    file: &SolidityFile,
+    text: &str,
+    scope: &Scope,
+    deps: &[(PathBuf, SolidityFile)],
+) -> Vec<DiagnosticData> {
+    let tokens = SolidityLexer.tokenize(text);
+    let decls = decl_spans(file);
+    let decl_set: HashSet<(u32, u32)> = decls.iter().map(|span| (span.start, span.end)).collect();
+    let imports = import_spans(file);
+    let emits = emit_spans(file);
+    let emit_set: HashSet<(u32, u32)> = emits.iter().map(|span| (span.start, span.end)).collect();
+    let members = member_spans(file);
+    let member_set: HashSet<(u32, u32)> =
+        members.iter().map(|span| (span.start, span.end)).collect();
+    let assemblies = assembly_ranges(&tokens);
+    let dep_names = dep_export_names(deps);
+    let mut out = Vec::new();
+    for token in &tokens {
+        if token.kind != SolidityKind::Ident.as_u16() {
+            continue;
+        }
+        if token.text.is_empty() {
+            continue;
+        }
+        let span = token.span;
+        if decl_set.contains(&(span.start, span.end)) {
+            continue;
+        }
+        if inside_any(&imports, span.start) {
+            continue;
+        }
+        if emit_set.contains(&(span.start, span.end)) {
+            continue;
+        }
+        if member_set.contains(&(span.start, span.end)) {
+            continue;
+        }
+        if preceded_by_dot(text, span.start) {
+            continue;
+        }
+        if inside_any(&assemblies, span.start) {
+            continue;
+        }
+        let name = token.text.as_str();
+        if scope.resolve(name, span.start).is_some() {
+            continue;
+        }
+        if dep_names.contains(name) {
+            continue;
+        }
+        if forge::plain_builtin(file, scope, span.start, name).is_some() {
+            continue;
+        }
+        if GLOBAL_RECEIVERS.contains(&name) || ALWAYS_OK.contains(&name) {
+            continue;
+        }
+        if is_typing_prefix(scope, deps, name, span.start) {
+            continue;
+        }
+        out.push(DiagnosticData {
+            span,
+            message: format!("unresolved identifier '{name}'"),
+        });
+    }
+    out
+}
+
+fn inside_any(spans: &[Span], offset: u32) -> bool {
+    spans.iter().any(|span| span.contains(offset))
+}
+
+/// True when the byte before `start` is a dot with no gap.
+///
+/// Covers chained `a.b.c` tails the single level AST drops. Receiver
+/// side stays checked: only the name after the dot escapes.
+fn preceded_by_dot(text: &str, start: u32) -> bool {
+    let index = start as usize;
+    if index == 0 {
+        return false;
+    }
+    matches!(text.as_bytes().get(index - 1), Some(b'.'))
+}
+
+/// Every declaration name span: contracts, functions, params, vars,
+/// structs plus fields, enums plus variants, errors, user types,
+/// events, modifiers.
+fn decl_spans(file: &SolidityFile) -> Vec<Span> {
+    let mut out = Vec::new();
+    for item in file.structs() {
+        if let Some(span) = item.name_span() {
+            out.push(span);
+        }
+        for field in item.fields() {
+            if let Some(span) = field.name_span() {
+                out.push(span);
+            }
+        }
+    }
+    for item in file.enums() {
+        if let Some(span) = item.name_span() {
+            out.push(span);
+        }
+        out.extend(item.variant_spans());
+    }
+    for item in file.errors() {
+        if let Some(span) = item.name_span() {
+            out.push(span);
+        }
+    }
+    for item in file.user_types() {
+        if let Some(span) = item.name_span() {
+            out.push(span);
+        }
+    }
+    for item in file.events() {
+        if let Some(span) = item.name_span() {
+            out.push(span);
+        }
+        for param in item.params() {
+            if let Some(span) = param.name_span() {
+                out.push(span);
+            }
+        }
+    }
+    for contract in file.contracts() {
+        if let Some(span) = contract.name_span() {
+            out.push(span);
+        }
+        for item in contract.structs() {
+            if let Some(span) = item.name_span() {
+                out.push(span);
+            }
+            for field in item.fields() {
+                if let Some(span) = field.name_span() {
+                    out.push(span);
+                }
+            }
+        }
+        for item in contract.enums() {
+            if let Some(span) = item.name_span() {
+                out.push(span);
+            }
+            out.extend(item.variant_spans());
+        }
+        for item in contract.errors() {
+            if let Some(span) = item.name_span() {
+                out.push(span);
+            }
+        }
+        for item in contract.user_types() {
+            if let Some(span) = item.name_span() {
+                out.push(span);
+            }
+        }
+        for item in contract.events() {
+            if let Some(span) = item.name_span() {
+                out.push(span);
+            }
+            for param in item.params() {
+                if let Some(span) = param.name_span() {
+                    out.push(span);
+                }
+            }
+        }
+        for item in contract.modifiers() {
+            if let Some(span) = item.name_span() {
+                out.push(span);
+            }
+        }
+        for var in contract.state_vars() {
+            if let Some(span) = var.name_span() {
+                out.push(span);
+            }
+        }
+        for function in contract.functions() {
+            if let Some(span) = function.name_span() {
+                out.push(span);
+            }
+            for param in function.params() {
+                if let Some(span) = param.name_span() {
+                    out.push(span);
+                }
+            }
+            if let Some(body) = function.body() {
+                for local in body.locals() {
+                    if let Some(span) = local.name_span() {
+                        out.push(span);
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Whole import and pragma spans: any ident inside is metadata.
+fn import_spans(file: &SolidityFile) -> Vec<Span> {
+    let mut out = Vec::new();
+    for item in file.imports() {
+        out.push(item.syntax().span);
+    }
+    for item in file.pragmas() {
+        out.push(item.syntax().span);
+    }
+    out
+}
+
+/// Emit name spans: owned by `unknown_emit`, never double here.
+fn emit_spans(file: &SolidityFile) -> Vec<Span> {
+    let mut out = Vec::new();
+    for contract in file.contracts() {
+        for function in contract.functions() {
+            let Some(body) = function.body() else {
+                continue;
+            };
+            for emit in body.emits() {
+                if let Some(span) = emit.name_span() {
+                    out.push(span);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Member name spans after the dot: arity and hover own them.
+fn member_spans(file: &SolidityFile) -> Vec<Span> {
+    let mut out = Vec::new();
+    for contract in file.contracts() {
+        for function in contract.functions() {
+            let Some(body) = function.body() else {
+                continue;
+            };
+            for member in body.members() {
+                if let Some(span) = member.member_span() {
+                    out.push(span);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Assembly body ranges from tokens: dialect string and braces.
+///
+/// The parser skips assembly without nodes, so rebuild ranges here
+/// with balanced brace counting. Idents inside never lint.
+fn assembly_ranges(tokens: &[forgels_syntax::Token]) -> Vec<Span> {
+    let mut out = Vec::new();
+    let mut index = 0;
+    while index < tokens.len() {
+        if tokens[index].kind != SolidityKind::Assembly.as_u16() {
+            index += 1;
+            continue;
+        }
+        let start = tokens[index].span.start;
+        let mut cursor = index + 1;
+        if cursor < tokens.len() && tokens[cursor].kind == SolidityKind::StringLit.as_u16() {
+            cursor += 1;
+        }
+        if cursor < tokens.len() && tokens[cursor].kind == SolidityKind::LParen.as_u16() {
+            let mut depth = 0u32;
+            while cursor < tokens.len() {
+                if tokens[cursor].kind == SolidityKind::LParen.as_u16() {
+                    depth += 1;
+                } else if tokens[cursor].kind == SolidityKind::RParen.as_u16() {
+                    if depth == 0 {
+                        break;
+                    }
+                    depth -= 1;
+                    if depth == 0 {
+                        cursor += 1;
+                        break;
+                    }
+                }
+                cursor += 1;
+            }
+        }
+        if cursor >= tokens.len() || tokens[cursor].kind != SolidityKind::LBrace.as_u16() {
+            index = cursor.max(index + 1);
+            continue;
+        }
+        let mut depth = 0u32;
+        let mut end = tokens[cursor].span.end;
+        while cursor < tokens.len() {
+            if tokens[cursor].kind == SolidityKind::LBrace.as_u16() {
+                depth += 1;
+            } else if tokens[cursor].kind == SolidityKind::RBrace.as_u16() {
+                if depth == 0 {
+                    break;
+                }
+                depth -= 1;
+                end = tokens[cursor].span.end;
+                if depth == 0 {
+                    cursor += 1;
+                    break;
+                }
+            }
+            cursor += 1;
+        }
+        out.push(Span::new(start, end));
+        index = cursor.max(index + 1);
+    }
+    out
+}
+
+/// Exported dep names for the scope miss fallback.
+fn dep_export_names(deps: &[(PathBuf, SolidityFile)]) -> HashSet<String> {
+    let mut out = HashSet::new();
+    for (_, dep_file) in deps {
+        let scope = collect_symbols(dep_file);
+        for symbol in scope.export_symbols() {
+            out.insert(symbol.name.clone());
+        }
+    }
+    out
+}
+
+/// One way prefix escape for typing: unknown is a strict prefix.
+///
+/// `tot` before `total` stays silent while typing. `totalX` past a
+/// known name still errors. Checks visible scope, dep exports, forge
+/// tables, and allowlists in one pass.
+fn is_typing_prefix(
+    scope: &Scope,
+    deps: &[(PathBuf, SolidityFile)],
+    name: &str,
+    offset: u32,
+) -> bool {
+    if name.is_empty() {
+        return false;
+    }
+    for symbol in scope.visible_at(offset) {
+        if symbol.name.len() > name.len() && symbol.name.starts_with(name) {
+            return true;
+        }
+    }
+    for (_, dep_file) in deps {
+        let dep_scope = collect_symbols(dep_file);
+        for symbol in dep_scope.export_symbols() {
+            if symbol.name.len() > name.len() && symbol.name.starts_with(name) {
+                return true;
+            }
+        }
+    }
+    for builtin in forge::ASSERT_TABLE
+        .iter()
+        .chain(forge::VM_TABLE.iter())
+        .chain(forge::CONSOLE_TABLE.iter())
+    {
+        if builtin.name.len() > name.len() && builtin.name.starts_with(name) {
+            return true;
+        }
+    }
+    for known in GLOBAL_RECEIVERS.iter().chain(ALWAYS_OK.iter()) {
+        if known.len() > name.len() && known.starts_with(name) {
+            return true;
+        }
+    }
+    false
+}

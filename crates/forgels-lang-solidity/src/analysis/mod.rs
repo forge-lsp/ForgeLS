@@ -18,6 +18,7 @@ mod imports;
 pub(crate) mod inheritance;
 pub(crate) mod members;
 mod signature;
+mod unknown;
 
 #[cfg(test)]
 mod tests;
@@ -579,6 +580,7 @@ impl SolidityAnalyzer {
 
     fn diagnostics_for(
         file: &SolidityFile,
+        text: &str,
         errors: &[forgels_syntax::ParseError],
         scope: &Scope,
         deps: &[(std::path::PathBuf, SolidityFile)],
@@ -595,6 +597,9 @@ impl SolidityAnalyzer {
         out.extend(forge::assert_arity_diagnostics(file, scope));
         out.extend(emits::emit_arity_diagnostics(file));
         out.extend(emits::unknown_emit_diagnostics(file, deps));
+        out.extend(unknown::unknown_identifier_diagnostics(
+            file, text, scope, deps,
+        ));
         out.sort_by(|left, right| {
             left.span
                 .start
@@ -807,7 +812,7 @@ impl Analyzer for SolidityAnalyzer {
         let tokens = SolidityLexer.tokenize(text);
         let (file, errors) = SolidityParser.parse_with_errors(&tokens);
         let scope = collect_symbols(&file);
-        Self::diagnostics_for(&file, &errors, &scope, &[])
+        Self::diagnostics_for(&file, text, &errors, &scope, &[])
     }
 
     fn diagnostics_ctx(&self, ctx: &ProjectContext) -> Vec<DiagnosticData> {
@@ -815,7 +820,7 @@ impl Analyzer for SolidityAnalyzer {
         let (file, errors) = SolidityParser.parse_with_errors(&tokens);
         let scope = collect_symbols(&file);
         let deps = Self::dep_files(ctx);
-        Self::diagnostics_for(&file, &errors, &scope, &deps)
+        Self::diagnostics_for(&file, ctx.text, &errors, &scope, &deps)
     }
 
     fn imports(&self, text: &str) -> Vec<ImportRef> {

@@ -90,6 +90,14 @@ Status: token kinds defined. Real lexer and parser are planned.
   - Message-string assert overloads (for example 3-arg `assertEq`) are
     follow-up. V1 checks the canonical fixed arity only.
 
+## Unknown identifiers
+
+- Source: `analysis::unknown::unknown_identifier_diagnostics` scans `Ident` tokens only, so comments and strings never lint.
+- Skips: declaration name spans, member names after a dot, emit names (owned by `unknown_emit`), import and pragma spans, assembly bodies.
+- Resolve order: scope, dep exports, forge asserts, allowlists (`GLOBAL_RECEIVERS`, `ALWAYS_OK`), then one way prefix escape for typing (`tot` before `total` stays silent, `totalX` still errors).
+- Error: `unresolved identifier '{name}'` with the token span. Unknown plain callees error, unknown member names stay silent, emit names never double.
+- Limits: reserved words used as names stay silent (`Ident` only), return param names are not tracked, free functions are out of scope.
+
 ## V1 limits
 
 - Tracked only: `dep_texts` skips untracked and missing files.
