@@ -112,6 +112,30 @@ Status: token kinds defined. Real lexer and parser are planned.
 - Limits: data location (`memory`, `storage`, `calldata`) ignored,
   element type ignored, no signature help, chained `a.b.c` untouched.
 
+## Address members
+
+- Scope: `analysis::address` plus thin wiring in `members`, `hover`,
+  `goto`, `calls`, `mod`. No new `SymbolKind`, no new completion kind.
+- Shape: `TypeKind::Address` via `is_address_type` for `address` and
+  `address payable`. V1 does not distinguish payable: the parser strips
+  `payable` from the stored type, so both spellings share one set.
+  Array check runs first, so `address[]` stays an array.
+- Members: `balance` (Field, `uint256`), `code` (Field, `bytes`),
+  `codehash` (Field, `bytes32`), `transfer` (Function, 1 arg), `send`
+  (Function, 1 arg), `call` (Function, 1 arg), `delegatecall`
+  (Function, 1 arg), `staticcall` (Function, 1 arg). Details add
+  ` - from solidity`, kinds reuse Field (5) and Function (3).
+- Completion: `members_of` returns address members, cross file stays empty.
+- Hover: address member shows detail with origin and uses the cursor
+  member span. Synthetic `0,0` spans never leak.
+- Goto: returns `None` by design with a dep guard, so address names never
+  jump to coincidental same-name declarations.
+- Arity: `transfer`, `send`, `call`, `delegatecall`, and `staticcall`
+  take 1, same message as plain calls. `balance`, `code`, and `codehash`
+  calls stay silent. Unknown names stay silent.
+- Limits: payable not distinguished, no signature help, chained `a.b.c`
+  untouched.
+
 ## Unknown identifiers
 
 - Source: `analysis::unknown::unknown_identifier_diagnostics` scans `Ident` tokens only, so comments and strings never lint.
