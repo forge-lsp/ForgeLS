@@ -161,6 +161,76 @@ fn definition_result(session: &Session, workspace: &Workspace, params: &Value) -
     }))
 }
 
+/// Answer `textDocument/references` with a `Location[]`.
+/// Unknown files and unsupported words get an empty list.
+/// `context.includeDeclaration` defaults to true; false drops decls.
+pub(crate) fn references_response(
+    session: &Session,
+    workspace: &Workspace,
+    params: &Value,
+    id: Option<&Value>,
+) -> Option<String> {
+    let id = id?.clone();
+    let result = references_result(session, workspace, params).unwrap_or(Value::Array(Vec::new()));
+    let response = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "result": result
+    });
+    Some(response.to_string())
+}
+
+fn references_result(session: &Session, workspace: &Workspace, params: &Value) -> Option<Value> {
+    let uri = params.get("textDocument")?.get("uri")?.as_str()?;
+    let position = params.get("position")?;
+    let line = position.get("line")?.as_u64()? as u32;
+    let character = position.get("character")?.as_u64()? as u32;
+    let include_decl = params
+        .get("context")
+        .and_then(|ctx| ctx.get("includeDeclaration"))
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    let path = uri_to_path(uri);
+    let doc = workspace.get(&path)?;
+    let analyzer = session.analyzers.get(&doc.language)?;
+    let offset = position_to_offset(&doc.text, Position { line, character });
+    let ctx = ProjectContext::new(&path, &doc.text, offset, workspace);
+    let found = analyzer.references(&ctx)?;
+    let mut items = Vec::with_capacity(found.len());
+    for entry in found.iter().take(crate::analyzer::MAX_REFERENCES) {
+        if entry.is_declaration && !include_decl {
+            continue;
+        }
+        let text: String = match workspace.get_text(&entry.path) {
+            Some(cached) => cached.to_string(),
+            None => {
+                if !forgels_common::fs::is_trackable_file(&entry.path) {
+                    continue;
+                }
+                let Ok(disk) = std::fs::read_to_string(&entry.path) else {
+                    continue;
+                };
+                disk
+            }
+        };
+        if text
+            .get(entry.span.start as usize..entry.span.end as usize)
+            .is_none()
+        {
+            continue;
+        }
+        let range = span_to_range(&text, entry.span);
+        items.push(serde_json::json!({
+            "uri": path_to_uri(&entry.path),
+            "range": {
+                "start": { "line": range.start.line, "character": range.start.character },
+                "end": { "line": range.end.line, "character": range.end.character },
+            },
+        }));
+    }
+    Some(Value::Array(items))
+}
+
 /// Answer `textDocument/signatureHelp`. Notifications without id stay
 /// silent. Positions outside any call and unknown callees get null.
 pub(crate) fn signature_response(

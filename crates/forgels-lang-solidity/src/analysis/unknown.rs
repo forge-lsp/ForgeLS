@@ -113,7 +113,7 @@ pub fn unknown_identifier_diagnostics(
     out
 }
 
-fn inside_any(spans: &[Span], offset: u32) -> bool {
+pub(crate) fn inside_any(spans: &[Span], offset: u32) -> bool {
     spans.iter().any(|span| span.contains(offset))
 }
 
@@ -121,7 +121,7 @@ fn inside_any(spans: &[Span], offset: u32) -> bool {
 ///
 /// Covers chained `a.b.c` tails the single level AST drops. Receiver
 /// side stays checked: only the name after the dot escapes.
-fn preceded_by_dot(text: &str, start: u32) -> bool {
+pub(crate) fn preceded_by_dot(text: &str, start: u32) -> bool {
     let index = start as usize;
     if index == 0 {
         return false;
@@ -132,7 +132,7 @@ fn preceded_by_dot(text: &str, start: u32) -> bool {
 /// Every declaration name span: contracts, functions, params, vars,
 /// structs plus fields, enums plus variants, errors, user types,
 /// events, modifiers.
-fn decl_spans(file: &SolidityFile) -> Vec<Span> {
+pub(crate) fn decl_spans(file: &SolidityFile) -> Vec<Span> {
     let mut out = Vec::new();
     for item in file.structs() {
         if let Some(span) = item.name_span() {
@@ -242,7 +242,7 @@ fn decl_spans(file: &SolidityFile) -> Vec<Span> {
 }
 
 /// Whole import and pragma spans: any ident inside is metadata.
-fn import_spans(file: &SolidityFile) -> Vec<Span> {
+pub(crate) fn import_spans(file: &SolidityFile) -> Vec<Span> {
     let mut out = Vec::new();
     for item in file.imports() {
         out.push(item.syntax().span);
@@ -254,7 +254,7 @@ fn import_spans(file: &SolidityFile) -> Vec<Span> {
 }
 
 /// Emit name spans: owned by `unknown_emit`, never double here.
-fn emit_spans(file: &SolidityFile) -> Vec<Span> {
+pub(crate) fn emit_spans(file: &SolidityFile) -> Vec<Span> {
     let mut out = Vec::new();
     for contract in file.contracts() {
         for function in contract.functions() {
@@ -272,7 +272,7 @@ fn emit_spans(file: &SolidityFile) -> Vec<Span> {
 }
 
 /// Member name spans after the dot: arity and hover own them.
-fn member_spans(file: &SolidityFile) -> Vec<Span> {
+pub(crate) fn member_spans(file: &SolidityFile) -> Vec<Span> {
     let mut out = Vec::new();
     for contract in file.contracts() {
         for function in contract.functions() {
@@ -293,7 +293,7 @@ fn member_spans(file: &SolidityFile) -> Vec<Span> {
 ///
 /// The parser skips assembly without nodes, so rebuild ranges here
 /// with balanced brace counting. Idents inside never lint.
-fn assembly_ranges(tokens: &[forgels_syntax::Token]) -> Vec<Span> {
+pub(crate) fn assembly_ranges(tokens: &[forgels_syntax::Token]) -> Vec<Span> {
     let mut out = Vec::new();
     let mut index = 0;
     while index < tokens.len() {

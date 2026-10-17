@@ -47,6 +47,7 @@ flowchart LR
 - Root: `resolve_root_for` picks owning workspace root, else config root, else importer parent.
 - Fan-out: `dependents_to_refresh` filters `transitive_dependents` to tracked files. Cap is `MAX_DEPENDENT_REPUBLISH = 32`. Each target republishes with its own version.
 - Symbol: `workspace_symbols(workspace, analyzers, query)` scans tracked files path-sorted, reuses `Analyzer::document_symbols` per file, flattens depth 0-1. Substring case-insensitive on name, empty query returns empty, caps at `MAX_WORKSPACE_SYMBOLS = 50` with early exit. Skips missing analyzers and out-of-bounds spans. Dispatch answers `workspace/symbol` with classic `SymbolInformation` and capability `workspaceSymbolProvider: true`.
+- Refs: `Analyzer::references` returns `ReferenceData {path, span, is_declaration}` or `None`. Solidity resolves member, emit, then plain with span identity and scans `Ident` per file, local fast path for vars, sorts path then offset, caps at `MAX_REFERENCES = 100`. Dispatch answers `textDocument/references` with `Location[]` and honors `includeDeclaration` with capability `referencesProvider: true`.
 
 ```mermaid
 flowchart LR

@@ -23,6 +23,7 @@ mod imports;
 pub(crate) mod inheritance;
 pub(crate) mod members;
 pub(crate) mod meta;
+mod references;
 mod signature;
 mod symbols;
 mod unknown;
@@ -37,6 +38,7 @@ pub use completion::{
 pub use goto::{goto_definition, resolve_in_dep};
 pub use hover::{Hover, hover_at};
 pub use imports::imports_in;
+pub use references::find_references;
 pub use signature::signature_at;
 pub use symbols::document_symbols_in;
 
@@ -886,5 +888,11 @@ impl Analyzer for SolidityAnalyzer {
     fn document_symbols(&self, text: &str) -> Vec<forgels_core::DocumentSymbolData> {
         let file = Self::parse_file(text);
         symbols::document_symbols_in(&file)
+    }
+
+    fn references(&self, ctx: &ProjectContext) -> Option<Vec<forgels_core::ReferenceData>> {
+        let file = Self::parse_file(ctx.text);
+        let deps = Self::dep_files(ctx);
+        references::find_references(&file, ctx.text, ctx.offset, ctx.path, &deps, ctx)
     }
 }

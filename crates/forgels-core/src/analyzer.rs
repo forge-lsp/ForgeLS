@@ -288,6 +288,31 @@ impl GotoTarget {
     }
 }
 
+/// Cap for `textDocument/references` results. Bounds fan-out across files.
+pub const MAX_REFERENCES: usize = 100;
+
+/// One reference location with owning file.
+///
+/// `is_declaration` marks the declaration name so dispatch can honor
+/// `context.includeDeclaration`. Languages set it via decl spans;
+/// usages carry false.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReferenceData {
+    pub path: PathBuf,
+    pub span: Span,
+    pub is_declaration: bool,
+}
+
+impl ReferenceData {
+    pub fn new(path: PathBuf, span: Span, is_declaration: bool) -> Self {
+        Self {
+            path,
+            span,
+            is_declaration,
+        }
+    }
+}
+
 /// Request context for position based analysis.
 ///
 /// Carries the current file identity plus the workspace so later work
@@ -475,6 +500,11 @@ pub trait Analyzer: std::fmt::Debug {
     /// languages without symbols keep working.
     fn document_symbols(&self, _text: &str) -> Vec<DocumentSymbolData> {
         Vec::new()
+    }
+    /// Reference locations for the symbol at the cursor. Default is none
+    /// so languages without support keep working.
+    fn references(&self, _ctx: &ProjectContext) -> Option<Vec<ReferenceData>> {
+        None
     }
 }
 
