@@ -2664,3 +2664,161 @@ fn signature_overloads_return_all_signatures() {
     assert_eq!(found[0].active_param, 0);
     assert_eq!(found[1].active_param, 0);
 }
+
+#[test]
+fn array_dynamic_completion_lists_length_push_pop() {
+    let text = "contract C {\nfunction f() public {\nuint[] arr;\narr.\n}\n}";
+    let at = text.rfind("arr.").expect("dot") as u32 + 4;
+    let labels = complete_labels(text, at);
+    assert!(labels.contains(&"length".to_string()), "labels: {labels:?}");
+    assert!(labels.contains(&"push".to_string()), "labels: {labels:?}");
+    assert!(labels.contains(&"pop".to_string()), "labels: {labels:?}");
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, _) = SolidityParser.parse_with_errors(&tokens);
+    let items = complete_at(&file, text, at);
+    let length = items
+        .iter()
+        .find(|item| item.label == "length")
+        .expect("hit");
+    assert_eq!(completion_item_kind(length.kind).value(), 5);
+    assert!(
+        length.detail.contains("uint256 length"),
+        "detail: {}",
+        length.detail
+    );
+    let push = items.iter().find(|item| item.label == "push").expect("hit");
+    assert_eq!(completion_item_kind(push.kind).value(), 3);
+    let pop = items.iter().find(|item| item.label == "pop").expect("hit");
+    assert_eq!(completion_item_kind(pop.kind).value(), 3);
+}
+
+#[test]
+fn array_fixed_completion_lists_length_only() {
+    let text = "contract C {\nfunction f() public {\nuint[3] fixedArr;\nfixedArr.\n}\n}";
+    let at = text.rfind("fixedArr.").expect("dot") as u32 + 9;
+    let labels = complete_labels(text, at);
+    assert!(labels.contains(&"length".to_string()), "labels: {labels:?}");
+    assert!(!labels.contains(&"push".to_string()), "labels: {labels:?}");
+    assert!(!labels.contains(&"pop".to_string()), "labels: {labels:?}");
+}
+
+#[test]
+fn array_multidim_outer_suffix_decides_dynamic() {
+    let dyn_text = "contract C {\nfunction f() public {\nuint[2][] dynMulti;\ndynMulti.\n}\n}";
+    let dyn_at = dyn_text.rfind("dynMulti.").expect("dot") as u32 + 9;
+    let dyn_labels = complete_labels(dyn_text, dyn_at);
+    assert!(
+        dyn_labels.contains(&"push".to_string()),
+        "labels: {dyn_labels:?}"
+    );
+    assert!(
+        dyn_labels.contains(&"pop".to_string()),
+        "labels: {dyn_labels:?}"
+    );
+    let fixed_text =
+        "contract C {\nfunction f() public {\nuint[][2] fixedMulti;\nfixedMulti.\n}\n}";
+    let fixed_at = fixed_text.rfind("fixedMulti.").expect("dot") as u32 + 11;
+    let fixed_labels = complete_labels(fixed_text, fixed_at);
+    assert!(
+        fixed_labels.contains(&"length".to_string()),
+        "labels: {fixed_labels:?}"
+    );
+    assert!(
+        !fixed_labels.contains(&"push".to_string()),
+        "labels: {fixed_labels:?}"
+    );
+    assert!(
+        !fixed_labels.contains(&"pop".to_string()),
+        "labels: {fixed_labels:?}"
+    );
+}
+
+#[test]
+fn array_hover_shows_solidity_origin_with_member_span() {
+    let text = "contract C {\nfunction f() public {\nuint[] arr;\narr.length;\n}\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let at = text.rfind("arr.length").expect("use") as u32 + 4;
+    let found = hover_at(&file, text, at).expect("hover");
+    assert_eq!(found.contents, "uint256 length - from solidity");
+    assert!(found.span.contains(at));
+    assert_eq!(found.span.start, at);
+    assert_eq!(found.span.end, at + 6);
+}
+
+#[test]
+fn array_goto_returns_none_and_skips_coincidental_dep() {
+    let text = "contract C {\nfunction f() public {\nuint[] arr;\narr.length;\n}\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let at = text.rfind("arr.length").expect("use") as u32 + 4;
+    assert!(goto_definition(&file, text, at).is_none());
+    let dep = "contract B {\nfunction length() public {}\nfunction push() public {}\n}";
+    let cur = "import \"./B.sol\";\ncontract C {\nfunction f() public {\nuint[] arr;\narr.length;\narr.push;\n}\n}";
+    let mut workspace = open_workspace(&[("/A.sol", cur), ("/B.sol", dep)]);
+    workspace.set_file_deps(PathBuf::from("/A.sol"), vec![PathBuf::from("/B.sol")]);
+    assert!(goto_multi(&workspace, "/A.sol", cur, "length").is_none());
+    assert!(goto_multi(&workspace, "/A.sol", cur, "push").is_none());
+}
+
+#[test]
+fn array_push_wrong_arity_reports_exact_message() {
+    let text = "contract C {\nfunction f() public {\nuint[] arr;\narr.push();\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "this function 'push' takes 1 arguments but 0 supplied"
+    );
+    let covered = &text[found[0].span.start as usize..found[0].span.end as usize];
+    assert!(
+        covered.starts_with("arr.push") && covered.ends_with(')'),
+        "span: {covered}"
+    );
+    let ok = "contract C {\nfunction f() public {\nuint[] arr;\narr.push(1);\n}\n}";
+    assert!(diagnostics_of(ok).is_empty());
+}
+
+#[test]
+fn array_pop_wrong_arity_reports_exact_message() {
+    let text = "contract C {\nfunction f() public {\nuint[] arr;\narr.pop(1);\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "this function 'pop' takes 0 arguments but 1 supplied"
+    );
+    let ok = "contract C {\nfunction f() public {\nuint[] arr;\narr.pop();\n}\n}";
+    assert!(diagnostics_of(ok).is_empty());
+}
+
+#[test]
+fn array_length_and_fixed_calls_stay_silent() {
+    let text = "contract C {\nfunction f() public {\nuint[] arr;\nuint[3] fixedArr;\narr.length(1);\nfixedArr.push(1);\nfixedArr.pop();\narr.bogus(1, 2);\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn array_memory_param_still_resolves() {
+    let text = "contract C {\nfunction f(uint[] memory vals) public {\nvals.\n}\n}";
+    let at = text.rfind("vals.").expect("dot") as u32 + 5;
+    let labels = complete_labels(text, at);
+    assert!(labels.contains(&"length".to_string()), "labels: {labels:?}");
+    assert!(labels.contains(&"push".to_string()), "labels: {labels:?}");
+    assert!(labels.contains(&"pop".to_string()), "labels: {labels:?}");
+}
+
+#[test]
+fn array_cross_file_members_stay_empty() {
+    let dep = "contract Hello {\nfunction greet() public {}\n}";
+    let cur = "import \"./H.sol\";\ncontract C {\nfunction f() public {\nuint[] arr;\narr.length;\narr.\n}\n}";
+    let mut workspace = open_workspace(&[("/H.sol", dep), ("/C.sol", cur)]);
+    workspace.set_file_deps(PathBuf::from("/C.sol"), vec![PathBuf::from("/H.sol")]);
+    let found = member_complete_multi(&workspace, "/C.sol", cur, "arr.");
+    let labels: Vec<&str> = found.iter().map(|item| item.0.as_str()).collect();
+    assert!(labels.contains(&"length"), "labels: {labels:?}");
+    assert!(!labels.contains(&"greet"), "labels: {labels:?}");
+    assert!(hover_multi(&workspace, "/C.sol", cur, "length").is_some());
+}

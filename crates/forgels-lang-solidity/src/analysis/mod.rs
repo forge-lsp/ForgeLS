@@ -8,6 +8,7 @@ use crate::{
     ContractDef, EnumDef, FunctionDef, SolidityFile, SolidityLexer, SolidityParser, StructDef,
 };
 
+pub(crate) mod array;
 mod calls;
 mod completion;
 mod emits;
@@ -766,9 +767,13 @@ impl Analyzer for SolidityAnalyzer {
         }
         // Builtins have no target by design. Skip dep lookup so builtin
         // names never jump to coincidental same-name declarations.
+        // Array members use the same guard: synthetic spans never leak.
         {
             let scope = collect_symbols(&file);
             if forge::is_builtin_at(&file, ctx.text, ctx.offset, &scope) {
+                return None;
+            }
+            if array::is_array_at(&file, ctx.text, ctx.offset, &scope) {
                 return None;
             }
         }
