@@ -427,3 +427,51 @@ fn file_level_using_skips_without_error() {
     assert!(errors.is_empty(), "errors: {errors:?}");
     assert_eq!(file.contracts().len(), 1);
 }
+
+#[test]
+fn emit_parses_with_name_and_args() {
+    let text = "contract C {\nfunction f() public {\nemit Transfer(a, b);\n}\n}";
+    let file = parse_ok(text);
+    let body = file.contracts()[0].functions()[0].body().expect("body");
+    let emits = body.emits();
+    assert_eq!(emits.len(), 1);
+    assert_eq!(emits[0].name().as_deref(), Some("Transfer"));
+    assert_eq!(emits[0].arg_count(), 2);
+}
+
+#[test]
+fn bare_emit_keeps_partial_node() {
+    let text = "contract C {\nfunction f() public {\nemit\n}\n}";
+    let lexer = SolidityLexer;
+    let tokens = lexer.tokenize(text);
+    let (file, _) = SolidityParser.parse_with_errors(&tokens);
+    let body = file.contracts()[0].functions()[0].body().expect("body");
+    assert_eq!(body.emits().len(), 1);
+    assert!(body.emits()[0].name().is_none());
+}
+
+#[test]
+fn emit_name_only_keeps_partial_node() {
+    let text = "contract C {\nfunction f() public {\nemit Transfer\n}\n}";
+    let lexer = SolidityLexer;
+    let tokens = lexer.tokenize(text);
+    let (file, _) = SolidityParser.parse_with_errors(&tokens);
+    let body = file.contracts()[0].functions()[0].body().expect("body");
+    let emits = body.emits();
+    assert_eq!(emits.len(), 1);
+    assert_eq!(emits[0].name().as_deref(), Some("Transfer"));
+    assert_eq!(emits[0].arg_count(), 0);
+}
+
+#[test]
+fn emit_unclosed_keeps_partial_node() {
+    let text = "contract C {\nfunction f() public {\nemit Transfer(a, b\n}\n}";
+    let lexer = SolidityLexer;
+    let tokens = lexer.tokenize(text);
+    let (file, _) = SolidityParser.parse_with_errors(&tokens);
+    let body = file.contracts()[0].functions()[0].body().expect("body");
+    let emits = body.emits();
+    assert_eq!(emits.len(), 1);
+    assert_eq!(emits[0].name().as_deref(), Some("Transfer"));
+    assert_eq!(emits[0].arg_count(), 2);
+}

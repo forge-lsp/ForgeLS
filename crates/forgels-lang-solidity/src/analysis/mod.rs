@@ -10,6 +10,7 @@ use crate::{
 
 mod calls;
 mod completion;
+mod emits;
 mod goto;
 mod hover;
 mod imports;
@@ -32,7 +33,7 @@ fn is_word_byte(byte: u8) -> bool {
 }
 
 /// Word under the cursor: longest ident-char run containing `offset`.
-fn word_at(text: &str, offset: u32) -> Option<(String, Span)> {
+pub(crate) fn word_at(text: &str, offset: u32) -> Option<(String, Span)> {
     let bytes = text.as_bytes();
     let index = offset as usize;
     if index >= bytes.len() || !is_word_byte(bytes[index]) {
@@ -513,6 +514,50 @@ impl SolidityAnalyzer {
         let _ = ctx_text;
         out
     }
+
+    fn emit_completion(file: &SolidityFile, ctx: &ProjectContext) -> Vec<CompletionData> {
+        let prefix = completion::prefix_at(ctx.text, ctx.offset);
+        let local = emits::emit_candidates(file, ctx.offset);
+        let mut seen: Vec<String> = Vec::new();
+        let mut out: Vec<CompletionData> = Vec::new();
+        for symbol in &local {
+            if !symbol.name.starts_with(prefix.as_str()) {
+                continue;
+            }
+            if seen.contains(&symbol.name) {
+                continue;
+            }
+            seen.push(symbol.name.clone());
+            out.push(CompletionData {
+                label: symbol.name.clone(),
+                detail: symbol.detail.clone(),
+                kind: completion::completion_item_kind(completion::CompletionKind::Symbol(
+                    symbol.kind,
+                )),
+                text_edit: None,
+            });
+        }
+        let deps = Self::dep_files(ctx);
+        for (symbol, _) in emits::dep_emit_candidates(&local, &deps) {
+            if !symbol.name.starts_with(prefix.as_str()) {
+                continue;
+            }
+            if seen.contains(&symbol.name) {
+                continue;
+            }
+            seen.push(symbol.name.clone());
+            out.push(CompletionData {
+                label: symbol.name.clone(),
+                detail: symbol.detail.clone(),
+                kind: completion::completion_item_kind(completion::CompletionKind::Symbol(
+                    symbol.kind,
+                )),
+                text_edit: None,
+            });
+        }
+        out.sort_by(|left, right| left.label.cmp(&right.label));
+        out
+    }
 }
 
 impl Analyzer for SolidityAnalyzer {
@@ -523,6 +568,22 @@ impl Analyzer for SolidityAnalyzer {
                 contents: found.contents,
                 span: found.span,
             });
+        }
+        if let Some((name, span)) = emits::emit_name_at(ctx.text, ctx.offset) {
+            let deps = Self::dep_files(ctx);
+            for (path, dep_file) in &deps {
+                let Some(found) = emits::find_emit_in_dep(dep_file, &name) else {
+                    continue;
+                };
+                let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+                    continue;
+                };
+                return Some(HoverData {
+                    contents: format!("{} - from {}", found.detail, file_name),
+                    span,
+                });
+            }
+            return None;
         }
         if let Some(member) = members::member_context_at(ctx.text, ctx.offset)
             && (member.member_span.contains(ctx.offset) || member.member_span.end == ctx.offset)
@@ -599,6 +660,9 @@ impl Analyzer for SolidityAnalyzer {
             let deps = Self::dep_files(ctx);
             return Self::member_completion(&file, ctx.text, ctx.offset, &member, &deps);
         }
+        if emits::is_emit_name_context(ctx.text, ctx.offset) {
+            return Self::emit_completion(&file, ctx);
+        }
         let prefix = completion::prefix_at(ctx.text, ctx.offset);
         let mut seen: Vec<String> = Vec::new();
         let mut out: Vec<CompletionData> = Vec::new();
@@ -649,6 +713,15 @@ impl Analyzer for SolidityAnalyzer {
         if let Some(span) = goto::goto_definition(&file, ctx.text, ctx.offset) {
             return Some(GotoTarget::new(ctx.path.to_path_buf(), span));
         }
+        if let Some((name, _)) = emits::emit_name_at(ctx.text, ctx.offset) {
+            let deps = Self::dep_files(ctx);
+            for (path, dep_file) in &deps {
+                if let Some(found) = emits::find_emit_in_dep(dep_file, &name) {
+                    return Some(GotoTarget::new(path.clone(), found.span));
+                }
+            }
+            return None;
+        }
         if let Some(member) = members::member_context_at(ctx.text, ctx.offset)
             && (member.member_span.contains(ctx.offset) || member.member_span.end == ctx.offset)
         {
@@ -688,6 +761,7 @@ impl Analyzer for SolidityAnalyzer {
             .collect();
         let scope = collect_symbols(&file);
         out.extend(calls::arity_diagnostics(&file, &scope));
+        out.extend(emits::emit_arity_diagnostics(&file));
         out.sort_by(|a, b| {
             a.span
                 .start

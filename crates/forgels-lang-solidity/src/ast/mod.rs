@@ -2,6 +2,7 @@ use forgels_syntax::{SyntaxElement, SyntaxNode};
 
 mod calls;
 mod contract;
+mod emits;
 mod file;
 mod members;
 mod types;
@@ -9,6 +10,7 @@ mod user_types;
 
 pub use calls::CallStmt;
 pub use contract::ContractDef;
+pub use emits::EmitStmt;
 pub use file::{ImportDirective, PragmaDirective, SolidityFile};
 pub use members::{FunctionDef, LocalVar, MemberExpr, Param, Returns, StateVar};
 pub use types::{BlockNode, TypeNode};
@@ -38,6 +40,7 @@ pub enum SolidityNode {
     UserType,
     Event,
     Modifier,
+    Emit,
 }
 
 impl SolidityNode {

@@ -12,7 +12,9 @@ pub struct Hover {
 /// Hover info for the word at `offset`, if it names a visible declaration.
 ///
 /// Member positions after a dot resolve against the receiver type first.
-/// Positions on whitespace, operators, or undeclared words return `None`.
+/// Emit name slots resolve to event declarations only, so a function
+/// with the same name never shadows the event. Positions on whitespace,
+/// operators, or undeclared words return `None`.
 pub fn hover_at(file: &SolidityFile, text: &str, offset: u32) -> Option<Hover> {
     // Receiver itself keeps scope hover; only the member uses type lookup.
     if let Some(ctx) = super::members::member_context_at(text, offset)
@@ -26,6 +28,13 @@ pub fn hover_at(file: &SolidityFile, text: &str, offset: u32) -> Option<Hover> {
         return Some(Hover {
             contents: found.detail,
             span: found.span,
+        });
+    }
+    if let Some((name, span)) = super::emits::emit_name_at(text, offset) {
+        let found = super::emits::resolve_local_emit(file, offset, &name)?;
+        return Some(Hover {
+            contents: found.detail,
+            span,
         });
     }
     let (word, _) = word_at(text, offset)?;
