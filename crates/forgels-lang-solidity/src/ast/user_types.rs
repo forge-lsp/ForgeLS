@@ -25,6 +25,18 @@ impl StructDef {
             })
     }
 
+    pub fn name_span(&self) -> Option<Span> {
+        self.syntax
+            .children
+            .iter()
+            .find_map(|element| match element {
+                SyntaxElement::Token(token) if token.kind == SolidityKind::Ident.as_u16() => {
+                    Some(token.span)
+                }
+                _ => None,
+            })
+    }
+
     pub fn fields(&self) -> Vec<Param> {
         self.syntax
             .children
@@ -88,6 +100,18 @@ impl EnumDef {
             .collect()
     }
 
+    pub fn name_span(&self) -> Option<Span> {
+        self.syntax
+            .children
+            .iter()
+            .find_map(|element| match element {
+                SyntaxElement::Token(token) if token.kind == SolidityKind::Ident.as_u16() => {
+                    Some(token.span)
+                }
+                _ => None,
+            })
+    }
+
     pub fn variant_spans(&self) -> Vec<Span> {
         self.syntax
             .children
@@ -134,6 +158,18 @@ impl ErrorDef {
             .find_map(|element| match element {
                 SyntaxElement::Token(token) if token.kind == SolidityKind::Ident.as_u16() => {
                     Some(token.text.clone())
+                }
+                _ => None,
+            })
+    }
+
+    pub fn name_span(&self) -> Option<Span> {
+        self.syntax
+            .children
+            .iter()
+            .find_map(|element| match element {
+                SyntaxElement::Token(token) if token.kind == SolidityKind::Ident.as_u16() => {
+                    Some(token.span)
                 }
                 _ => None,
             })
@@ -188,6 +224,18 @@ impl UserTypeDef {
                 _ => None,
             })
     }
+
+    pub fn name_span(&self) -> Option<Span> {
+        self.syntax
+            .children
+            .iter()
+            .find_map(|element| match element {
+                SyntaxElement::Token(token) if token.kind == SolidityKind::Ident.as_u16() => {
+                    Some(token.span)
+                }
+                _ => None,
+            })
+    }
 }
 
 impl AstNode for UserTypeDef {
@@ -238,6 +286,18 @@ impl EventDef {
             })
             .collect()
     }
+
+    pub fn name_span(&self) -> Option<Span> {
+        self.syntax
+            .children
+            .iter()
+            .find_map(|element| match element {
+                SyntaxElement::Token(token) if token.kind == SolidityKind::Ident.as_u16() => {
+                    Some(token.span)
+                }
+                _ => None,
+            })
+    }
 }
 
 impl AstNode for EventDef {
@@ -271,6 +331,18 @@ impl ModifierDef {
             .find_map(|element| match element {
                 SyntaxElement::Token(token) if token.kind == SolidityKind::Ident.as_u16() => {
                     Some(token.text.clone())
+                }
+                _ => None,
+            })
+    }
+
+    pub fn name_span(&self) -> Option<Span> {
+        self.syntax
+            .children
+            .iter()
+            .find_map(|element| match element {
+                SyntaxElement::Token(token) if token.kind == SolidityKind::Ident.as_u16() => {
+                    Some(token.span)
                 }
                 _ => None,
             })

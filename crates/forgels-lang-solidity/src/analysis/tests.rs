@@ -698,15 +698,126 @@ fn correct_arg_count_has_no_diagnostic() {
 }
 
 #[test]
-fn unknown_callee_stays_silent() {
+fn unknown_callee_reports_unresolved() {
     let text = "contract C {\nfunction f() public {\nmissing(1, 2, 3);\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(found[0].message, "unresolved identifier 'missing'");
+    let covered = &text[found[0].span.start as usize..found[0].span.end as usize];
+    assert_eq!(covered, "missing");
+}
+
+#[test]
+fn unknown_member_receiver_reports_receiver_only() {
+    let text = "contract C {\nfunction greet(uint a, uint b) public {}\nfunction f() public {\nobj.greet(1);\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(found[0].message, "unresolved identifier 'obj'");
+    let covered = &text[found[0].span.start as usize..found[0].span.end as usize];
+    assert_eq!(covered, "obj");
+}
+
+#[test]
+fn unknown_bare_usage_reports_name_span() {
+    let text = "contract C {\nfunction f() public {\nuint x = 1;\nmissing;\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(found[0].message, "unresolved identifier 'missing'");
+    let at = text.find("missing;").expect("use") as u32;
+    assert_eq!(found[0].span.start, at);
+    assert_eq!(found[0].span.end, at + 7);
+}
+
+#[test]
+fn unknown_known_names_stay_silent() {
+    let text =
+        "contract C {\nuint total;\nfunction f(uint a) public {\nuint x = 1;\ntotal;\na;\nx;\n}\n}";
     assert!(diagnostics_of(text).is_empty());
 }
 
 #[test]
-fn unknown_member_receiver_stays_silent() {
-    let text = "contract C {\nfunction greet(uint a, uint b) public {}\nfunction f() public {\nobj.greet(1);\n}\n}";
+fn unknown_decl_names_stay_silent() {
+    let text = "contract C {\nuint total;\nfunction f() public {}\n}";
     assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn unknown_this_member_stays_silent() {
+    let text = "contract C {\nfunction f() public {\nthis.missing;\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn unknown_emit_has_single_event_error() {
+    let text = "contract C {\nfunction f() public {\nemit Missing(1);\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(found[0].message, "unresolved event 'Missing'");
+}
+
+#[test]
+fn unknown_dep_symbol_stays_silent() {
+    let dep = "contract Vault {\nfunction withdraw(uint a) public {}\n}";
+    let cur = "import \"./B.sol\";\ncontract A {\nfunction f() public {\nwithdraw;\n}\n}";
+    let mut workspace = open_workspace(&[("/B.sol", dep), ("/A.sol", cur)]);
+    workspace.set_file_deps(PathBuf::from("/A.sol"), vec![PathBuf::from("/B.sol")]);
+    assert!(diagnostics_multi(&workspace, "/A.sol", cur).is_empty());
+}
+
+#[test]
+fn unknown_forge_assert_stays_silent_in_test() {
+    let text = "contract T is Test {\nfunction f() public {\nassertEq(1, 2);\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn unknown_global_receivers_stay_silent() {
+    let text = "contract C {\nfunction f() public {\nmsg;\nblock;\nabi;\nvm;\nconsole;\nthis;\nsuper;\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn unknown_global_functions_stay_silent() {
+    let text = "contract C {\nfunction f() public {\nrequire;\nrevert;\nkeccak256;\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn unknown_typing_prefix_stays_silent() {
+    let text = "contract C {\nuint256 total;\nfunction f() public {\ntot\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn unknown_past_known_still_errors() {
+    let text = "contract C {\nuint256 total;\nfunction f() public {\ntotalX;\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(found[0].message, "unresolved identifier 'totalX'");
+}
+
+#[test]
+fn unknown_assembly_idents_stay_silent() {
+    let text = "contract C {\nfunction f() public {\nassembly {\nlet x := bogus\n}\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn unknown_trivia_words_stay_silent() {
+    let text = "contract C {\nfunction f() public {}\n}\n// missing\n/* bogus */";
+    assert!(diagnostics_of(text).is_empty());
+    let with_string = "contract C {\nfunction f() public {\nstring s = \"missing\";\n}\n}";
+    assert!(diagnostics_of(with_string).is_empty());
+}
+
+#[test]
+fn unknown_multiple_errors_sort_by_span() {
+    let text = "contract C {\nfunction f() public {\nzzz;\naaa;\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 2, "diags: {found:?}");
+    assert!(found[0].span.start < found[1].span.start);
+    assert_eq!(found[0].message, "unresolved identifier 'zzz'");
+    assert_eq!(found[1].message, "unresolved identifier 'aaa'");
 }
 
 #[test]
@@ -2342,8 +2453,10 @@ fn asserts_stay_hidden_without_test_heritage() {
         !labels.contains(&"assertEq".to_string()),
         "labels: {labels:?}"
     );
-    let wrong = forge_plain("assertEq(a);");
-    assert!(diagnostics_of(&wrong).is_empty());
+    let wrong = forge_plain("assertEq(1);");
+    let found = diagnostics_of(&wrong);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(found[0].message, "unresolved identifier 'assertEq'");
 }
 
 #[test]
@@ -2363,14 +2476,16 @@ fn transitive_test_heritage_enables_asserts() {
 
 #[test]
 fn unknown_forge_names_stay_silent() {
-    let member_text = forge_body("vm.bogus(x);");
+    let member_text = forge_body("vm.bogus(1);");
     let tokens = SolidityLexer.tokenize(&member_text);
     let (member_file, _) = SolidityParser.parse_with_errors(&tokens);
     let member_at = member_text.rfind("bogus").expect("member") as u32;
     assert!(hover_at(&member_file, &member_text, member_at).is_none());
-    let plain_text = forge_body("assertBogus(a);");
-    assert!(diagnostics_of(&plain_text).is_empty());
-    let hevm_text = forge_body("hevm.warp(x);");
+    let plain_text = forge_body("assertBogus(1);");
+    let found = diagnostics_of(&plain_text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(found[0].message, "unresolved identifier 'assertBogus'");
+    let hevm_text = forge_body("hevm.warp(1);");
     let hevm_tokens = SolidityLexer.tokenize(&hevm_text);
     let (hevm_file, _) = SolidityParser.parse_with_errors(&hevm_tokens);
     let hevm_at = hevm_text.rfind("warp").expect("member") as u32;

@@ -1,7 +1,7 @@
 use super::types::{BlockNode, TypeNode};
 use super::{SolidityNode, cast_node, first_ident_text, is_word_text};
 use crate::lexer::SolidityKind;
-use forgels_syntax::{AstNode, SyntaxElement, SyntaxNode};
+use forgels_syntax::{AstNode, Span, SyntaxElement, SyntaxNode};
 
 /// Function definition: name, params, return types, and body block.
 ///
@@ -16,6 +16,18 @@ pub struct FunctionDef {
 impl FunctionDef {
     pub fn name(&self) -> Option<String> {
         first_ident_text(&self.syntax)
+    }
+
+    pub fn name_span(&self) -> Option<Span> {
+        self.syntax
+            .children
+            .iter()
+            .find_map(|element| match element {
+                SyntaxElement::Token(token) if token.kind == SolidityKind::Ident.as_u16() => {
+                    Some(token.span)
+                }
+                _ => None,
+            })
     }
 
     pub fn params(&self) -> Vec<Param> {
@@ -93,6 +105,16 @@ impl Param {
 
     pub fn name(&self) -> Option<String> {
         first_ident_text(&self.syntax)
+    }
+
+    pub fn name_span(&self) -> Option<Span> {
+        self.syntax
+            .children
+            .iter()
+            .find_map(|element| match element {
+                SyntaxElement::Token(token) if is_word_text(&token.text) => Some(token.span),
+                _ => None,
+            })
     }
 }
 
@@ -179,6 +201,19 @@ impl StateVar {
     pub fn name(&self) -> Option<String> {
         var_name_and_type(&self.syntax).1
     }
+
+    pub fn name_span(&self) -> Option<Span> {
+        for element in &self.syntax.children {
+            match element {
+                SyntaxElement::Node(child) if child.kind == SolidityNode::Type.as_u16() => {}
+                SyntaxElement::Token(token) if is_word_text(&token.text) => {
+                    return Some(token.span);
+                }
+                _ => {}
+            }
+        }
+        None
+    }
 }
 
 impl AstNode for StateVar {
@@ -208,6 +243,19 @@ impl LocalVar {
 
     pub fn name(&self) -> Option<String> {
         var_name_and_type(&self.syntax).1
+    }
+
+    pub fn name_span(&self) -> Option<Span> {
+        for element in &self.syntax.children {
+            match element {
+                SyntaxElement::Node(child) if child.kind == SolidityNode::Type.as_u16() => {}
+                SyntaxElement::Token(token) if is_word_text(&token.text) => {
+                    return Some(token.span);
+                }
+                _ => {}
+            }
+        }
+        None
     }
 }
 
@@ -254,6 +302,17 @@ impl MemberExpr {
             .iter()
             .filter_map(|element| match element {
                 SyntaxElement::Token(token) => Some(token.text.clone()),
+                _ => None,
+            })
+            .nth(2)
+    }
+
+    pub fn member_span(&self) -> Option<Span> {
+        self.syntax
+            .children
+            .iter()
+            .filter_map(|element| match element {
+                SyntaxElement::Token(token) => Some(token.span),
                 _ => None,
             })
             .nth(2)

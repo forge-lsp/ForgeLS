@@ -316,13 +316,25 @@ fn close_b_marks_import_unresolved_in_a() {
         })
         .expect("A republished");
     let diagnostics = diagnostics_for(for_a);
-    assert_eq!(diagnostics.len(), 1, "one unresolved, got {diagnostics:?}");
-    let message = diagnostics[0]
-        .pointer("/message")
-        .and_then(Value::as_str)
-        .unwrap_or("");
+    assert_eq!(
+        diagnostics.len(),
+        2,
+        "import plus unknown, got {diagnostics:?}"
+    );
+    let messages: Vec<&str> = diagnostics
+        .iter()
+        .filter_map(|item| item.pointer("/message").and_then(Value::as_str))
+        .collect();
     assert!(
-        message.contains("./cross_b.sol"),
-        "names missing import, got {message}"
+        messages
+            .iter()
+            .any(|message| message.contains("./cross_b.sol")),
+        "names missing import, got {messages:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("unresolved identifier 'withdraw'")),
+        "names missing dep symbol, got {messages:?}"
     );
 }

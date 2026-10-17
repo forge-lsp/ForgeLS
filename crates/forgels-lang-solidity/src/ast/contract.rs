@@ -2,7 +2,7 @@ use super::members::{FunctionDef, StateVar};
 use super::user_types::{EnumDef, ErrorDef, EventDef, ModifierDef, StructDef, UserTypeDef};
 use super::{SolidityNode, cast_node};
 use crate::lexer::SolidityKind;
-use forgels_syntax::{AstNode, SyntaxElement, SyntaxNode};
+use forgels_syntax::{AstNode, Span, SyntaxElement, SyntaxNode};
 
 #[derive(Debug, Clone)]
 pub struct ContractDef {
@@ -20,6 +20,19 @@ impl ContractDef {
             .find_map(|element| match element {
                 SyntaxElement::Token(token) if token.kind == SolidityKind::Ident.as_u16() => {
                     Some(token.text.clone())
+                }
+                _ => None,
+            })
+    }
+
+    /// Span of the contract name token, if present.
+    pub fn name_span(&self) -> Option<Span> {
+        self.syntax
+            .children
+            .iter()
+            .find_map(|element| match element {
+                SyntaxElement::Token(token) if token.kind == SolidityKind::Ident.as_u16() => {
+                    Some(token.span)
                 }
                 _ => None,
             })
