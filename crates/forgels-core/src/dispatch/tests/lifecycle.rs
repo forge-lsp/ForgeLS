@@ -38,7 +38,7 @@ fn advertises_exact_beta_capabilities() {
     let triggers = caps
         .pointer("/completionProvider/triggerCharacters")
         .expect("has triggers");
-    assert_eq!(triggers, &serde_json::json!(["\"", "'", "/"]));
+    assert_eq!(triggers, &serde_json::json!(["\"", "'", "/", "."]));
     let sig_triggers = caps
         .pointer("/signatureHelpProvider/triggerCharacters")
         .expect("has signature triggers");
