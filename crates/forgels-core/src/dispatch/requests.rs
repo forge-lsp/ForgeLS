@@ -231,6 +231,91 @@ fn references_result(session: &Session, workspace: &Workspace, params: &Value) -
     Some(Value::Array(items))
 }
 
+/// Answer `textDocument/rename` with a `WorkspaceEdit`.
+/// Valid renames map every reference to a `newText` edit grouped by
+/// URI. Invalid names, unknown symbols, and unknown files answer
+/// `InvalidParams` (-32602). No `prepareRename` in V1.
+pub(crate) fn rename_response(
+    session: &Session,
+    workspace: &Workspace,
+    params: &Value,
+    id: Option<&Value>,
+) -> Option<String> {
+    let id = id?.clone();
+    let Some(result) = rename_result(session, workspace, params) else {
+        let response = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "error": { "code": -32602, "message": "Invalid rename position or name" }
+        });
+        return Some(response.to_string());
+    };
+    let response = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "result": result
+    });
+    Some(response.to_string())
+}
+
+fn rename_result(session: &Session, workspace: &Workspace, params: &Value) -> Option<Value> {
+    let uri = params.get("textDocument")?.get("uri")?.as_str()?;
+    let position = params.get("position")?;
+    let line = position.get("line")?.as_u64()? as u32;
+    let character = position.get("character")?.as_u64()? as u32;
+    let new_name = params.get("newName")?.as_str()?;
+    if new_name.is_empty() {
+        return None;
+    }
+    let path = uri_to_path(uri);
+    let doc = workspace.get(&path)?;
+    let analyzer = session.analyzers.get(&doc.language)?;
+    let offset = position_to_offset(&doc.text, Position { line, character });
+    let ctx = ProjectContext::new(&path, &doc.text, offset, workspace);
+    let found = analyzer.rename(&ctx, new_name)?;
+    if found.is_empty() {
+        return None;
+    }
+    let mut changes = serde_json::Map::new();
+    for entry in found.iter().take(crate::analyzer::MAX_REFERENCES) {
+        let text: String = match workspace.get_text(&entry.path) {
+            Some(cached) => cached.to_string(),
+            None => {
+                if !forgels_common::fs::is_trackable_file(&entry.path) {
+                    continue;
+                }
+                let Ok(disk) = std::fs::read_to_string(&entry.path) else {
+                    continue;
+                };
+                disk
+            }
+        };
+        if text
+            .get(entry.span.start as usize..entry.span.end as usize)
+            .is_none()
+        {
+            continue;
+        }
+        let range = span_to_range(&text, entry.span);
+        let edit = serde_json::json!({
+            "range": {
+                "start": { "line": range.start.line, "character": range.start.character },
+                "end": { "line": range.end.line, "character": range.end.character },
+            },
+            "newText": new_name,
+        });
+        changes
+            .entry(path_to_uri(&entry.path))
+            .or_insert_with(|| Value::Array(Vec::new()))
+            .as_array_mut()?
+            .push(edit);
+    }
+    if changes.is_empty() {
+        return None;
+    }
+    Some(serde_json::json!({ "changes": Value::Object(changes) }))
+}
+
 /// Answer `textDocument/signatureHelp`. Notifications without id stay
 /// silent. Positions outside any call and unknown callees get null.
 pub(crate) fn signature_response(

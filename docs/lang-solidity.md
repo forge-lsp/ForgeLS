@@ -282,6 +282,24 @@ Status: token kinds defined. Real lexer and parser are planned.
   current file only. Others scan tracked Solidity files path-sorted.
 - Noir: trait default returns `None`, no noir grammar change.
 
+## Rename
+
+- Scope: `analysis::rename` plus `Analyzer::rename` and the
+  `textDocument/rename` dispatch. Capability `renameProvider: true`,
+  no `prepareRename` in V1.
+- Shape: reuses `ReferenceData {path, span, is_declaration}`. Dispatch
+  groups each entry by URI into `WorkspaceEdit {changes: {uri: [{range,
+  newText}]}}`, skips out-of-bounds spans, caps at
+  `MAX_REFERENCES = 100`.
+- Validate: `is_valid_rename` needs ident shape `[A-Za-z_$][A-Za-z0-9_$]*`
+  and rejects any `keyword_kind` hit (`contract`, `uint8`, `wei`,
+  reserved words). Empty and bad shapes return `None`.
+- Resolve: `find_rename` checks the new name first, then reuses
+  `find_references` (member, emit, then plain with span identity).
+  Builtins and unknown words return `None`. Empty lists return `None`
+  so dispatch answers `InvalidParams` (-32602).
+- Noir: trait default returns `None`, no noir grammar change.
+
 ## V1 limits
 
 - Tracked only: `dep_texts` skips untracked and missing files.

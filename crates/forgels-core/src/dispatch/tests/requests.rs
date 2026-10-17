@@ -1466,3 +1466,130 @@ fn references_without_id_stays_silent() {
     let body = r#"{"jsonrpc":"2.0","method":"textDocument/references","params":{"textDocument":{"uri":"file:///repo/A.sol"},"position":{"line":0,"character":10},"context":{"includeDeclaration":true}}}"#;
     assert!(handle_message(&mut session, &mut workspace, body).is_none());
 }
+
+fn rename_body(id: u32, uri: &str, line: u32, character: u32, new_name: &str) -> String {
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": "textDocument/rename",
+        "params": {
+            "textDocument": { "uri": uri },
+            "position": { "line": line, "character": character },
+            "newName": new_name,
+        }
+    })
+    .to_string()
+}
+
+#[test]
+fn rename_returns_changes_map_with_new_text() {
+    let mut session = super::stub::session_with_stub(true);
+    let mut workspace = Workspace::new();
+    super::stub::open_sol(&mut session, &mut workspace);
+    let reply = handle_message(
+        &mut session,
+        &mut workspace,
+        &rename_body(40, "file:///repo/A.sol", 0, 10, "total"),
+    )
+    .expect("must reply");
+    let value: Value = serde_json::from_str(&reply).expect("reply is json");
+    let changes = value.pointer("/result/changes").expect("has changes");
+    let edits = changes
+        .get("file:///repo/A.sol")
+        .expect("has file edits")
+        .as_array()
+        .expect("array");
+    assert_eq!(edits.len(), 2);
+    for edit in edits {
+        assert_eq!(
+            edit.pointer("/newText").expect("has text"),
+            &serde_json::json!("total")
+        );
+    }
+    assert_eq!(
+        edits[0].pointer("/range/start").expect("has start"),
+        &serde_json::json!({"line": 0, "character": 9})
+    );
+}
+
+#[test]
+fn rename_without_symbol_returns_invalid_params() {
+    let mut session = super::stub::session_with_stub(false);
+    let mut workspace = Workspace::new();
+    super::stub::open_sol(&mut session, &mut workspace);
+    let reply = handle_message(
+        &mut session,
+        &mut workspace,
+        &rename_body(41, "file:///repo/A.sol", 0, 10, "total"),
+    )
+    .expect("must reply");
+    let value: Value = serde_json::from_str(&reply).expect("reply is json");
+    assert_eq!(
+        value.pointer("/error/code").expect("has code"),
+        &serde_json::json!(-32602)
+    );
+    assert!(value.get("result").is_none());
+}
+
+#[test]
+fn rename_with_empty_name_returns_invalid_params() {
+    let mut session = super::stub::session_with_stub(true);
+    let mut workspace = Workspace::new();
+    super::stub::open_sol(&mut session, &mut workspace);
+    let reply = handle_message(
+        &mut session,
+        &mut workspace,
+        &rename_body(42, "file:///repo/A.sol", 0, 10, ""),
+    )
+    .expect("must reply");
+    let value: Value = serde_json::from_str(&reply).expect("reply is json");
+    assert_eq!(
+        value.pointer("/error/code").expect("has code"),
+        &serde_json::json!(-32602)
+    );
+}
+
+#[test]
+fn rename_on_unknown_file_returns_invalid_params() {
+    let mut session = super::stub::session_with_stub(true);
+    let mut workspace = Workspace::new();
+    super::stub::init(&mut session, &mut workspace);
+    let reply = handle_message(
+        &mut session,
+        &mut workspace,
+        &rename_body(43, "file:///repo/ghost.sol", 0, 1, "total"),
+    )
+    .expect("must reply");
+    let value: Value = serde_json::from_str(&reply).expect("reply is json");
+    assert_eq!(
+        value.pointer("/error/code").expect("has code"),
+        &serde_json::json!(-32602)
+    );
+}
+
+#[test]
+fn rename_default_returns_invalid_params() {
+    let mut session = session_with_refs();
+    let mut workspace = Workspace::new();
+    super::stub::open_sol(&mut session, &mut workspace);
+    let reply = handle_message(
+        &mut session,
+        &mut workspace,
+        &rename_body(44, "file:///repo/A.sol", 0, 10, "total"),
+    )
+    .expect("must reply");
+    let value: Value = serde_json::from_str(&reply).expect("reply is json");
+    assert_eq!(
+        value.pointer("/error/code").expect("has code"),
+        &serde_json::json!(-32602)
+    );
+}
+
+#[test]
+fn rename_without_id_stays_silent() {
+    let mut session = super::stub::session_with_stub(true);
+    let mut workspace = Workspace::new();
+    super::stub::open_sol(&mut session, &mut workspace);
+    let body = r#"{"jsonrpc":"2.0","method":"textDocument/rename","params":{"textDocument":{"uri":"file:///repo/A.sol"},"position":{"line":0,"character":10},"newName":"total"}}"#;
+    assert!(handle_message(&mut session, &mut workspace, body).is_none());
+}
