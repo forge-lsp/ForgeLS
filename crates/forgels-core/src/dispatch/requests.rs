@@ -208,3 +208,63 @@ fn signature_result(session: &Session, workspace: &Workspace, params: &Value) ->
         "activeParameter": head.active_param,
     }))
 }
+
+/// Answer `textDocument/documentSymbol`. Notifications without id stay
+/// silent. Unknown files get a null result, open files get the array
+/// (possibly empty).
+pub(crate) fn document_symbol_response(
+    session: &Session,
+    workspace: &Workspace,
+    params: &Value,
+    id: Option<&Value>,
+) -> Option<String> {
+    let id = id?.clone();
+    let result = document_symbol_result(session, workspace, params).unwrap_or(Value::Null);
+    let response = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "result": result
+    });
+    Some(response.to_string())
+}
+
+fn document_symbol_result(
+    session: &Session,
+    workspace: &Workspace,
+    params: &Value,
+) -> Option<Value> {
+    let uri = params.get("textDocument")?.get("uri")?.as_str()?;
+    let path = uri_to_path(uri);
+    let doc = workspace.get(&path)?;
+    let analyzer = session.analyzers.get(&doc.language)?;
+    let items: Vec<Value> = analyzer
+        .document_symbols(&doc.text)
+        .iter()
+        .map(|item| symbol_value(&doc.text, item))
+        .collect();
+    Some(Value::Array(items))
+}
+
+fn symbol_value(text: &str, item: &crate::analyzer::DocumentSymbolData) -> Value {
+    let range = span_to_range(text, item.range);
+    let selection = span_to_range(text, item.selection);
+    let children: Vec<Value> = item
+        .children
+        .iter()
+        .map(|child| symbol_value(text, child))
+        .collect();
+    serde_json::json!({
+        "name": item.name,
+        "detail": item.detail,
+        "kind": item.kind.value(),
+        "range": {
+            "start": { "line": range.start.line, "character": range.start.character },
+            "end": { "line": range.end.line, "character": range.end.character },
+        },
+        "selectionRange": {
+            "start": { "line": selection.start.line, "character": selection.start.character },
+            "end": { "line": selection.end.line, "character": selection.end.character },
+        },
+        "children": children,
+    })
+}

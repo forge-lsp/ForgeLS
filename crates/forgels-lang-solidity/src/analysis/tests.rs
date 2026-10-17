@@ -3730,3 +3730,122 @@ fn type_member_never_jumps_to_dep_declarations() {
     let ctx = ProjectContext::new(buf.as_path(), &owned, at, &workspace);
     assert!(SolidityAnalyzer.goto_location(&ctx).is_none());
 }
+
+fn outline_of(text: &str) -> Vec<forgels_core::DocumentSymbolData> {
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, _) = SolidityParser.parse_with_errors(&tokens);
+    super::document_symbols_in(&file)
+}
+
+#[test]
+fn outline_nests_contract_function_param() {
+    let text = "contract C {\nfunction f(uint a) public {}\n}";
+    let symbols = outline_of(text);
+    assert_eq!(symbols.len(), 1);
+    let contract = &symbols[0];
+    assert_eq!(contract.name, "C");
+    assert_eq!(contract.kind, forgels_protocol::SymbolKind::CLASS);
+    assert_eq!(contract.kind.value(), 5);
+    assert_eq!(contract.range, Span::new(0, text.len() as u32));
+    let name_at = text.find('C').expect("name") as u32;
+    assert_eq!(contract.selection, Span::new(name_at, name_at + 1));
+    assert!(contract.selection.start >= contract.range.start);
+    assert!(contract.selection.end <= contract.range.end);
+    assert_eq!(contract.children.len(), 1);
+    let function = &contract.children[0];
+    assert_eq!(function.name, "f");
+    assert_eq!(function.kind, forgels_protocol::SymbolKind::METHOD);
+    assert_eq!(function.kind.value(), 6);
+    assert!(function.range.start >= contract.range.start);
+    assert!(function.range.end <= contract.range.end);
+    let fn_at = (text.find("function f").expect("function") + "function ".len()) as u32;
+    assert_eq!(function.selection, Span::new(fn_at, fn_at + 1));
+    assert_eq!(function.children.len(), 1);
+    let param = &function.children[0];
+    assert_eq!(param.name, "a");
+    assert_eq!(param.kind.value(), 13);
+    assert_eq!(param.detail, "uint a");
+    assert!(param.children.is_empty());
+}
+
+#[test]
+fn outline_struct_enum_event_shapes() {
+    let text =
+        "struct S {\nuint x;\n}\nenum E {\nA,\nB\n}\nevent Transfer(address from, uint amount);";
+    let symbols = outline_of(text);
+    assert_eq!(symbols.len(), 3);
+    let strukt = &symbols[0];
+    assert_eq!(strukt.name, "S");
+    assert_eq!(strukt.kind.value(), 23);
+    assert_eq!(strukt.children.len(), 1);
+    assert_eq!(strukt.children[0].name, "x");
+    assert_eq!(strukt.children[0].kind.value(), 8);
+    let enumeration = &symbols[1];
+    assert_eq!(enumeration.name, "E");
+    assert_eq!(enumeration.kind.value(), 10);
+    let variants: Vec<&str> = enumeration
+        .children
+        .iter()
+        .map(|child| child.name.as_str())
+        .collect();
+    assert_eq!(variants, vec!["A", "B"]);
+    for child in &enumeration.children {
+        assert_eq!(child.kind.value(), 22);
+        assert_eq!(child.range, child.selection);
+    }
+    let event = &symbols[2];
+    assert_eq!(event.name, "Transfer");
+    assert_eq!(event.kind.value(), 24);
+    let params: Vec<&str> = event
+        .children
+        .iter()
+        .map(|child| child.name.as_str())
+        .collect();
+    assert_eq!(params, vec!["from", "amount"]);
+}
+
+#[test]
+fn outline_modifier_error_constructor_kinds() {
+    let text = "contract C {\nconstructor(uint a) {}\nmodifier onlyOwner() {\n_\n}\nerror Unauthorized();\n}";
+    let symbols = outline_of(text);
+    assert_eq!(symbols.len(), 1);
+    let kinds: Vec<(String, u8)> = symbols[0]
+        .children
+        .iter()
+        .map(|child| (child.name.clone(), child.kind.value()))
+        .collect();
+    assert!(kinds.contains(&("constructor".to_string(), 6)));
+    assert!(kinds.contains(&("onlyOwner".to_string(), 6)));
+    assert!(kinds.contains(&("Unauthorized".to_string(), 13)));
+    let constructor = symbols[0]
+        .children
+        .iter()
+        .find(|child| child.name == "constructor")
+        .expect("constructor");
+    assert_eq!(constructor.children.len(), 1);
+    assert_eq!(constructor.children[0].name, "a");
+}
+
+#[test]
+fn outline_keeps_partial_results_on_broken_input() {
+    let text = "contract C {\nfunction ok() public {}\nfunction broken(uint ;\n}";
+    let symbols = outline_of(text);
+    assert_eq!(symbols.len(), 1);
+    let names: Vec<&str> = symbols[0]
+        .children
+        .iter()
+        .map(|child| child.name.as_str())
+        .collect();
+    assert!(names.contains(&"ok"));
+    assert!(!names.contains(&"broken"));
+}
+
+#[test]
+fn outline_state_var_uses_field_kind() {
+    let text = "contract C {\nuint256 total;\n}";
+    let symbols = outline_of(text);
+    assert_eq!(symbols.len(), 1);
+    assert_eq!(symbols[0].children.len(), 1);
+    assert_eq!(symbols[0].children[0].name, "total");
+    assert_eq!(symbols[0].children[0].kind.value(), 8);
+}

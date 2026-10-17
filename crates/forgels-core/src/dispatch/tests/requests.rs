@@ -791,3 +791,161 @@ fn signature_without_id_stays_silent() {
     let body = r#"{"jsonrpc":"2.0","method":"textDocument/signatureHelp","params":{"textDocument":{"uri":"file:///repo/A.sol"},"position":{"line":0,"character":10}}}"#;
     assert!(handle_message(&mut session, &mut workspace, body).is_none());
 }
+
+fn symbol_body(id: u32, uri: &str) -> String {
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": "textDocument/documentSymbol",
+        "params": { "textDocument": { "uri": uri } },
+    })
+    .to_string()
+}
+
+#[derive(Debug)]
+struct SymbolAnalyzer;
+
+impl crate::analyzer::Analyzer for SymbolAnalyzer {
+    fn hover(&self, _ctx: &crate::analyzer::ProjectContext) -> Option<crate::analyzer::HoverData> {
+        None
+    }
+
+    fn complete(
+        &self,
+        _ctx: &crate::analyzer::ProjectContext,
+    ) -> Vec<crate::analyzer::CompletionData> {
+        Vec::new()
+    }
+
+    fn goto(&self, _ctx: &crate::analyzer::ProjectContext) -> Option<Span> {
+        None
+    }
+
+    fn diagnostics(&self, _text: &str) -> Vec<crate::analyzer::DiagnosticData> {
+        Vec::new()
+    }
+
+    fn document_symbols(&self, _text: &str) -> Vec<crate::analyzer::DocumentSymbolData> {
+        vec![crate::analyzer::DocumentSymbolData::new(
+            "C".to_string(),
+            "contract C".to_string(),
+            forgels_protocol::SymbolKind::CLASS,
+            Span::new(0, 13),
+            Span::new(9, 10),
+            vec![crate::analyzer::DocumentSymbolData::new(
+                "f".to_string(),
+                "function f()".to_string(),
+                forgels_protocol::SymbolKind::METHOD,
+                Span::new(0, 13),
+                Span::new(9, 10),
+                Vec::new(),
+            )],
+        )]
+    }
+}
+
+fn session_with_symbols() -> super::super::Session {
+    let mut session = super::super::Session::new();
+    session
+        .analyzers
+        .insert(crate::routing::Language::Solidity, Box::new(SymbolAnalyzer));
+    session
+}
+
+#[test]
+fn document_symbol_returns_nesting_and_selection() {
+    let mut session = session_with_symbols();
+    let mut workspace = Workspace::new();
+    open_sol(&mut session, &mut workspace);
+    let reply = handle_message(
+        &mut session,
+        &mut workspace,
+        &symbol_body(13, "file:///repo/A.sol"),
+    )
+    .expect("must reply");
+    let value: Value = serde_json::from_str(&reply).expect("reply is json");
+    let items = value
+        .pointer("/result")
+        .expect("has result")
+        .as_array()
+        .expect("array");
+    assert_eq!(items.len(), 1);
+    assert_eq!(
+        items[0].pointer("/name").expect("has name"),
+        &serde_json::json!("C")
+    );
+    assert_eq!(
+        items[0].pointer("/kind").expect("has kind"),
+        &serde_json::json!(5)
+    );
+    assert_eq!(
+        items[0].pointer("/range/start").expect("has start"),
+        &serde_json::json!({"line": 0, "character": 0})
+    );
+    assert_eq!(
+        items[0]
+            .pointer("/selectionRange/start")
+            .expect("has selection"),
+        &serde_json::json!({"line": 0, "character": 9})
+    );
+    assert_eq!(
+        items[0]
+            .pointer("/selectionRange/end")
+            .expect("has selection end"),
+        &serde_json::json!({"line": 0, "character": 10})
+    );
+    let children = items[0]
+        .pointer("/children")
+        .expect("has children")
+        .as_array()
+        .expect("array");
+    assert_eq!(children.len(), 1);
+    assert_eq!(
+        children[0].pointer("/kind").expect("has kind"),
+        &serde_json::json!(6)
+    );
+}
+
+#[test]
+fn document_symbol_on_unknown_file_returns_null() {
+    let mut session = session_with_symbols();
+    let mut workspace = Workspace::new();
+    init(&mut session, &mut workspace);
+    let reply = handle_message(
+        &mut session,
+        &mut workspace,
+        &symbol_body(13, "file:///repo/ghost.sol"),
+    )
+    .expect("must reply");
+    let value: Value = serde_json::from_str(&reply).expect("reply is json");
+    assert!(value.get("result").expect("has result").is_null());
+}
+
+#[test]
+fn document_symbol_without_id_stays_silent() {
+    let mut session = session_with_symbols();
+    let mut workspace = Workspace::new();
+    open_sol(&mut session, &mut workspace);
+    let body = r#"{"jsonrpc":"2.0","method":"textDocument/documentSymbol","params":{"textDocument":{"uri":"file:///repo/A.sol"}}}"#;
+    assert!(handle_message(&mut session, &mut workspace, body).is_none());
+}
+
+#[test]
+fn document_symbol_default_is_empty_list() {
+    let mut session = session_with_stub(true);
+    let mut workspace = Workspace::new();
+    open_sol(&mut session, &mut workspace);
+    let reply = handle_message(
+        &mut session,
+        &mut workspace,
+        &symbol_body(14, "file:///repo/A.sol"),
+    )
+    .expect("must reply");
+    let value: Value = serde_json::from_str(&reply).expect("reply is json");
+    let items = value
+        .pointer("/result")
+        .expect("has result")
+        .as_array()
+        .expect("array");
+    assert!(items.is_empty());
+}

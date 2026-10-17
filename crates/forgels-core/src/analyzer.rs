@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use forgels_protocol::CompletionItemKind;
+use forgels_protocol::SymbolKind;
 use forgels_syntax::Span;
 
 use forgels_common::fs::is_trackable_file;
@@ -73,6 +74,41 @@ impl SignatureData {
             label,
             params,
             active_param,
+        }
+    }
+}
+
+/// One outline entry for `textDocument/documentSymbol`.
+///
+/// `range` covers the whole declaration, `selection` covers the name.
+/// Languages fall back to `range` when the name span is missing so
+/// broken files still outline. Children nest one level per scope.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DocumentSymbolData {
+    pub name: String,
+    pub detail: String,
+    pub kind: SymbolKind,
+    pub range: Span,
+    pub selection: Span,
+    pub children: Vec<DocumentSymbolData>,
+}
+
+impl DocumentSymbolData {
+    pub fn new(
+        name: String,
+        detail: String,
+        kind: SymbolKind,
+        range: Span,
+        selection: Span,
+        children: Vec<DocumentSymbolData>,
+    ) -> Self {
+        Self {
+            name,
+            detail,
+            kind,
+            range,
+            selection,
+            children,
         }
     }
 }
@@ -309,6 +345,11 @@ pub trait Analyzer: std::fmt::Debug {
     /// languages without calls keep working.
     fn signature_help(&self, _ctx: &ProjectContext) -> Option<Vec<SignatureData>> {
         None
+    }
+    /// Outline entries for the whole file. Default is empty so
+    /// languages without symbols keep working.
+    fn document_symbols(&self, _text: &str) -> Vec<DocumentSymbolData> {
+        Vec::new()
     }
 }
 

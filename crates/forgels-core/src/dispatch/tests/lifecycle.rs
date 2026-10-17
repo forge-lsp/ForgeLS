@@ -30,6 +30,7 @@ fn advertises_exact_beta_capabilities() {
         vec![
             "completionProvider",
             "definitionProvider",
+            "documentSymbolProvider",
             "hoverProvider",
             "signatureHelpProvider",
             "textDocumentSync"

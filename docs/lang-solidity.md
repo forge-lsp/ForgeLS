@@ -241,6 +241,30 @@ Status: token kinds defined. Real lexer and parser are planned.
 - Error: `unresolved identifier '{name}'` with the token span. Unknown plain callees error, unknown member names stay silent, emit names never double.
 - Limits: reserved words used as names stay silent (`Ident` only), return param names are not tracked, free functions are out of scope.
 
+## Document symbols
+
+- Scope: `analysis::symbols` plus `Analyzer::document_symbols` and the
+  `textDocument/documentSymbol` dispatch. Capability
+  `documentSymbolProvider: true`.
+- Shape: `DocumentSymbolData {name, detail, kind, range, selection,
+  children}`. Dispatch maps `range` to `range` and `selection` to
+  `selectionRange`, kinds as LSP 3.17 numbers.
+- Hierarchy: contracts nest functions, state vars, structs, enums,
+  errors, events, modifiers, and user types in source order.
+  Functions nest params, structs nest fields, events nest params,
+  enums nest variants. File level lists structs, enums, errors, user
+  types, events, then contracts.
+- Kinds: contract is Class (5), function and modifier are Method (6),
+  struct field and state var are Field (8), enum is Enum (10),
+  error is Variable (13), enum variant is EnumMember (22), struct is
+  Struct (23), event is Event (24), user type is TypeParameter (26).
+  Constructor stays Method (6) in V1.
+- Spans: `range` is the full node span, `selection` is the name span
+  with fallback to the full span. Enum variants use the variant span
+  for both. Nameless nodes are skipped, so broken rows still leave a
+  partial outline. Unknown files answer `null`.
+- Noir: trait default returns `[]`, no noir grammar change.
+
 ## V1 limits
 
 - Tracked only: `dep_texts` skips untracked and missing files.
