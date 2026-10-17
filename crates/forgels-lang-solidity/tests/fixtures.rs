@@ -441,6 +441,19 @@ fn sbe_structs_member_completion_todo() {
 fn sbe_data_locations_params_cover_storage() {
     let (text, file) = parse_sbe("DataLocations.sol");
     let contract = &file.contracts()[0];
+    let types: Vec<String> = contract
+        .state_vars()
+        .iter()
+        .filter_map(|v| v.type_node().map(|n| TypeNode::text(&n)))
+        .collect();
+    assert!(
+        types.contains(&"mapping(uint => address)".to_string()),
+        "types: {types:?}"
+    );
+    assert!(
+        types.contains(&"mapping(uint => MyStruct)".to_string()),
+        "types: {types:?}"
+    );
     let func_f = contract
         .functions()
         .into_iter()
@@ -706,11 +719,7 @@ fn sbe_payable_hover_owner() {
     );
     let at = text.find("owner").expect("decl") as u32;
     let hover = hover_at(&file, &text, at).expect("hover");
-    assert!(
-        hover.contents.contains("owner"),
-        "contents: {}",
-        hover.contents
-    );
+    assert_eq!(hover.contents, "address payable owner");
 }
 
 #[test]
