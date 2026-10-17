@@ -564,3 +564,123 @@ fn emit_unclosed_keeps_partial_node() {
     assert_eq!(emits[0].name().as_deref(), Some("Transfer"));
     assert_eq!(emits[0].arg_count(), 2);
 }
+
+#[test]
+fn sized_edges_keep_text() {
+    use crate::TypeNode;
+    let text = "contract C {\nuint8 a;\nint8 b;\nuint128 c;\nbytes1 d;\n}";
+    let file = parse_ok(text);
+    let types: Vec<String> = file.contracts()[0]
+        .state_vars()
+        .iter()
+        .filter_map(|var| var.type_node().map(|type_node| TypeNode::text(&type_node)))
+        .collect();
+    assert_eq!(types, vec!["uint8", "int8", "uint128", "bytes1"]);
+}
+
+#[test]
+fn payable_type_keeps_payable_with_arrays() {
+    use crate::TypeNode;
+    let text = "contract C {\naddress payable public owner;\naddress payable[] wallets;\naddress payable[2] fixed;\n}";
+    let file = parse_ok(text);
+    let vars = file.contracts()[0].state_vars();
+    let names: Vec<String> = vars.iter().filter_map(|var| var.name()).collect();
+    assert_eq!(names, vec!["owner", "wallets", "fixed"]);
+    let types: Vec<String> = vars
+        .iter()
+        .filter_map(|var| var.type_node().map(|type_node| TypeNode::text(&type_node)))
+        .collect();
+    assert_eq!(
+        types,
+        vec!["address payable", "address payable[]", "address payable[2]"]
+    );
+}
+
+#[test]
+fn outer_fixed_multidim_keeps_text() {
+    use crate::TypeNode;
+    let text = "contract C {\nuint[][2] matrix;\n}";
+    let file = parse_ok(text);
+    let types: Vec<String> = file.contracts()[0]
+        .state_vars()
+        .iter()
+        .filter_map(|var| var.type_node().map(|type_node| TypeNode::text(&type_node)))
+        .collect();
+    assert_eq!(types, vec!["uint[][2]"]);
+}
+
+#[test]
+fn mapping_keys_keep_text_with_named_key() {
+    use crate::TypeNode;
+    let text = "contract C {\nmapping(bool => uint) a;\nmapping(string => uint) b;\nmapping(bytes => uint) c;\nmapping(MyContract => uint) d;\nmapping(Color => uint) e;\nmapping(address account => uint) f;\n}";
+    let file = parse_ok(text);
+    let types: Vec<String> = file.contracts()[0]
+        .state_vars()
+        .iter()
+        .filter_map(|var| var.type_node().map(|type_node| TypeNode::text(&type_node)))
+        .collect();
+    assert_eq!(
+        types,
+        vec![
+            "mapping(bool => uint)",
+            "mapping(string => uint)",
+            "mapping(bytes => uint)",
+            "mapping(MyContract => uint)",
+            "mapping(Color => uint)",
+            "mapping(address account => uint)",
+        ]
+    );
+}
+
+#[test]
+fn mapping_values_keep_array_struct_forms() {
+    use crate::TypeNode;
+    let text = "struct Person {\nuint age;\n}\ncontract C {\nmapping(address => uint[]) a;\nmapping(uint => Person) b;\nmapping(uint => Person[]) c;\n}\nstruct Vault {\nmapping(address => uint) balances;\n}";
+    let file = parse_ok(text);
+    let types: Vec<String> = file.contracts()[0]
+        .state_vars()
+        .iter()
+        .filter_map(|var| var.type_node().map(|type_node| TypeNode::text(&type_node)))
+        .collect();
+    assert_eq!(
+        types,
+        vec![
+            "mapping(address => uint[])",
+            "mapping(uint => Person)",
+            "mapping(uint => Person[])",
+        ]
+    );
+    let vault = file
+        .structs()
+        .into_iter()
+        .find(|item| item.name().as_deref() == Some("Vault"))
+        .expect("vault");
+    let fields: Vec<String> = vault
+        .fields()
+        .iter()
+        .filter_map(|field| field.type_node().map(|node| node.text()))
+        .collect();
+    assert_eq!(fields, vec!["mapping(address => uint)"]);
+}
+
+#[test]
+fn fixed_ufixed_and_udvt_sized_keep_text() {
+    use crate::TypeNode;
+    let text = "type MyNumber is uint128;\ntype Small is uint8;\ncontract C {\nfixed a;\nufixed b;\nfixed128x18 c;\nufixed128x18 d;\n}";
+    let file = parse_ok(text);
+    let underlying: Vec<String> = file
+        .user_types()
+        .iter()
+        .filter_map(|item| item.underlying().map(|node| node.text()))
+        .collect();
+    assert_eq!(underlying, vec!["uint128", "uint8"]);
+    let types: Vec<String> = file.contracts()[0]
+        .state_vars()
+        .iter()
+        .filter_map(|var| var.type_node().map(|type_node| TypeNode::text(&type_node)))
+        .collect();
+    assert_eq!(
+        types,
+        vec!["fixed", "ufixed", "fixed128x18", "ufixed128x18"]
+    );
+}
