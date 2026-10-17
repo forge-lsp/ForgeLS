@@ -23,11 +23,15 @@ mod imports;
 pub(crate) mod inheritance;
 pub(crate) mod members;
 pub(crate) mod meta;
+mod mutability;
+mod payable;
 mod references;
 mod rename;
 mod signature;
 mod symbols;
+mod type_mismatch;
 mod unknown;
+mod visibility;
 
 #[cfg(test)]
 mod tests;
@@ -611,6 +615,10 @@ impl SolidityAnalyzer {
         out.extend(forge::assert_arity_diagnostics(file, scope));
         out.extend(emits::emit_arity_diagnostics(file));
         out.extend(emits::unknown_emit_diagnostics(file, deps));
+        out.extend(visibility::visibility_diagnostics(file, scope));
+        out.extend(mutability::mutability_diagnostics(file, text, scope));
+        out.extend(payable::payable_diagnostics(file, text, scope, deps));
+        out.extend(type_mismatch::type_mismatch_diagnostics(file));
         out.extend(unknown::unknown_identifier_diagnostics(
             file, text, scope, deps,
         ));

@@ -300,6 +300,61 @@ Status: token kinds defined. Real lexer and parser are planned.
   so dispatch answers `InvalidParams` (-32602).
 - Noir: trait default returns `None`, no noir grammar change.
 
+## Function visibility
+
+- Scope: `analysis::visibility` plus `FunctionDef::visibility` and parser
+  storage of `public`, `private`, `internal`, `external` tokens.
+- Rule: plain `f()` where `f` is external in the same contract errors
+  with `external function 'f' must be called via 'this.f()' or 'C.f()'`
+  where `C` is the calling contract. Member calls, `super`, and unknown
+  names stay silent.
+- Lookup: own functions first, then `linearize` bases. Derived wins,
+  first base wins. Overloads use the first definition.
+- Limits: same file only, no cross contract checks, no internal or
+  private cross contract rules.
+
+## State mutability
+
+- Scope: `analysis::mutability` plus `FunctionDef::mutability` with
+  `constant` normalized to `view`. Parser stores `pure`, `view`,
+  `payable`, and `constant` tokens.
+- Rule: token scan of `Ident` in the body resolves `StateVar` only.
+  Decl names, imports, and assembly stay silent. `this.x` counts as a
+  read. `delete`, assignments, and `++` or `--` count as writes. Pure
+  errors on reads and writes, view errors on writes only.
+- Messages: `pure function 'f' cannot read state variable 'x'`,
+  `pure function 'f' cannot write to state variable 'x'`,
+  `view function 'f' cannot write to state variable 'x'`.
+- Limits: no dataflow, no transitive calls, params and locals shadow
+  state vars via scope resolve.
+
+## Payable call options
+
+- Scope: `analysis::payable` plus `has_call_options` and `options_span`
+  on `CallStmt` and `MemberExpr`. Parser scans balanced `{...}` then
+  parens and falls back to plain on failure. Unknown lint skips option
+  spans so `value` and `gas` never error.
+- Rule: calls and member calls with a `value` option error when the
+  target is not `payable`, with
+  `non-payable function 'f' cannot receive 'value'`. Builtins, unknown
+  targets, and gas-only options stay silent.
+- Lookup: plain calls use own plus linearized bases, member calls use
+  receiver contract plus same file and dep bases. Derived wins.
+- Limits: no `msg.value` checks, no payable address split, no fallback
+  or receive rules.
+
+## Type mismatch
+
+- Scope: `analysis::type_mismatch` plus `StateVar::initializer` and
+  `LocalVar::initializer`. Parser stores one literal token only when
+  the initializer is exactly one literal.
+- Rule: single literals against elementary types only. Message shape
+  is `type mismatch: cannot assign <literal> to '<type>'` with the
+  literal span. Mappings, arrays, and user types stay silent.
+- Silent: `1 ether` (two tokens), hex numbers for `address`, idents,
+  calls, casts, and binops (no stored literal).
+- Limits: no inference, no range checks, no implicit conversion tables.
+
 ## V1 limits
 
 - Tracked only: `dep_texts` skips untracked and missing files.

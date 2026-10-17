@@ -60,6 +60,7 @@ pub fn unknown_identifier_diagnostics(
     let members = member_spans(file);
     let member_set: HashSet<(u32, u32)> =
         members.iter().map(|span| (span.start, span.end)).collect();
+    let options = options_spans(file);
     let assemblies = assembly_ranges(&tokens);
     let dep_names = dep_export_names(deps);
     let mut out = Vec::new();
@@ -81,6 +82,9 @@ pub fn unknown_identifier_diagnostics(
             continue;
         }
         if member_set.contains(&(span.start, span.end)) {
+            continue;
+        }
+        if inside_any(&options, span.start) {
             continue;
         }
         if preceded_by_dot(text, span.start) {
@@ -281,6 +285,29 @@ pub(crate) fn member_spans(file: &SolidityFile) -> Vec<Span> {
             };
             for member in body.members() {
                 if let Some(span) = member.member_span() {
+                    out.push(span);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Call option spans `{...}`: option names like `value` never lint.
+pub(crate) fn options_spans(file: &SolidityFile) -> Vec<Span> {
+    let mut out = Vec::new();
+    for contract in file.contracts() {
+        for function in contract.functions() {
+            let Some(body) = function.body() else {
+                continue;
+            };
+            for call in body.calls() {
+                if let Some(span) = call.options_span() {
+                    out.push(span);
+                }
+            }
+            for member in body.members() {
+                if let Some(span) = member.options_span() {
                     out.push(span);
                 }
             }

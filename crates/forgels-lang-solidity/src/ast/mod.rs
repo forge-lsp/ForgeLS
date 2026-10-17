@@ -12,7 +12,9 @@ pub use calls::CallStmt;
 pub use contract::ContractDef;
 pub use emits::EmitStmt;
 pub use file::{ImportDirective, PragmaDirective, SolidityFile};
-pub use members::{FunctionDef, LocalVar, MemberExpr, Param, Returns, StateVar};
+pub use members::{
+    FunctionDef, LocalVar, MemberExpr, Mutability, Param, Returns, StateVar, Visibility,
+};
 pub use types::{BlockNode, TypeNode};
 pub use user_types::{EnumDef, ErrorDef, EventDef, ModifierDef, StructDef, UserTypeDef};
 

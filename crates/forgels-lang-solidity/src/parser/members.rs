@@ -63,8 +63,10 @@ pub(crate) fn parse_var(cursor: &mut Cursor, kind: SolidityNode) -> Result<Synta
         ));
     };
     let mut end = name.span.end.max(type_end);
+    let mut init_literal = None;
     if cursor.peek_kind() == Some(SolidityKind::Assign.as_u16()) {
         cursor.bump();
+        init_literal = single_literal_ahead(cursor);
         // Initializer expressions belong to a later leaf. Skip one level.
         while let Some(kind) = cursor.peek_kind() {
             if kind == SolidityKind::Semicolon.as_u16() || kind == SolidityKind::RBrace.as_u16() {
@@ -84,11 +86,65 @@ pub(crate) fn parse_var(cursor: &mut Cursor, kind: SolidityNode) -> Result<Synta
     }
     let semi = cursor.expect(SolidityKind::Semicolon, "`;`")?;
     end = end.max(semi.span.end);
+    let type_start = var_type.span.start;
+    let mut children = vec![SyntaxElement::Node(var_type), token_element(name)];
+    if let Some(literal) = init_literal {
+        children.push(token_element(literal));
+    }
     Ok(SyntaxNode::with_children(
         kind.as_u16(),
-        Span::new(var_type.span.start, end),
-        vec![SyntaxElement::Node(var_type), token_element(name)],
+        Span::new(type_start, end),
+        children,
     ))
+}
+
+/// One literal token after `=` when the initializer is exactly one literal.
+///
+/// Skips comments and returns the token only for a single literal kind
+/// directly before `;` or `}`. Multi token forms like `1 ether`, idents,
+/// calls, casts, and binops yield `None`.
+fn single_literal_ahead(cursor: &mut Cursor) -> Option<forgels_syntax::Token> {
+    let comment = SolidityKind::Comment.as_u16();
+    let mut found = None;
+    let mut count = 0u32;
+    let mut index = cursor.pos();
+    while let Some(token) = cursor.tokens.get(index) {
+        if token.kind == comment {
+            index += 1;
+            continue;
+        }
+        if token.kind == SolidityKind::Semicolon.as_u16()
+            || token.kind == SolidityKind::RBrace.as_u16()
+        {
+            break;
+        }
+        if token.kind == SolidityKind::LBrace.as_u16() {
+            return None;
+        }
+        count += 1;
+        if count > 1 {
+            return None;
+        }
+        found = Some(token.clone());
+        index += 1;
+    }
+    let literal = found?;
+    if count != 1 {
+        return None;
+    }
+    match literal.kind {
+        kind if kind == SolidityKind::Number.as_u16()
+            || kind == SolidityKind::OctalNumber.as_u16()
+            || kind == SolidityKind::StringLit.as_u16()
+            || kind == SolidityKind::HexString.as_u16()
+            || kind == SolidityKind::UnicodeString.as_u16()
+            || kind == SolidityKind::True.as_u16()
+            || kind == SolidityKind::False.as_u16() =>
+        {
+            Some(literal)
+        }
+        _ => None,
+    }
 }
 
 /// Parse function name(params) modifiers returns (types) body.
@@ -144,10 +200,11 @@ pub(crate) fn parse_function(
         errors.push(ParseError::new(cursor.peek_span(), "expected `)`"));
         return None;
     }
-    // Modifiers and visibility are consumed, not stored.
-    // Custom modifiers (`onlyOwner`) and base args (`Base(1)`) are
-    // plain idents with optional parens: skip name plus args so the
-    // body still parses without one error per modifier.
+    // Visibility and mutability are stored as keyword tokens so
+    // `FunctionDef` can report them. Custom modifiers (`onlyOwner`) and
+    // base args (`Base(1)`) are plain idents with optional parens: skip
+    // name plus args so the body still parses without one error per
+    // modifier. `virtual` and `override` stay consumed but not stored.
     loop {
         match cursor.peek_kind() {
             Some(kind)
@@ -158,8 +215,15 @@ pub(crate) fn parse_function(
                     || kind == SolidityKind::Pure.as_u16()
                     || kind == SolidityKind::View.as_u16()
                     || kind == SolidityKind::Payable.as_u16()
-                    || kind == SolidityKind::Constant.as_u16()
-                    || kind == SolidityKind::Virtual.as_u16()
+                    || kind == SolidityKind::Constant.as_u16() =>
+            {
+                let Some(token) = cursor.bump() else {
+                    break;
+                };
+                children.push(token_element(token));
+            }
+            Some(kind)
+                if kind == SolidityKind::Virtual.as_u16()
                     || kind == SolidityKind::Override.as_u16() =>
             {
                 cursor.bump();
@@ -384,14 +448,124 @@ pub(crate) fn parse_block(cursor: &mut Cursor, errors: &mut Vec<ParseError>) -> 
     ))
 }
 
+/// Scan `{...}(...)` options plus call parens starting at `lbrace`.
+///
+/// Returns the brace pair, the call markers (`)` alone for empty, `(` plus
+/// commas otherwise), the closing paren, and its index. `None` on any
+/// failure so callers fall back to plain.
+fn scan_options_call(
+    tokens: &[forgels_syntax::Token],
+    lbrace_pos: usize,
+) -> Option<(
+    forgels_syntax::Token,
+    forgels_syntax::Token,
+    Vec<forgels_syntax::Token>,
+    forgels_syntax::Token,
+    usize,
+)> {
+    let comment = SolidityKind::Comment.as_u16();
+    let next_code = |mut index: usize| -> Option<usize> {
+        while let Some(token) = tokens.get(index) {
+            if token.kind != comment {
+                return Some(index);
+            }
+            index += 1;
+        }
+        None
+    };
+    let lbrace = tokens.get(lbrace_pos)?.clone();
+    if lbrace.kind != SolidityKind::LBrace.as_u16() {
+        return None;
+    }
+    let mut depth = 0u32;
+    let mut rbrace_pos = None;
+    let mut index = lbrace_pos;
+    while let Some(token) = tokens.get(index) {
+        if token.kind == comment {
+            index += 1;
+            continue;
+        }
+        if token.kind == SolidityKind::LBrace.as_u16() {
+            depth += 1;
+        } else if token.kind == SolidityKind::RBrace.as_u16() {
+            if depth == 0 {
+                return None;
+            }
+            depth -= 1;
+            if depth == 0 {
+                rbrace_pos = Some(index);
+                break;
+            }
+        }
+        index += 1;
+    }
+    let rbrace_pos = rbrace_pos?;
+    let rbrace = tokens.get(rbrace_pos)?.clone();
+    let lparen_pos = next_code(rbrace_pos + 1)?;
+    let lparen = tokens.get(lparen_pos)?.clone();
+    if lparen.kind != SolidityKind::LParen.as_u16() {
+        return None;
+    }
+    let mut paren_depth = 0u32;
+    let mut bracket_depth = 0u32;
+    let mut commas = Vec::new();
+    let mut found_close = None;
+    let mut scan = lparen_pos;
+    while let Some(token) = tokens.get(scan) {
+        if token.kind == comment {
+            scan += 1;
+            continue;
+        }
+        let kind = token.kind;
+        if kind == SolidityKind::LBrace.as_u16() {
+            return None;
+        }
+        if kind == SolidityKind::LParen.as_u16() {
+            paren_depth += 1;
+        } else if kind == SolidityKind::RParen.as_u16() {
+            if paren_depth == 0 {
+                return None;
+            }
+            paren_depth -= 1;
+            if paren_depth == 0 {
+                found_close = Some(scan);
+                break;
+            }
+        } else if kind == SolidityKind::LBracket.as_u16() {
+            bracket_depth += 1;
+        } else if kind == SolidityKind::RBracket.as_u16() {
+            if bracket_depth == 0 {
+                return None;
+            }
+            bracket_depth -= 1;
+        } else if kind == SolidityKind::Comma.as_u16() && paren_depth == 1 && bracket_depth == 0 {
+            commas.push(token.clone());
+        }
+        scan += 1;
+    }
+    let close_pos = found_close?;
+    let rparen = tokens.get(close_pos)?.clone();
+    let after_lparen = next_code(lparen_pos + 1);
+    let is_empty = after_lparen.is_some_and(|at| at == close_pos);
+    let markers = if is_empty {
+        vec![rparen.clone()]
+    } else {
+        let mut out = vec![lparen.clone()];
+        out.extend(commas);
+        out
+    };
+    Some((lbrace, rbrace, markers, rparen, close_pos))
+}
+
 /// Try `recv.member` with single ident receiver, including `this`/`super`.
 ///
 /// Returns the Member node and consumes through the member name (or dot
 /// when the name is still missing). Only the first dot is stored; chained
 /// tails like `.c` in `a.b.c` stay for `recover_statement`. Calls add
-/// markers: `(` plus commas for non-empty, `)` alone for empty. Span
-/// covers `recv` through `)` for calls, `recv` through member for plain.
-/// Unclosed or braced call suffixes fall back to plain.
+/// markers: `(` plus commas for non-empty, `)` alone for empty. Options
+/// like `{value: 1}` add `{` and `}` markers when balanced and followed
+/// by parens. Span covers `recv` through `)` for calls, `recv` through
+/// member for plain. Unclosed or braced call suffixes fall back to plain.
 pub(crate) fn try_parse_member(cursor: &mut Cursor) -> Option<SyntaxNode> {
     let tokens = cursor.tokens;
     let comment = SolidityKind::Comment.as_u16();
@@ -441,13 +615,38 @@ pub(crate) fn try_parse_member(cursor: &mut Cursor) -> Option<SyntaxNode> {
     let mut base = vec![token_element(recv), token_element(dot.clone())];
     base.push(token_element(name.clone()));
     let plain_end = name.span.end;
-    let Some(lparen_pos) = next_code(member_pos + 1) else {
+    let Some(after_pos) = next_code(member_pos + 1) else {
         return finish_plain(cursor, base, plain_end, member_pos);
     };
-    let lparen = tokens.get(lparen_pos)?.clone();
-    if lparen.kind != SolidityKind::LParen.as_u16() {
+    let after = tokens.get(after_pos)?.clone();
+    if after.kind == SolidityKind::LBrace.as_u16() {
+        let Some((open, close, call_markers, rparen, close_pos)) =
+            scan_options_call(tokens, after_pos)
+        else {
+            return finish_plain(cursor, base, plain_end, member_pos);
+        };
+        let mut children = base;
+        children.push(token_element(open));
+        children.push(token_element(close));
+        for marker in call_markers {
+            children.push(token_element(marker));
+        }
+        while cursor.pos() <= close_pos {
+            if cursor.bump().is_none() {
+                break;
+            }
+        }
+        return Some(SyntaxNode::with_children(
+            SolidityNode::Member.as_u16(),
+            Span::new(start, rparen.span.end),
+            children,
+        ));
+    }
+    if after.kind != SolidityKind::LParen.as_u16() {
         return finish_plain(cursor, base, plain_end, member_pos);
     }
+    let lparen_pos = after_pos;
+    let lparen = after;
     let mut paren_depth = 0u32;
     let mut bracket_depth = 0u32;
     let mut commas = Vec::new();
@@ -515,7 +714,9 @@ pub(crate) fn try_parse_member(cursor: &mut Cursor) -> Option<SyntaxNode> {
 
 /// Try `name(args)` at block top level. Returns the Call node on success.
 ///
-/// Plain calls only: member access (`a.b()`), named args (`f({x: 1})`),
+/// Plain calls plus `{value: 1}` options: options need balanced braces
+/// followed by parens and store `{` and `}` markers with the span.
+/// Member access (`a.b()`), named args (`f({x: 1})`), unclosed options,
 /// and `new`/`super`/`constructor` fall back to `recover_statement`
 /// with no node and no error. Commas count at paren depth one with
 /// no open bracket; empty parens give zero args.
@@ -539,10 +740,41 @@ pub(crate) fn try_parse_call(cursor: &mut Cursor) -> Option<SyntaxNode> {
     if callee.text == "super" || callee.text == "constructor" || callee.text == "new" {
         return None;
     }
-    let lparen_idx = next_code(callee_idx + 1)?;
-    if tokens.get(lparen_idx)?.kind != SolidityKind::LParen.as_u16() {
+    let after_idx = next_code(callee_idx + 1)?;
+    let after = tokens.get(after_idx)?.clone();
+    if after.kind == SolidityKind::LBrace.as_u16() {
+        let (open, close, markers, rparen, close_pos) = scan_options_call(tokens, after_idx)?;
+        let mut children = vec![token_element(callee.clone())];
+        children.push(token_element(open));
+        children.push(token_element(close));
+        let single_paren = markers.len() == 1
+            && markers
+                .first()
+                .is_some_and(|token| token.kind == SolidityKind::RParen.as_u16());
+        for marker in markers {
+            // Empty options calls keep only braces; the lone `)` marker
+            // is dropped so `arg_count` stays zero.
+            if single_paren && marker.kind == SolidityKind::RParen.as_u16() {
+                continue;
+            }
+            children.push(token_element(marker));
+        }
+        let node = SyntaxNode::with_children(
+            SolidityNode::Call.as_u16(),
+            Span::new(callee.span.start, rparen.span.end),
+            children,
+        );
+        while cursor.pos() <= close_pos {
+            if cursor.bump().is_none() {
+                break;
+            }
+        }
+        return Some(node);
+    }
+    if after.kind != SolidityKind::LParen.as_u16() {
         return None;
     }
+    let lparen_idx = after_idx;
     let mut paren_depth = 0u32;
     let mut bracket_depth = 0u32;
     let mut commas = Vec::new();
