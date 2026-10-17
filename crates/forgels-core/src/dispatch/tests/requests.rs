@@ -1316,3 +1316,153 @@ fn workspace_symbol_missing_query_returns_empty() {
     let reply = handle_message(&mut session, &mut workspace, &body).expect("must reply");
     assert!(workspace_items(&reply).is_empty());
 }
+
+fn references_body(id: u32, uri: &str, line: u32, character: u32, include_decl: bool) -> String {
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": "textDocument/references",
+        "params": {
+            "textDocument": { "uri": uri },
+            "position": { "line": line, "character": character },
+            "context": { "includeDeclaration": include_decl },
+        }
+    })
+    .to_string()
+}
+
+#[derive(Debug)]
+struct RefAnalyzer;
+
+impl crate::analyzer::Analyzer for RefAnalyzer {
+    fn hover(&self, _ctx: &crate::analyzer::ProjectContext) -> Option<crate::analyzer::HoverData> {
+        None
+    }
+
+    fn complete(
+        &self,
+        _ctx: &crate::analyzer::ProjectContext,
+    ) -> Vec<crate::analyzer::CompletionData> {
+        Vec::new()
+    }
+
+    fn goto(&self, _ctx: &crate::analyzer::ProjectContext) -> Option<Span> {
+        None
+    }
+
+    fn diagnostics(&self, _text: &str) -> Vec<crate::analyzer::DiagnosticData> {
+        Vec::new()
+    }
+
+    fn references(
+        &self,
+        ctx: &crate::analyzer::ProjectContext,
+    ) -> Option<Vec<crate::analyzer::ReferenceData>> {
+        Some(vec![
+            crate::analyzer::ReferenceData::new(ctx.path.to_path_buf(), Span::new(9, 10), true),
+            crate::analyzer::ReferenceData::new(ctx.path.to_path_buf(), Span::new(0, 1), false),
+            crate::analyzer::ReferenceData::new(
+                std::path::PathBuf::from("/repo/B.sol"),
+                Span::new(500, 510),
+                false,
+            ),
+        ])
+    }
+}
+
+fn session_with_refs() -> super::super::Session {
+    let mut session = super::super::Session::new();
+    session
+        .analyzers
+        .insert(crate::routing::Language::Solidity, Box::new(RefAnalyzer));
+    session
+}
+
+fn reference_items(reply: &str) -> Vec<Value> {
+    let value: Value = serde_json::from_str(reply).expect("reply is json");
+    value
+        .pointer("/result")
+        .expect("has result")
+        .as_array()
+        .expect("array")
+        .clone()
+}
+
+#[test]
+fn references_default_is_empty_list() {
+    let mut session = super::stub::session_with_stub(true);
+    let mut workspace = Workspace::new();
+    super::stub::open_sol(&mut session, &mut workspace);
+    let reply = handle_message(
+        &mut session,
+        &mut workspace,
+        &references_body(30, "file:///repo/A.sol", 0, 10, true),
+    )
+    .expect("must reply");
+    assert!(reference_items(&reply).is_empty());
+}
+
+#[test]
+fn references_includes_decl_when_requested() {
+    let mut session = session_with_refs();
+    let mut workspace = Workspace::new();
+    super::stub::open_sol(&mut session, &mut workspace);
+    let reply = handle_message(
+        &mut session,
+        &mut workspace,
+        &references_body(31, "file:///repo/A.sol", 0, 10, true),
+    )
+    .expect("must reply");
+    let items = reference_items(&reply);
+    assert_eq!(items.len(), 2);
+    assert_eq!(
+        items[0].pointer("/uri").expect("has uri"),
+        &serde_json::json!("file:///repo/A.sol")
+    );
+    assert_eq!(
+        items[0].pointer("/range/start").expect("has start"),
+        &serde_json::json!({"line": 0, "character": 9})
+    );
+}
+
+#[test]
+fn references_filters_decl_when_excluded() {
+    let mut session = session_with_refs();
+    let mut workspace = Workspace::new();
+    super::stub::open_sol(&mut session, &mut workspace);
+    let reply = handle_message(
+        &mut session,
+        &mut workspace,
+        &references_body(32, "file:///repo/A.sol", 0, 10, false),
+    )
+    .expect("must reply");
+    let items = reference_items(&reply);
+    assert_eq!(items.len(), 1);
+    assert_eq!(
+        items[0].pointer("/range/start").expect("has start"),
+        &serde_json::json!({"line": 0, "character": 0})
+    );
+}
+
+#[test]
+fn references_on_unknown_file_returns_empty() {
+    let mut session = session_with_refs();
+    let mut workspace = Workspace::new();
+    super::stub::init(&mut session, &mut workspace);
+    let reply = handle_message(
+        &mut session,
+        &mut workspace,
+        &references_body(33, "file:///repo/ghost.sol", 0, 1, true),
+    )
+    .expect("must reply");
+    assert!(reference_items(&reply).is_empty());
+}
+
+#[test]
+fn references_without_id_stays_silent() {
+    let mut session = session_with_refs();
+    let mut workspace = Workspace::new();
+    super::stub::open_sol(&mut session, &mut workspace);
+    let body = r#"{"jsonrpc":"2.0","method":"textDocument/references","params":{"textDocument":{"uri":"file:///repo/A.sol"},"position":{"line":0,"character":10},"context":{"includeDeclaration":true}}}"#;
+    assert!(handle_message(&mut session, &mut workspace, body).is_none());
+}

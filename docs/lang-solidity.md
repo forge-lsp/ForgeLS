@@ -265,10 +265,27 @@ Status: token kinds defined. Real lexer and parser are planned.
   partial outline. Unknown files answer `null`.
 - Noir: trait default returns `[]`, no noir grammar change.
 
+## References
+
+- Scope: `analysis::references` plus `Analyzer::references` and the
+  `textDocument/references` dispatch. Capability
+  `referencesProvider: true`.
+- Shape: `ReferenceData {path, span, is_declaration}`. Dispatch maps
+  each entry to `Location`, honors `context.includeDeclaration`, skips
+  out-of-bounds spans, caps at `MAX_REFERENCES = 100`.
+- Resolve: member, emit, then plain. Builtins and unknown words return
+  `None`. Identity is span based: each usage must resolve to the same
+  `(path, span)` as the target, so shadowed names never mix.
+- Scan: `Ident` tokens per file only. Imports, pragmas, and assembly
+  never count. Plain skips member and emit slots, member needs a dot,
+  emit needs an emit slot. Local vars use a fast path that scans the
+  current file only. Others scan tracked Solidity files path-sorted.
+- Noir: trait default returns `None`, no noir grammar change.
+
 ## V1 limits
 
 - Tracked only: `dep_texts` skips untracked and missing files.
-- Caps: dep read cap is 16, republish fan-out cap is 32.
+- Caps: dep read cap is 16, republish fan-out cap is 32, references cap is 100.
 - Symbols: `Contract` and `Function` cross files. `StateVar`, `Param`, and `LocalVar` stay local.
 - Imports: union without alias precision. `{B as C}` records both `B` and `C`, no alias mapping.
 - Parse: parse on each call, no incremental cache.
