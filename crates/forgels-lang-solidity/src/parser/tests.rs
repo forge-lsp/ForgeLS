@@ -417,6 +417,95 @@ fn block_members_collect_single_dot() {
         .collect();
     assert!(pairs.contains(&(Some("p".to_string()), Some("age".to_string()))));
     assert!(pairs.contains(&(Some("this".to_string()), Some("total".to_string()))));
+    assert!(body.members().iter().all(|member| !member.is_call()));
+}
+
+#[test]
+fn member_call_markers_cover_args() {
+    use forgels_syntax::AstNode;
+    let text = "contract C {\nfunction f() public {\nobj.greet(1, 2);\n}\n}";
+    let file = parse_ok(text);
+    let body = file.contracts()[0].functions()[0].body().expect("body");
+    assert!(body.calls().is_empty());
+    let members = body.members();
+    assert_eq!(members.len(), 1);
+    assert_eq!(members[0].receiver().as_deref(), Some("obj"));
+    assert_eq!(members[0].member().as_deref(), Some("greet"));
+    assert!(members[0].is_call());
+    assert_eq!(members[0].arg_count(), 2);
+    let span_text =
+        &text[members[0].syntax().span.start as usize..members[0].syntax().span.end as usize];
+    assert!(span_text.starts_with("obj.greet") && span_text.ends_with(')'));
+}
+
+#[test]
+fn empty_member_call_marks_call_with_zero_args() {
+    let text = "contract C {\nfunction f() public {\nobj.greet();\n}\n}";
+    let file = parse_ok(text);
+    let body = file.contracts()[0].functions()[0].body().expect("body");
+    assert_eq!(body.members().len(), 1);
+    assert!(body.members()[0].is_call());
+    assert_eq!(body.members()[0].arg_count(), 0);
+}
+
+#[test]
+fn plain_member_has_no_call_marker() {
+    let text = "contract C {\nfunction f() public {\nPerson p;\np.age;\n}\n}";
+    let file = parse_ok(text);
+    let body = file.contracts()[0].functions()[0].body().expect("body");
+    assert_eq!(body.members().len(), 1);
+    assert!(!body.members()[0].is_call());
+    assert_eq!(body.members()[0].arg_count(), 0);
+}
+
+#[test]
+fn member_call_with_nested_args_counts_top_level_only() {
+    let text = "contract C {\nfunction f() public {\nobj.greet(bar(1, 2), [3, 4]);\n}\n}";
+    let file = parse_ok(text);
+    let body = file.contracts()[0].functions()[0].body().expect("body");
+    assert_eq!(body.members().len(), 1);
+    assert!(body.members()[0].is_call());
+    assert_eq!(body.members()[0].arg_count(), 2);
+}
+
+#[test]
+fn member_call_with_brace_falls_back_to_plain() {
+    let text = "contract C {\nfunction f() public {\nobj.greet({value: 1});\n}\n}";
+    let lexer = SolidityLexer;
+    let tokens = lexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let body = file.contracts()[0].functions()[0].body().expect("body");
+    assert_eq!(body.members().len(), 1);
+    assert_eq!(body.members()[0].receiver().as_deref(), Some("obj"));
+    assert_eq!(body.members()[0].member().as_deref(), Some("greet"));
+    assert!(!body.members()[0].is_call());
+}
+
+#[test]
+fn member_call_unclosed_falls_back_to_plain() {
+    let text = "contract C {\nfunction f() public {\nobj.greet(1, 2\n}\n}";
+    let lexer = SolidityLexer;
+    let tokens = lexer.tokenize(text);
+    let (file, _) = SolidityParser.parse_with_errors(&tokens);
+    let body = file.contracts()[0].functions()[0].body().expect("body");
+    assert_eq!(body.members().len(), 1);
+    assert!(!body.members()[0].is_call());
+    assert_eq!(body.members()[0].arg_count(), 0);
+}
+
+#[test]
+fn chained_member_call_keeps_first_pair_only() {
+    let text = "contract C {\nfunction f() public {\na.b.c(1);\n}\n}";
+    let lexer = SolidityLexer;
+    let tokens = lexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let body = file.contracts()[0].functions()[0].body().expect("body");
+    assert_eq!(body.members().len(), 1);
+    assert_eq!(body.members()[0].receiver().as_deref(), Some("a"));
+    assert_eq!(body.members()[0].member().as_deref(), Some("b"));
+    assert!(!body.members()[0].is_call());
 }
 
 #[test]

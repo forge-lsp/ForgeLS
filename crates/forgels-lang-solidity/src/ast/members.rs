@@ -1,5 +1,6 @@
 use super::types::{BlockNode, TypeNode};
 use super::{SolidityNode, cast_node, first_ident_text, is_word_text};
+use crate::lexer::SolidityKind;
 use forgels_syntax::{AstNode, SyntaxElement, SyntaxNode};
 
 /// Function definition: name, params, return types, and body block.
@@ -228,7 +229,9 @@ impl AstNode for LocalVar {
 ///
 /// Children hold receiver token, dot token, then optional member token.
 /// Only one dot is stored; chained `a.b.c` keeps the first pair and the
-/// rest is skipped as statement tail.
+/// rest is skipped as statement tail. Calls add markers after index 2:
+/// `(` plus one `,` per extra arg for non-empty, `)` alone for empty.
+/// Plain access holds no marker, so `is_call` separates reads from calls.
 #[derive(Debug, Clone)]
 pub struct MemberExpr {
     syntax: SyntaxNode,
@@ -254,6 +257,34 @@ impl MemberExpr {
                 _ => None,
             })
             .nth(2)
+    }
+
+    pub fn is_call(&self) -> bool {
+        self.syntax.children.iter().skip(3).any(|element| {
+            matches!(
+                element,
+                SyntaxElement::Token(token)
+                    if token.kind == SolidityKind::LParen.as_u16()
+                        || token.kind == SolidityKind::Comma.as_u16()
+                        || token.kind == SolidityKind::RParen.as_u16()
+            )
+        })
+    }
+
+    pub fn arg_count(&self) -> usize {
+        self.syntax
+            .children
+            .iter()
+            .skip(3)
+            .filter(|element| {
+                matches!(
+                    element,
+                    SyntaxElement::Token(token)
+                        if token.kind == SolidityKind::LParen.as_u16()
+                            || token.kind == SolidityKind::Comma.as_u16()
+                )
+            })
+            .count()
     }
 }
 

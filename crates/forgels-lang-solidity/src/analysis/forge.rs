@@ -12,8 +12,8 @@ pub(crate) const FORGE_ORIGIN: &str = "forge-std";
 /// One forge-std builtin: display detail plus plain arity.
 ///
 /// `arity` is `Some` for plain asserts only. Member cheatcodes (`vm.*`,
-/// `console.*`) keep `None`: `MemberExpr` stores receiver, dot, and member
-/// with no arg count, so member arity waits for parser support.
+/// `console.*`) keep `None` by design: member arity skips builtins via
+/// guard, so cheatcode overloads never lint.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ForgeBuiltin {
     pub name: &'static str,

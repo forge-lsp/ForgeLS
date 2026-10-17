@@ -1,8 +1,9 @@
-use super::{Scope, SymbolKind, inheritance};
+use super::{Scope, SymbolKind, forge, inheritance, members};
 use crate::SolidityFile;
 use forgels_core::DiagnosticData;
 use forgels_syntax::AstNode;
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 /// Arity checks for plain calls: compare declared params with supplied args.
 ///
@@ -61,6 +62,108 @@ pub fn arity_diagnostics(file: &SolidityFile, scope: &Scope) -> Vec<DiagnosticDa
                         span,
                         message: format!(
                             "this function '{callee}' takes {expected} arguments but {actual} supplied"
+                        ),
+                    });
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Arity checks for member calls: `recv.member(args)` against the receiver type.
+///
+/// Builtins skip first via `member_builtin`, so `vm.*` and `console.*`
+/// stay silent. Receiver resolves with deps, structs stay silent, unknown
+/// types stay silent. Target functions collect own plus linear order bases
+/// across files, derived wins and first base wins. Same message as plain.
+pub fn member_arity_diagnostics(
+    file: &SolidityFile,
+    scope: &Scope,
+    deps: &[(PathBuf, SolidityFile)],
+) -> Vec<DiagnosticData> {
+    let mut out = Vec::new();
+    for contract in file.contracts() {
+        for function in contract.functions() {
+            let Some(body) = function.body() else {
+                continue;
+            };
+            for member in body.members() {
+                if !member.is_call() {
+                    continue;
+                }
+                let Some(receiver) = member.receiver() else {
+                    continue;
+                };
+                let Some(name) = member.member() else {
+                    continue;
+                };
+                if receiver.is_empty() || name.is_empty() {
+                    continue;
+                }
+                let offset = member.syntax().span.start;
+                if forge::member_builtin(&receiver, &name, scope, offset).is_some() {
+                    continue;
+                }
+                let members::TypeKind::Contract(target) =
+                    members::receiver_type_with_deps(file, scope, offset, &receiver, deps)
+                else {
+                    continue;
+                };
+                if target.is_empty() {
+                    continue;
+                }
+                let Some((target_def, _)) = inheritance::find_contract_across(&target, file, deps)
+                else {
+                    continue;
+                };
+                let mut params_of: HashMap<String, usize> = HashMap::new();
+                for item in target_def.functions() {
+                    let Some(item_name) = item.name() else {
+                        continue;
+                    };
+                    if item_name.is_empty() {
+                        continue;
+                    }
+                    params_of
+                        .entry(item_name)
+                        .or_insert_with(|| item.params().len());
+                }
+                for base in inheritance::linearize(file, &target) {
+                    for item in base.functions() {
+                        let Some(item_name) = item.name() else {
+                            continue;
+                        };
+                        if item_name.is_empty() {
+                            continue;
+                        }
+                        params_of
+                            .entry(item_name)
+                            .or_insert_with(|| item.params().len());
+                    }
+                }
+                for (base, _) in inheritance::linearize_across(file, &target, deps) {
+                    for item in base.functions() {
+                        let Some(item_name) = item.name() else {
+                            continue;
+                        };
+                        if item_name.is_empty() {
+                            continue;
+                        }
+                        params_of
+                            .entry(item_name)
+                            .or_insert_with(|| item.params().len());
+                    }
+                }
+                let Some(expected) = params_of.get(&name) else {
+                    continue;
+                };
+                let actual = member.arg_count();
+                if *expected != actual {
+                    out.push(DiagnosticData {
+                        span: member.syntax().span,
+                        message: format!(
+                            "this function '{name}' takes {expected} arguments but {actual} supplied"
                         ),
                     });
                 }

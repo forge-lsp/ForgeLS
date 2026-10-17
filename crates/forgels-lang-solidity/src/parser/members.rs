@@ -388,7 +388,10 @@ pub(crate) fn parse_block(cursor: &mut Cursor, errors: &mut Vec<ParseError>) -> 
 ///
 /// Returns the Member node and consumes through the member name (or dot
 /// when the name is still missing). Only the first dot is stored; chained
-/// tails like `.c` in `a.b.c` stay for `recover_statement`.
+/// tails like `.c` in `a.b.c` stay for `recover_statement`. Calls add
+/// markers: `(` plus commas for non-empty, `)` alone for empty. Span
+/// covers `recv` through `)` for calls, `recv` through member for plain.
+/// Unclosed or braced call suffixes fall back to plain.
 pub(crate) fn try_parse_member(cursor: &mut Cursor) -> Option<SyntaxNode> {
     let tokens = cursor.tokens;
     let comment = SolidityKind::Comment.as_u16();
@@ -417,23 +420,95 @@ pub(crate) fn try_parse_member(cursor: &mut Cursor) -> Option<SyntaxNode> {
         .filter(|token| token.kind == SolidityKind::Ident.as_u16())
         .cloned();
     let start = recv.span.start;
-    let mut children = vec![token_element(recv), token_element(dot.clone())];
-    let (end, target) = match member {
-        Some(ref name) => {
-            let end = name.span.end;
-            children.push(token_element(name.clone()));
-            (end, member_idx.unwrap_or(dot_idx))
-        }
-        None => (dot.span.end, dot_idx),
+    let finish_plain =
+        |cursor: &mut Cursor, children: Vec<SyntaxElement>, end: u32, target: usize| {
+            while cursor.pos() <= target {
+                if cursor.bump().is_none() {
+                    break;
+                }
+            }
+            Some(SyntaxNode::with_children(
+                SolidityNode::Member.as_u16(),
+                Span::new(start, end),
+                children,
+            ))
+        };
+    let Some(name) = member.clone() else {
+        let children = vec![token_element(recv), token_element(dot.clone())];
+        return finish_plain(cursor, children, dot.span.end, dot_idx);
     };
-    while cursor.pos() <= target {
+    let member_pos = member_idx.unwrap_or(dot_idx);
+    let mut base = vec![token_element(recv), token_element(dot.clone())];
+    base.push(token_element(name.clone()));
+    let plain_end = name.span.end;
+    let Some(lparen_pos) = next_code(member_pos + 1) else {
+        return finish_plain(cursor, base, plain_end, member_pos);
+    };
+    let lparen = tokens.get(lparen_pos)?.clone();
+    if lparen.kind != SolidityKind::LParen.as_u16() {
+        return finish_plain(cursor, base, plain_end, member_pos);
+    }
+    let mut paren_depth = 0u32;
+    let mut bracket_depth = 0u32;
+    let mut commas = Vec::new();
+    let mut rparen_pos = None;
+    let mut index = lparen_pos;
+    while let Some(token) = tokens.get(index) {
+        if token.kind == comment {
+            index += 1;
+            continue;
+        }
+        let kind = token.kind;
+        if kind == SolidityKind::LBrace.as_u16() {
+            return finish_plain(cursor, base, plain_end, member_pos);
+        }
+        if kind == SolidityKind::LParen.as_u16() {
+            paren_depth += 1;
+        } else if kind == SolidityKind::RParen.as_u16() {
+            if paren_depth == 0 {
+                return finish_plain(cursor, base, plain_end, member_pos);
+            }
+            paren_depth -= 1;
+            if paren_depth == 0 {
+                rparen_pos = Some(index);
+                break;
+            }
+        } else if kind == SolidityKind::LBracket.as_u16() {
+            bracket_depth += 1;
+        } else if kind == SolidityKind::RBracket.as_u16() {
+            if bracket_depth == 0 {
+                return finish_plain(cursor, base, plain_end, member_pos);
+            }
+            bracket_depth -= 1;
+        } else if kind == SolidityKind::Comma.as_u16() && paren_depth == 1 && bracket_depth == 0 {
+            commas.push(token.clone());
+        }
+        index += 1;
+    }
+    let close_pos = match rparen_pos {
+        Some(pos) => pos,
+        None => return finish_plain(cursor, base, plain_end, member_pos),
+    };
+    let rparen = tokens.get(close_pos)?.clone();
+    let after_lparen = next_code(lparen_pos + 1);
+    let is_empty = after_lparen.is_some_and(|at| at == close_pos);
+    let mut children = base;
+    if is_empty {
+        children.push(token_element(rparen.clone()));
+    } else {
+        children.push(token_element(lparen));
+        for comma in commas {
+            children.push(token_element(comma));
+        }
+    }
+    while cursor.pos() <= close_pos {
         if cursor.bump().is_none() {
             break;
         }
     }
     Some(SyntaxNode::with_children(
         SolidityNode::Member.as_u16(),
-        Span::new(start, end),
+        Span::new(start, rparen.span.end),
         children,
     ))
 }
