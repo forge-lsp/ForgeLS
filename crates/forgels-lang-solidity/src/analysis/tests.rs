@@ -6,7 +6,7 @@ use super::{
 };
 use crate::{SolidityLexer, SolidityParser};
 use forgels_core::{Analyzer, ProjectContext, Workspace, routing::Language};
-use forgels_syntax::{Lexer, Span};
+use forgels_syntax::{AstNode, Lexer, Span};
 use std::path::PathBuf;
 
 fn collect(text: &str) -> (String, Scope) {
@@ -249,6 +249,48 @@ fn complete_multi(
         .into_iter()
         .map(|item| (item.label, item.detail))
         .collect()
+}
+
+#[test]
+fn member_completion_resolves_receiver_at_scope_end() {
+    // Typing `owner.` at EOF: the contract scope ends exactly at the
+    // cursor, so resolve must treat the end edge as inside.
+    let text = "// SPDX-License-Identifier: UNLICENSED\npragma solidity ^0.8.34;\nstruct CounterStruct {\nuint x;\n}\ncontract Counter {\nuint public x;\naddress public owner;\nCounterStruct public counterStruct;\nevent Increment(uint by);\nevent Decrement(uint by);\nfunction inc() public {\nx++;\nowner.";
+    let workspace = open_workspace(&[("/repo/Counter.sol", text)]);
+    let owned = text.to_string();
+    let buf = PathBuf::from("/repo/Counter.sol");
+    let at = owned.len() as u32;
+    let ctx = ProjectContext::new(buf.as_path(), &owned, at, &workspace);
+    let out = SolidityAnalyzer.complete(&ctx);
+    let labels: Vec<&str> = out.iter().map(|item| item.label.as_str()).collect();
+    for member in [
+        "balance",
+        "code",
+        "codehash",
+        "transfer",
+        "send",
+        "call",
+        "delegatecall",
+        "staticcall",
+    ] {
+        assert!(labels.contains(&member), "{member} missing: {labels:?}");
+    }
+}
+
+#[test]
+fn scope_resolve_hits_end_edge() {
+    let text = "contract C {\nuint256 total;\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let scope = super::collect_symbols(&file);
+    let at_decl = text.find("total").expect("decl") as u32;
+    let found = scope.resolve("total", at_decl).expect("found");
+    assert_eq!(found.detail, "uint256 total");
+    // Cursor exactly at the contract end edge still resolves inside.
+    let end = file.syntax().span.end;
+    let edge = scope.resolve("total", end).expect("edge resolves");
+    assert_eq!(edge.detail, "uint256 total");
 }
 
 #[test]
