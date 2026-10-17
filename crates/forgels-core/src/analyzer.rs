@@ -113,6 +113,131 @@ impl DocumentSymbolData {
     }
 }
 
+/// Cap for `workspace/symbol` results. Bounds fan-out across files.
+pub const MAX_WORKSPACE_SYMBOLS: usize = 50;
+
+/// One flat entry for `workspace/symbol`.
+///
+/// `span` is the name span when valid, else the full range. `container`
+/// holds the parent name for depth 1 entries, none for top level.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceSymbolData {
+    pub name: String,
+    pub kind: SymbolKind,
+    pub container: Option<String>,
+    pub path: PathBuf,
+    pub span: Span,
+}
+
+impl WorkspaceSymbolData {
+    pub fn new(
+        name: String,
+        kind: SymbolKind,
+        container: Option<String>,
+        path: PathBuf,
+        span: Span,
+    ) -> Self {
+        Self {
+            name,
+            kind,
+            container,
+            path,
+            span,
+        }
+    }
+}
+
+/// Flat workspace search over tracked files.
+///
+/// Reuses `Analyzer::document_symbols` per file, flattens depth 0-1,
+/// matches substring case-insensitive on name. Files run path-sorted
+/// for deterministic output. Empty query returns empty. Caps at
+/// `MAX_WORKSPACE_SYMBOLS` with early exit. Skips missing analyzers
+/// and out-of-bounds spans.
+pub fn workspace_symbols(
+    workspace: &Workspace,
+    analyzers: &AnalyzerMap,
+    query: &str,
+) -> Vec<WorkspaceSymbolData> {
+    if query.is_empty() {
+        return Vec::new();
+    }
+    let needle = query.to_lowercase();
+    let mut files: Vec<_> = workspace.iter_files().collect();
+    files.sort_by(|left, right| left.0.cmp(right.0));
+    let mut out: Vec<WorkspaceSymbolData> = Vec::new();
+    for (path, doc) in files {
+        if out.len() >= MAX_WORKSPACE_SYMBOLS {
+            break;
+        }
+        let Some(analyzer) = analyzers.get(&doc.language) else {
+            continue;
+        };
+        for top in analyzer.document_symbols(&doc.text) {
+            if out.len() >= MAX_WORKSPACE_SYMBOLS {
+                break;
+            }
+            push_if_match(&mut out, &needle, path, None, &top, &doc.text);
+            for child in &top.children {
+                if out.len() >= MAX_WORKSPACE_SYMBOLS {
+                    break;
+                }
+                push_if_match(
+                    &mut out,
+                    &needle,
+                    path,
+                    Some(top.name.clone()),
+                    child,
+                    &doc.text,
+                );
+            }
+        }
+    }
+    out
+}
+
+fn push_if_match(
+    out: &mut Vec<WorkspaceSymbolData>,
+    needle: &str,
+    path: &Path,
+    container: Option<String>,
+    item: &DocumentSymbolData,
+    text: &str,
+) {
+    if out.len() >= MAX_WORKSPACE_SYMBOLS {
+        return;
+    }
+    if !item.name.to_lowercase().contains(needle) {
+        return;
+    }
+    let Some(span) = pick_symbol_span(text, item) else {
+        return;
+    };
+    out.push(WorkspaceSymbolData::new(
+        item.name.clone(),
+        item.kind,
+        container,
+        path.to_path_buf(),
+        span,
+    ));
+}
+
+fn pick_symbol_span(text: &str, item: &DocumentSymbolData) -> Option<Span> {
+    if text
+        .get(item.selection.start as usize..item.selection.end as usize)
+        .is_some()
+    {
+        return Some(item.selection);
+    }
+    if text
+        .get(item.range.start as usize..item.range.end as usize)
+        .is_some()
+    {
+        return Some(item.range);
+    }
+    None
+}
+
 /// One parse problem from a language analyzer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiagnosticData {
