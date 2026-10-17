@@ -12,11 +12,22 @@ pub struct Hover {
 /// Hover info for the word at `offset`, if it names a visible declaration.
 ///
 /// Member positions after a dot resolve against the receiver type first.
-/// Array and address members use the cursor member span since their
-/// detail spans are synthetic. Emit name slots resolve to event declarations only, so a
+/// Array, address, bytes, function, and global members use the cursor
+/// member span since their detail spans are synthetic. `type(Inner)`
+/// members resolve via the inner dispatch set the same way. Emit name slots resolve to event declarations only, so a
 /// function with the same name never shadows the event. Positions on
 /// whitespace, operators, or undeclared words return `None`.
 pub fn hover_at(file: &SolidityFile, text: &str, offset: u32) -> Option<Hover> {
+    if let Some(type_ctx) = super::meta::type_context_at(text, offset)
+        && (type_ctx.member_span.contains(offset) || type_ctx.member_span.end == offset)
+        && !type_ctx.member.is_empty()
+    {
+        let found = super::meta::meta_member(&type_ctx.inner, &type_ctx.member)?;
+        return Some(Hover {
+            contents: found.detail,
+            span: type_ctx.member_span,
+        });
+    }
     // Receiver itself keeps scope hover; only the member uses type lookup.
     if let Some(ctx) = super::members::member_context_at(text, offset)
         && (ctx.member_span.contains(offset) || ctx.member_span.end == offset)
@@ -39,6 +50,31 @@ pub fn hover_at(file: &SolidityFile, text: &str, offset: u32) -> Option<Hover> {
                 span: ctx.member_span,
             });
         }
+        if matches!(kind, super::members::TypeKind::Bytes)
+            && let Some(found) = super::bytes::bytes_member(&ctx.member)
+        {
+            return Some(Hover {
+                contents: found.detail,
+                span: ctx.member_span,
+            });
+        }
+        if matches!(kind, super::members::TypeKind::Function)
+            && let Some(found) = super::function::function_member(&ctx.member)
+        {
+            return Some(Hover {
+                contents: found.detail,
+                span: ctx.member_span,
+            });
+        }
+        if let super::members::TypeKind::Global(ref name) = kind
+            && let Some(found) = super::globals::global_member(name, &ctx.member)
+        {
+            return Some(Hover {
+                contents: found.detail,
+                span: ctx.member_span,
+            });
+        }
+        // String has no members by design: fall through to no hover.
         if let Some(found) = super::members::members_of(file, &kind)
             .into_iter()
             .find(|member| member.name == ctx.member)

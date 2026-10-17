@@ -10,15 +10,19 @@ use crate::{
 
 pub(crate) mod address;
 pub(crate) mod array;
+pub(crate) mod bytes;
 mod calls;
 mod completion;
 mod emits;
 pub(crate) mod forge;
+pub(crate) mod function;
+pub(crate) mod globals;
 mod goto;
 mod hover;
 mod imports;
 pub(crate) mod inheritance;
 pub(crate) mod members;
+pub(crate) mod meta;
 mod signature;
 mod unknown;
 
@@ -715,6 +719,23 @@ impl Analyzer for SolidityAnalyzer {
             let deps = Self::dep_files(ctx);
             return Self::member_completion(&file, ctx.text, ctx.offset, &member, &deps);
         }
+        if let Some(type_ctx) = meta::type_context_at(ctx.text, ctx.offset) {
+            let kind = members::TypeKind::Meta(type_ctx.inner.clone());
+            let mut out: Vec<CompletionData> = members::members_of(&file, &kind)
+                .into_iter()
+                .filter(|item| item.name.starts_with(type_ctx.member.as_str()))
+                .map(|item| CompletionData {
+                    label: item.name.clone(),
+                    detail: item.detail.clone(),
+                    kind: completion::completion_item_kind(completion::CompletionKind::Symbol(
+                        item.kind,
+                    )),
+                    text_edit: None,
+                })
+                .collect();
+            out.sort_by(|left, right| left.label.cmp(&right.label));
+            return out;
+        }
         if emits::is_emit_name_context(ctx.text, ctx.offset) {
             return Self::emit_completion(&file, ctx);
         }
@@ -770,8 +791,8 @@ impl Analyzer for SolidityAnalyzer {
         }
         // Builtins have no target by design. Skip dep lookup so builtin
         // names never jump to coincidental same-name declarations.
-        // Array and address members use the same guard: synthetic spans
-        // never leak.
+        // Array, address, bytes, string, function, global, and type()
+        // members use the same guard: synthetic spans never leak.
         {
             let scope = collect_symbols(&file);
             if forge::is_builtin_at(&file, ctx.text, ctx.offset, &scope) {
@@ -781,6 +802,21 @@ impl Analyzer for SolidityAnalyzer {
                 return None;
             }
             if address::is_address_at(&file, ctx.text, ctx.offset, &scope) {
+                return None;
+            }
+            if bytes::is_bytes_at(&file, ctx.text, ctx.offset, &scope) {
+                return None;
+            }
+            if bytes::is_string_at(&file, ctx.text, ctx.offset, &scope) {
+                return None;
+            }
+            if function::is_function_at(&file, ctx.text, ctx.offset, &scope) {
+                return None;
+            }
+            if globals::is_global_at(&file, ctx.text, ctx.offset, &scope) {
+                return None;
+            }
+            if meta::is_meta_at(ctx.text, ctx.offset) {
                 return None;
             }
         }
