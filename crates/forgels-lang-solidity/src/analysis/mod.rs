@@ -48,6 +48,7 @@ mod selection;
 mod semantic;
 mod shadow;
 mod signature;
+mod style;
 mod symbols;
 mod type_hierarchy;
 mod type_mismatch;
@@ -745,6 +746,7 @@ impl SolidityAnalyzer {
         out.extend(unknown::unknown_identifier_diagnostics(
             file, text, scope, deps,
         ));
+        out.extend(style::style_diagnostics(file, text));
         out.sort_by(|left, right| {
             left.span
                 .start

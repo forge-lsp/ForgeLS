@@ -19,7 +19,10 @@ pub use config::{FlsConfig, FormatConfig, LintConfig, LintConfigError, RuleLevel
 pub use diagnostic::{Applicability, LintDiagnostic, LintFix};
 pub use filter::should_lint;
 pub use fix::{FixOutcome, apply};
-pub use plugin::{CorrectnessPlugin, LintPlugin, Registry, RuleMeta, builtin_correctness_plugin};
+pub use plugin::{
+    CorrectnessPlugin, LintPlugin, Registry, RuleMeta, StylePlugin, builtin_correctness_plugin,
+    builtin_style_plugin,
+};
 pub use reporter::{FileReport, report, report_json};
 pub use rule::RuleId;
 pub use runner::resolve;
