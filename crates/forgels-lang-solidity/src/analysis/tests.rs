@@ -375,7 +375,7 @@ fn goto_resolves_word_when_file_has_errors() {
 }
 
 #[test]
-fn exports_of_lists_contracts_and_functions_only() {
+fn exports_of_lists_contracts_and_functions_without_locals() {
     let text = "contract Vault {\nuint256 total;\nfunction withdraw(uint a) public {}\nfunction deposit() public {\nuint x = 1;\n}\n}";
     let items = exports_of(text);
     let labels: Vec<&str> = items.iter().map(|item| item.label.as_str()).collect();
@@ -384,6 +384,44 @@ fn exports_of_lists_contracts_and_functions_only() {
     assert!(labels.contains(&"deposit"));
     assert!(!labels.contains(&"total"));
     assert!(!labels.contains(&"x"));
+    assert!(!labels.contains(&"a"));
+}
+
+#[test]
+fn exports_of_lists_all_eight_kinds() {
+    let text = "struct Person {\nuint age;\n}\nenum Color {\nRed\n}\nerror Oops();\nevent Transfer(address a);\ntype MyNumber is uint256;\ncontract Vault {\nfunction withdraw(uint a) public {}\nmodifier onlyOwner() { _; }\n}";
+    let items = exports_of(text);
+    let labels: Vec<&str> = items.iter().map(|item| item.label.as_str()).collect();
+    for want in [
+        "Person",
+        "Color",
+        "Oops",
+        "Transfer",
+        "MyNumber",
+        "Vault",
+        "withdraw",
+        "onlyOwner",
+    ] {
+        assert!(labels.contains(&want), "labels: {labels:?}");
+    }
+    let detail_of = |name: &str| {
+        items
+            .iter()
+            .find(|item| item.label == name)
+            .expect("hit")
+            .detail
+            .clone()
+    };
+    assert_eq!(detail_of("Person"), "struct Person");
+    assert_eq!(detail_of("Color"), "enum Color");
+    assert_eq!(detail_of("Oops"), "error Oops");
+    assert_eq!(detail_of("Transfer"), "event Transfer");
+    assert_eq!(detail_of("MyNumber"), "type MyNumber is uint256");
+    assert!(detail_of("Vault").starts_with("contract Vault"));
+    assert!(detail_of("withdraw").starts_with("function withdraw"));
+    assert_eq!(detail_of("onlyOwner"), "modifier onlyOwner");
+    assert!(!labels.contains(&"age"));
+    assert!(!labels.contains(&"Red"));
     assert!(!labels.contains(&"a"));
 }
 
@@ -4693,6 +4731,70 @@ fn error_goto_jumps_to_declaration() {
 }
 
 #[test]
+fn modifier_plain_completion_suggests_modifier() {
+    let text = "contract C {\nmodifier onlyOwner() { _; }\nfunction f() public {\nonly\n}\n}";
+    let at = text.rfind("only").expect("prefix") as u32 + 4;
+    let labels = complete_labels(text, at);
+    assert!(
+        labels.contains(&"onlyOwner".to_string()),
+        "labels: {labels:?}"
+    );
+}
+
+#[test]
+fn modifier_plain_hover_shows_detail() {
+    let text = "contract C {\nmodifier onlyOwner() { _; }\nfunction f() public onlyOwner {}\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let at = text.rfind("onlyOwner {}").expect("use") as u32;
+    let hover = hover_at(&file, text, at).expect("hover");
+    assert_eq!(hover.contents, "modifier onlyOwner");
+}
+
+#[test]
+fn modifier_plain_goto_jumps_to_declaration() {
+    let text = "contract C {\nmodifier onlyOwner() { _; }\nfunction f() public onlyOwner {}\n}";
+    let at_use = text.rfind("onlyOwner {}").expect("use") as u32;
+    let at_decl = text.find("onlyOwner").expect("decl") as u32;
+    let target = goto_target(text, at_use);
+    assert!(target.start <= at_decl && at_decl < target.end);
+}
+
+#[test]
+fn error_plain_completion_suggests_error() {
+    let text = "contract C {\nerror Insufficient(uint a);\nfunction f() public {\nInsuf\n}\n}";
+    let at = text.rfind("Insuf").expect("prefix") as u32 + 5;
+    let labels = complete_labels(text, at);
+    assert!(
+        labels.contains(&"Insufficient".to_string()),
+        "labels: {labels:?}"
+    );
+}
+
+#[test]
+fn error_plain_hover_shows_detail() {
+    let text =
+        "contract C {\nerror Insufficient(uint a);\nfunction f() public {\nInsufficient;\n}\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let at = text.rfind("Insufficient;").expect("use") as u32;
+    let hover = hover_at(&file, text, at).expect("hover");
+    assert_eq!(hover.contents, "error Insufficient");
+}
+
+#[test]
+fn error_plain_goto_jumps_to_declaration() {
+    let text =
+        "contract C {\nerror Insufficient(uint a);\nfunction f() public {\nInsufficient;\n}\n}";
+    let at_use = text.rfind("Insufficient;").expect("use") as u32;
+    let at_decl = text.find("Insufficient").expect("decl") as u32;
+    let target = goto_target(text, at_use);
+    assert!(target.start <= at_decl && at_decl < target.end);
+}
+
+#[test]
 fn struct_too_few_reports_exact_message() {
     let text = "contract C {\nstruct Person {\nuint age;\nstring name;\n}\nfunction f() public {\nPerson(1);\n}\n}";
     let found = diagnostics_of(text);
@@ -5164,6 +5266,154 @@ fn enum_dep_completion_and_goto() {
 }
 
 #[test]
+fn enum_dep_hover_includes_origin() {
+    let dep = "enum Status {\nActive,\nClosed\n}";
+    let cur = "import \"./S.sol\";\ncontract C {\nfunction f() public {\nStatus.Active;\n}\n}";
+    let mut workspace = open_workspace(&[("/S.sol", dep), ("/C.sol", cur)]);
+    workspace.set_file_deps(PathBuf::from("/C.sol"), vec![PathBuf::from("/S.sol")]);
+    let hit = hover_multi(&workspace, "/C.sol", cur, "Active").expect("hover");
+    assert_eq!(hit.contents, "Status.Active - from S.sol");
+}
+
+#[test]
+fn dep_modifier_completion_includes_origin() {
+    let b = "contract B {\nmodifier onlyOwner() { _; }\n}";
+    let a = "import \"./B.sol\";\ncontract A {\nfunction f() public {\nonly\n}\n}";
+    let mut workspace = open_workspace(&[("/A.sol", a), ("/B.sol", b)]);
+    workspace.set_file_deps(PathBuf::from("/A.sol"), vec![PathBuf::from("/B.sol")]);
+    let found = complete_multi(&workspace, "/A.sol", a, "only");
+    let hit = found
+        .iter()
+        .find(|(label, _)| label == "onlyOwner")
+        .expect("dep modifier hit");
+    assert!(hit.1.contains("modifier onlyOwner"), "detail: {}", hit.1);
+    assert!(hit.1.contains("from B.sol"), "detail: {}", hit.1);
+}
+
+#[test]
+fn dep_error_completion_includes_origin() {
+    let b = "contract B {\nerror Insufficient(uint a);\n}";
+    let a = "import \"./B.sol\";\ncontract A {\nfunction f() public {\nInsuf\n}\n}";
+    let mut workspace = open_workspace(&[("/A.sol", a), ("/B.sol", b)]);
+    workspace.set_file_deps(PathBuf::from("/A.sol"), vec![PathBuf::from("/B.sol")]);
+    let found = complete_multi(&workspace, "/A.sol", a, "Insuf");
+    let hit = found
+        .iter()
+        .find(|(label, _)| label == "Insufficient")
+        .expect("dep error hit");
+    assert!(hit.1.contains("error Insufficient"), "detail: {}", hit.1);
+    assert!(hit.1.contains("from B.sol"), "detail: {}", hit.1);
+}
+
+#[test]
+fn dep_modifier_hover_includes_origin() {
+    let b = "contract B {\nmodifier onlyOwner() { _; }\n}";
+    let a = "import \"./B.sol\";\ncontract A {\nfunction f() public {\nonlyOwner;\n}\n}";
+    let mut workspace = open_workspace(&[("/A.sol", a), ("/B.sol", b)]);
+    workspace.set_file_deps(PathBuf::from("/A.sol"), vec![PathBuf::from("/B.sol")]);
+    let hit = hover_multi(&workspace, "/A.sol", a, "onlyOwner;").expect("dep hover");
+    assert!(
+        hit.contents.contains("modifier onlyOwner"),
+        "contents: {}",
+        hit.contents
+    );
+    assert!(
+        hit.contents.contains("from B.sol"),
+        "contents: {}",
+        hit.contents
+    );
+}
+
+#[test]
+fn dep_error_hover_includes_origin() {
+    let b = "contract B {\nerror Insufficient(uint a);\n}";
+    let a = "import \"./B.sol\";\ncontract A {\nfunction f() public {\nInsufficient;\n}\n}";
+    let mut workspace = open_workspace(&[("/A.sol", a), ("/B.sol", b)]);
+    workspace.set_file_deps(PathBuf::from("/A.sol"), vec![PathBuf::from("/B.sol")]);
+    let hit = hover_multi(&workspace, "/A.sol", a, "Insufficient;").expect("dep hover");
+    assert!(
+        hit.contents.contains("error Insufficient"),
+        "contents: {}",
+        hit.contents
+    );
+    assert!(
+        hit.contents.contains("from B.sol"),
+        "contents: {}",
+        hit.contents
+    );
+}
+
+#[test]
+fn dep_modifier_goto_jumps_to_other_file() {
+    let b = "contract B {\nmodifier onlyOwner() { _; }\n}";
+    let a = "import \"./B.sol\";\ncontract A {\nfunction f() public {\nonlyOwner;\n}\n}";
+    let mut workspace = open_workspace(&[("/A.sol", a), ("/B.sol", b)]);
+    workspace.set_file_deps(PathBuf::from("/A.sol"), vec![PathBuf::from("/B.sol")]);
+    let hit = goto_multi(&workspace, "/A.sol", a, "onlyOwner;").expect("dep goto");
+    assert_eq!(hit.path, PathBuf::from("/B.sol"));
+    let want = b.find("onlyOwner").expect("decl") as u32;
+    assert!(hit.span.contains(want));
+}
+
+#[test]
+fn dep_error_goto_jumps_to_other_file() {
+    let b = "contract B {\nerror Insufficient(uint a);\n}";
+    let a = "import \"./B.sol\";\ncontract A {\nfunction f() public {\nInsufficient;\n}\n}";
+    let mut workspace = open_workspace(&[("/A.sol", a), ("/B.sol", b)]);
+    workspace.set_file_deps(PathBuf::from("/A.sol"), vec![PathBuf::from("/B.sol")]);
+    let hit = goto_multi(&workspace, "/A.sol", a, "Insufficient;").expect("dep goto");
+    assert_eq!(hit.path, PathBuf::from("/B.sol"));
+    let want = b.find("Insufficient").expect("decl") as u32;
+    assert!(hit.span.contains(want));
+}
+
+#[test]
+fn dep_struct_field_completion_includes_origin() {
+    let b = "struct Person {\nuint age;\nstring name;\n}";
+    let a = "import \"./B.sol\";\ncontract A {\nfunction f() public {\nPerson p;\np.\n}\n}";
+    let mut workspace = open_workspace(&[("/A.sol", a), ("/B.sol", b)]);
+    workspace.set_file_deps(PathBuf::from("/A.sol"), vec![PathBuf::from("/B.sol")]);
+    let found = member_complete_multi(&workspace, "/A.sol", a, "p.");
+    let hit = found
+        .iter()
+        .find(|(label, _)| label == "age")
+        .expect("dep field hit");
+    assert!(hit.1.contains("uint age"), "detail: {}", hit.1);
+    assert!(hit.1.contains("from Person in B.sol"), "detail: {}", hit.1);
+}
+
+#[test]
+fn dep_struct_field_hover_includes_origin() {
+    let b = "struct Person {\nuint age;\n}";
+    let a = "import \"./B.sol\";\ncontract A {\nfunction f() public {\nPerson p;\np.age;\n}\n}";
+    let mut workspace = open_workspace(&[("/A.sol", a), ("/B.sol", b)]);
+    workspace.set_file_deps(PathBuf::from("/A.sol"), vec![PathBuf::from("/B.sol")]);
+    let hit = hover_multi(&workspace, "/A.sol", a, "age").expect("dep hover");
+    assert!(
+        hit.contents.contains("uint age"),
+        "contents: {}",
+        hit.contents
+    );
+    assert!(
+        hit.contents.contains("from Person in B.sol"),
+        "contents: {}",
+        hit.contents
+    );
+}
+
+#[test]
+fn dep_struct_field_goto_jumps_to_other_file() {
+    let b = "struct Person {\nuint age;\n}";
+    let a = "import \"./B.sol\";\ncontract A {\nfunction f() public {\nPerson p;\np.age;\n}\n}";
+    let mut workspace = open_workspace(&[("/A.sol", a), ("/B.sol", b)]);
+    workspace.set_file_deps(PathBuf::from("/A.sol"), vec![PathBuf::from("/B.sol")]);
+    let hit = goto_multi(&workspace, "/A.sol", a, "age").expect("dep goto");
+    assert_eq!(hit.path, PathBuf::from("/B.sol"));
+    let want = b.find("age").expect("decl") as u32;
+    assert!(hit.span.contains(want));
+}
+
+#[test]
 fn user_type_wrap_unwrap_completion() {
     let text = "type MyNumber is uint256;\ncontract C {\nfunction f() public {\nMyNumber.\n}\n}";
     let at = text.rfind("MyNumber.").expect("dot") as u32 + 9;
@@ -5250,6 +5500,17 @@ fn inherited_error_resolves_in_derived_scope() {
     let at = text.rfind("Insufficient;").expect("use") as u32;
     let found = scope.resolve("Insufficient", at).expect("found");
     assert_eq!(found.kind, SymbolKind::Error);
+    assert!(found.detail.contains("from B"), "detail: {}", found.detail);
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn inherited_modifier_resolves_in_derived_scope() {
+    let text = "contract B {\nmodifier onlyOwner() {}\n}\ncontract D is B {\nfunction f() public onlyOwner {}\n}";
+    let (_, scope) = collect(text);
+    let at = text.rfind("onlyOwner {}").expect("use") as u32;
+    let found = scope.resolve("onlyOwner", at).expect("found");
+    assert_eq!(found.kind, SymbolKind::Modifier);
     assert!(found.detail.contains("from B"), "detail: {}", found.detail);
     assert!(diagnostics_of(text).is_empty());
 }

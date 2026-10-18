@@ -9,7 +9,7 @@ Scope: `forgels-lang-solidity` crate.
 - Allowed deps: `forgels-core`, `forgels-protocol`, `forgels-syntax`, `forgels-common`
 - Forbidden deps: any other `forgels-lang-*`
 
-Status: token kinds defined. Real lexer and parser are planned.
+Status: beta lexer, parser, and analysis implemented.
 
 ## Beta token subset
 
@@ -50,7 +50,7 @@ Status: token kinds defined. Real lexer and parser are planned.
 - Completion: local `complete_at` plus `exports_of` from `dep_texts(ctx, 16)`. Deduped by label, local wins. Imported items add ` - from <file>`.
 - Hover: local `hover_at` first. Else scan `exports_of` for the word at cursor and show `<detail> - from <file>`.
 - Goto: `goto_definition` for same file. `goto_location` falls back to `resolve_in_dep` over `dep_texts(ctx, 16)` and returns `GotoTarget { path, span }`.
-- Exports: `Scope::export_symbols` returns contracts plus their functions only.
+- Exports: `Scope::export_symbols` returns contracts, functions, structs, enums, errors, events, modifiers, and user types. State vars, params, and locals stay local.
 - Members: `this`, `super`, enum names, and user type names resolve
   across `dep_texts(ctx, 16)` with ` - from <Base> in <file>` origin and
   correct `GotoTarget` path. Receiver types in deps resolve the same way.
@@ -734,8 +734,8 @@ Status: token kinds defined. Real lexer and parser are planned.
 ## V1 limits
 
 - Tracked only: `dep_texts` skips untracked and missing files.
-- Caps: dep read cap is 16, republish fan-out cap is 32, references cap is 100, inlay cap is 100, semantic cap is 5000, call hierarchy cap is 50, code action cap is 10, folding cap is 200, selection depth cap is 20, type hierarchy cap is 50, chain tails cap is 4.
-- Symbols: `Contract` and `Function` cross files. `StateVar`, `Param`, and `LocalVar` stay local.
+- Caps: dep read cap is 16, republish fan-out cap is `MAX_DEPENDENT_REPUBLISH = 32`, workspace symbols cap is `MAX_WORKSPACE_SYMBOLS = 50`, references cap is `MAX_REFERENCES = 100`, inlay cap is `MAX_INLAY_HINTS = 100`, semantic cap is `MAX_SEMANTIC_TOKENS = 5000`, call hierarchy cap is `MAX_CALL_HIERARCHY = 50`, code action cap is `MAX_CODE_ACTIONS = 10`, folding cap is `MAX_FOLDING_RANGES = 200`, selection depth cap is `MAX_SELECTION_DEPTH = 20`, type hierarchy cap is `MAX_TYPE_HIERARCHY = 50`, chain tails cap is `MAX_CHAIN_TAILS = 4`.
+- Symbols: `Contract`, `Function`, `Struct`, `Enum`, `Error`, `Event`, `Modifier`, and `UserType` cross files. `StateVar`, `Param`, and `LocalVar` stay local.
 - Imports: union without alias precision. `{B as C}` records both `B` and `C`, no alias mapping.
 - Parse: parse on each call, no incremental cache.
 - Inheritance: C3 with DFS fallback plus `inconsistent linearization` diagnostic, unknown bases ignored, cycles end via visited set, `exports_of` stays own members.

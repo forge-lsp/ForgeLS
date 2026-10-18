@@ -615,7 +615,7 @@ fn split_bare_prefix(prefix: &str) -> BarePrefix<'_> {
     BarePrefix::Packages
 }
 
-/// Contract level exports of `text`: contracts, functions, structs, and enums.
+/// Contract level exports of `text`: contracts, functions, structs, enums, errors, events, modifiers, and user types.
 ///
 /// Parses with recovery so broken deps still contribute. Locals, params,
 /// and state vars stay local and never cross files. Caller filters by
