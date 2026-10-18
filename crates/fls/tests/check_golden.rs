@@ -138,6 +138,47 @@ fn exit_codes_cover_clean_warn_err() {
 }
 
 #[test]
+fn json_lists_only_files_with_findings() {
+    let dir = fresh_dir("mixed");
+    let clean = dir.join("clean.sol");
+    let err = dir.join("err.sol");
+    write_file(&clean, CLEAN_SRC);
+    write_file(&err, OVERRIDE_SRC);
+    let out = run_in(
+        &dir,
+        &[
+            "check",
+            "--json",
+            clean.to_str().expect("utf8"),
+            err.to_str().expect("utf8"),
+        ],
+    );
+    assert_eq!(out.status.code(), Some(1));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let value: serde_json::Value = serde_json::from_str(&stdout).expect("valid json");
+    let files = value
+        .pointer("/files")
+        .expect("has files")
+        .as_array()
+        .expect("array");
+    assert_eq!(files.len(), 1);
+    assert!(
+        files[0]
+            .pointer("/path")
+            .expect("has path")
+            .as_str()
+            .expect("str")
+            .ends_with("err.sol"),
+        "only err listed: {stdout}"
+    );
+    assert_eq!(
+        value.pointer("/summary").expect("summary"),
+        &serde_json::json!({"files": 1, "errors": 1, "warnings": 0, "fixed": 0})
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn missing_file_exits_two() {
     let dir = fresh_dir("missing");
     let out = run_in(
