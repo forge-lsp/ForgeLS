@@ -173,11 +173,14 @@ Project uses OpenCode with local config in `opencode.json` and `.opencode/`.
 
 ### 7.1 Agents (`mode: subagent`)
 
-- `forgels-planner`: plan only, no edits. Use first for multi step work. Output goal, steps, files, verification, risks.
+- `forgels-explorer`: explore only, no edits. Use first to gather files, current docs, upstream evidence, and unknowns. Output is an evidence pack for the planner.
+- `forgels-planner`: plan only, no edits. Use after explorer for multi step work. Output goal, steps, files, verification, risks.
 - `forgels-executor`: implements approved plan with small diffs. Loads `forgels-rust`, `forge-deslop`, `forgels-git` plus `context7-mcp` or `firecrawl-developer-index` when needed. Hands off to QA.
 - `forgels-qa`: reviews diffs, runs `check`, `test`, `clippy`, `fmt --check`, enforces `forgels-rust` and `forge-deslop`. Verdict PASS or FAIL with evidence.
 
-Invoke with `@forgels-planner`, `@forgels-executor`, `@forgels-qa`, or let the primary agent delegate via Task.
+Invoke with `@forgels-explorer`, `@forgels-planner`, `@forgels-executor`, `@forgels-qa`, or let the primary agent delegate via Task.
+
+Every code task runs the delivery workflow in section 8. Subagents own their step inside it.
 
 ### 7.2 Skills (project local)
 
@@ -187,7 +190,25 @@ Invoke with `@forgels-planner`, `@forgels-executor`, `@forgels-qa`, or let the p
 
 Load order for code tasks: `forgels-rust` + `forge-deslop`, then `forgels-git` for commits. Use `context7-mcp` for external API docs. Use `firecrawl-developer-index` or `firecrawl-search` for upstream issues and PR evidence.
 
-## 8. Agent Checklist Before Finish
+## 8. Delivery Workflow (Strict)
+
+Every code task follows these steps in order. Do not skip. Do not reorder.
+
+1. Drain open PRs first. List PRs targeting `dev` with `gh pr list --base dev`. If any is still open, stop and wait for the merge. Never stack new work on an unmerged PR branch.
+2. Plane first. Search Plane for a work item covering the task.
+   - If found, move it to In Progress.
+   - If missing, create one: `[type] short subject` name, full description (what, where, accept criteria), priority, plus the relevant parent or epic. Then move it to In Progress.
+   - Link related items, never duplicate them. Never create `[pr]`-prefixed work items.
+3. Branch from `dev`. One scope per branch: `feat/<slug>` for features, `fix/<slug>` for fixes, `chore/<slug>` for chores. Never commit directly to `dev` or `main`. One concern per commit with Conventional Commits.
+4. Orchestrate subagents in order: `@forgels-explorer` to gather evidence (files, current docs, upstream, unknowns), `@forgels-planner` to turn findings into an approved plan, `@forgels-executor` to implement the plan with small diffs, `@forgels-qa` to gate every commit and PR. QA verdict must be PASS with evidence before proceeding.
+5. Open a PR against `dev`, one PR per branch.
+   - Read `.github/pull_request_template.md` first. Templates change, so check it every time, never paste from memory.
+   - Fill every section with detail. Each paragraph covers one context only. State what changed, why, and how it was verified. No mixed topics per paragraph, no confusing prose.
+   - A merged PR is reflected only by the parent task status, never by a `[pr]` work item.
+6. After merge, move the Plane work item to Done and attach the PR link to it.
+7. Recommend next work: pick from open Plane items first, else propose from your own analysis. State the item, why it matters, and the expected scope.
+
+## 9. Agent Checklist Before Finish
 
 1. `cargo check --workspace` passes.
 2. No cross language import added.
