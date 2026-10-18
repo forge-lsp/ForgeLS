@@ -434,18 +434,23 @@ pub fn complete_import_paths(
     if search.is_empty() {
         return Vec::new();
     }
-    let caps = forgels_common::fs::WalkCaps::default();
+    // Walk wide (5000) so the `prefix` filter below sees the full set;
+    // truncate only the filtered result to 200. Walking with the default
+    // 200-match cap would truncate in filesystem order before filtering
+    // and hide late matches.
+    let walk = forgels_common::fs::WalkCaps::new(5000, 5000);
+    let keep = forgels_common::fs::WalkCaps::default().max_matches;
     let mut candidates: Vec<PathBuf> = Vec::new();
     for dir in &search {
-        for found in forgels_common::fs::list_files_with_extension(dir, "sol", caps) {
+        for found in forgels_common::fs::list_files_with_extension(dir, "sol", walk) {
             if !candidates.contains(&found) {
                 candidates.push(found);
             }
-            if candidates.len() >= caps.max_matches {
+            if candidates.len() >= walk.max_matches {
                 break;
             }
         }
-        if candidates.len() >= caps.max_matches {
+        if candidates.len() >= walk.max_matches {
             break;
         }
     }
@@ -467,7 +472,7 @@ pub fn complete_import_paths(
         });
     }
     items.sort_by(|left, right| left.label.cmp(&right.label));
-    items.truncate(caps.max_matches);
+    items.truncate(keep);
     items
 }
 
@@ -603,11 +608,16 @@ fn bare_package_scaffolds(modules: &Path, prefix: &str) -> Vec<CompletionItem> {
     items
 }
 
-/// `.sol` files under one package as full bare specifiers.
+/// `.sol` files under one package as full bare specifiers, plus the
+/// immediate subdirectories that lead to them.
 ///
-/// Walks `head` below `modules`, narrowed to the typed subdir, and
-/// keeps only labels that start with `prefix` and resolve through
-/// `resolve_import_full`. Detail is `file`.
+/// Walks `head` below `modules` and keeps labels that start with
+/// `prefix` (direct navigation). When the last segment is non-empty,
+/// also keeps deep files whose basename starts with it, so
+/// `@scope/pkg/ER` finds `.../token/ERC20/ERC20.sol` even though the
+/// full label does not start with the prefix. Subdirectory hints
+/// (`.../token/`, detail `package`) let `tok` discover `token/`.
+/// Every file label must pass `resolve_import_full`. Detail is `file`.
 fn bare_package_files(
     importer: &Path,
     modules: &Path,
@@ -629,12 +639,35 @@ fn bare_package_files(
     } else {
         base.join(below)
     };
+    let needle = sub.rsplit('/').next().unwrap_or("");
+    let mut items = Vec::new();
+    // Immediate subdirectories: `tok` discovers `token/`.
+    let dir_prefix = if below.is_empty() {
+        String::new()
+    } else {
+        format!("{below}/")
+    };
+    for (name, is_dir) in
+        forgels_common::fs::list_dir_entries_matching(&dir, needle, NODE_ENTRIES_CAP)
+    {
+        if !is_dir {
+            continue;
+        }
+        let label = format!("{head}/{dir_prefix}{name}/");
+        if !label.starts_with(prefix) {
+            continue;
+        }
+        items.push(CompletionItem {
+            label,
+            detail: "package".to_string(),
+            kind: CompletionKind::Package,
+        });
+    }
     // Match cap covers the visited budget so the `prefix` filter below
     // runs before any truncation. Caller caps the sorted result at 32.
     let visit = forgels_common::fs::WalkCaps::default().max_visited;
     let caps = forgels_common::fs::WalkCaps::new(visit, visit);
-    let mut items = Vec::new();
-    for found in forgels_common::fs::list_files_with_extension(&dir, "sol", caps) {
+    for found in forgels_common::fs::list_files_with_extension(&base, "sol", caps) {
         let Ok(rel) = found.strip_prefix(&base) else {
             continue;
         };
@@ -646,7 +679,13 @@ fn bare_package_files(
             continue;
         }
         let label = format!("{head}/{}", parts.join("/"));
-        if !label.starts_with(prefix) {
+        let prefix_hit = label.starts_with(prefix);
+        let base_hit = !needle.is_empty()
+            && found
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .is_some_and(|stem| stem.starts_with(needle));
+        if !prefix_hit && !base_hit {
             continue;
         }
         let resolves = forgels_common::paths::resolve_import_full(
@@ -657,6 +696,12 @@ fn bare_package_files(
             forgels_common::fs::is_trackable_file,
         );
         if resolves.is_none() {
+            continue;
+        }
+        if items
+            .iter()
+            .any(|known: &CompletionItem| known.label == label)
+        {
             continue;
         }
         items.push(CompletionItem {

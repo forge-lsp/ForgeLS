@@ -74,12 +74,13 @@ fn completion_result(session: &Session, workspace: &Workspace, params: &Value) -
     let analyzer = session.analyzers.get(&doc.language)?;
     let offset = position_to_offset(&doc.text, Position { line, character });
     let ctx = ProjectContext::new(&path, &doc.text, offset, workspace);
+    let incomplete = analyzer.completion_is_incomplete(&ctx);
     let items: Vec<Value> = analyzer
         .complete(&ctx)
         .iter()
         .map(|item| completion_item(&doc.text, item))
         .collect();
-    Some(serde_json::json!({ "isIncomplete": false, "items": items }))
+    Some(serde_json::json!({ "isIncomplete": incomplete, "items": items }))
 }
 
 /// One completion item as JSON. Path items carry `textEdit` so the

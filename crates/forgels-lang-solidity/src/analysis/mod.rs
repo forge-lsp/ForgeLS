@@ -1040,6 +1040,15 @@ impl Analyzer for SolidityAnalyzer {
         out
     }
 
+    fn completion_is_incomplete(&self, ctx: &ProjectContext) -> bool {
+        // Import lists truncate (32 bare, 200 relative) after filtering
+        // the full walk. Mark incomplete so the client re-requests on
+        // each keystroke instead of filtering the truncated 32 locally.
+        let tokens = SolidityLexer.tokenize(ctx.text);
+        let (recovered, _) = SolidityParser.parse_with_errors(&tokens);
+        completion::import_path_at(&recovered, ctx.text, ctx.offset).is_some()
+    }
+
     fn goto(&self, ctx: &ProjectContext) -> Option<Span> {
         // Single file only; cross file lookup uses goto_location.
         let file = Self::parse_file(ctx.text);

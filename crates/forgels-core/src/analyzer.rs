@@ -658,6 +658,12 @@ fn raw_import_specifiers(text: &str) -> Vec<String> {
 pub trait Analyzer: std::fmt::Debug {
     fn hover(&self, ctx: &ProjectContext) -> Option<HoverData>;
     fn complete(&self, ctx: &ProjectContext) -> Vec<CompletionData>;
+    /// True when the completion list is truncated and the client must
+    /// re-request as the user types instead of filtering locally.
+    /// Default is false so stub analyzers keep working.
+    fn completion_is_incomplete(&self, _ctx: &ProjectContext) -> bool {
+        false
+    }
     fn goto(&self, ctx: &ProjectContext) -> Option<Span>;
     fn goto_location(&self, ctx: &ProjectContext) -> Option<GotoTarget> {
         self.goto(ctx)
