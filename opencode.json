@@ -8,6 +8,7 @@
     }
   },
   "agent": {
+    "forgels-explorer": {},
     "forgels-planner": {},
     "forgels-executor": {},
     "forgels-qa": {}
