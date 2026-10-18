@@ -640,21 +640,91 @@ impl AstNode for LocalVar {
     }
 }
 
+/// Cap for chained tails after the first pair: `a.b` plus up to four more.
+pub const MAX_CHAIN_TAILS: usize = 4;
+
 /// Member access with single ident receiver: `p.age`, `this.total`.
 ///
-/// Children hold receiver token, dot token, then optional member token.
-/// Only one dot is stored; chained `a.b.c` keeps the first pair and the
-/// rest is skipped as statement tail. Call options `{value: 1}` add `{`
-/// and `}` markers after the member when followed by parens. Calls add
-/// markers after that: `(` plus one `,` per extra arg for non-empty, `)`
-/// alone for empty. Plain access holds no marker, so `is_call` separates
-/// reads from calls.
+/// Children hold receiver token, dot token, then optional member token,
+/// plus up to `MAX_CHAIN_TAILS` extra `.ident` tails for `a.b.c`.
+/// Intermediate calls are skipped (consumed, never stored); only the
+/// final segment keeps call markers. Call options `{value: 1}` add `{`
+/// and `}` markers after the final member when followed by parens.
+/// Calls add markers after that: `(` plus one `,` per extra arg for
+/// non-empty, `)` alone for empty. Plain access holds no marker, so
+/// `is_call` separates reads from calls.
 #[derive(Debug, Clone)]
 pub struct MemberExpr {
     syntax: SyntaxNode,
 }
 
 impl MemberExpr {
+    fn ident_texts(&self) -> Vec<String> {
+        self.syntax
+            .children
+            .iter()
+            .filter_map(|element| match element {
+                SyntaxElement::Token(token) if token.kind == SolidityKind::Ident.as_u16() => {
+                    Some(token.text.clone())
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn ident_spans(&self) -> Vec<Span> {
+        self.syntax
+            .children
+            .iter()
+            .filter_map(|element| match element {
+                SyntaxElement::Token(token) if token.kind == SolidityKind::Ident.as_u16() => {
+                    Some(token.span)
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Full ident chain: receiver plus every member tail.
+    ///
+    /// Single `p.age` gives `["p", "age"]`; `a.b.c` gives
+    /// `["a", "b", "c"]`. Capped by parser at `MAX_CHAIN_TAILS`.
+    pub fn chain(&self) -> Vec<String> {
+        self.ident_texts()
+    }
+
+    /// Tails after the first pair: `a.b.c.d` gives `["c", "d"]`.
+    pub fn tails(&self) -> Vec<String> {
+        let chain = self.ident_texts();
+        if chain.len() <= 2 {
+            return Vec::new();
+        }
+        chain[2..].to_vec()
+    }
+
+    /// Spans for every member after the dot, first plus tails.
+    pub fn all_member_spans(&self) -> Vec<Span> {
+        let spans = self.ident_spans();
+        if spans.len() <= 1 {
+            return Vec::new();
+        }
+        spans[1..].to_vec()
+    }
+
+    /// Final segment name for chained resolve: `c` in `a.b.c`.
+    pub fn final_member(&self) -> Option<String> {
+        let chain = self.ident_texts();
+        if chain.len() < 2 {
+            return None;
+        }
+        chain.last().cloned()
+    }
+
+    /// Span of the final segment, for hover and goto.
+    pub fn final_span(&self) -> Option<Span> {
+        self.all_member_spans().last().copied()
+    }
+
     pub fn receiver(&self) -> Option<String> {
         self.syntax
             .children

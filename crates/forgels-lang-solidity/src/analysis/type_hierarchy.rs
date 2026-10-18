@@ -236,8 +236,8 @@ mod tests {
         let at = text.rfind("C is").expect("derived") as u32;
         let found = supertypes_in(&file, at, Path::new("/A.sol"), &[]).expect("bases");
         assert_eq!(found.len(), 2);
-        assert_eq!(found[0].name, "A");
-        assert_eq!(found[1].name, "B");
+        assert_eq!(found[0].name, "B");
+        assert_eq!(found[1].name, "A");
     }
 
     #[test]

@@ -417,29 +417,37 @@ fn plain_signatures(
 
 /// Member call signatures: forge cheatcodes first, then the receiver
 /// contract lineage across files. Structs and unknown types stay
-/// silent, the same stance as member arity.
+/// silent, the same stance as member arity. Chained calls resolve the
+/// final segment only; intermediates stay silent.
 fn member_signatures(
     file: &SolidityFile,
     scope: &Scope,
     deps: &[(PathBuf, SolidityFile)],
     offset: u32,
-    receiver: &str,
+    chain: &[String],
     name: &str,
     active: u32,
 ) -> Option<Vec<SignatureData>> {
-    if receiver.is_empty() || name.is_empty() {
+    if chain.is_empty() || name.is_empty() {
         return None;
     }
-    if let Some(builtin) = forge::member_builtin(receiver, name, scope, offset) {
-        return Some(vec![builtin_signature(builtin, active)]);
+    let chained = chain.len() > 2;
+    let root = chain.first().cloned().unwrap_or_default();
+    if root.is_empty() {
+        return None;
     }
-    if let Some((info, _)) =
-        super::using::resolve_using_member(file, scope, offset, receiver, name, deps)
-    {
-        let params = detail_params(&info.detail);
-        return Some(vec![SignatureData::new(info.detail, params, active)]);
+    if !chained {
+        if let Some(builtin) = forge::member_builtin(&root, name, scope, offset) {
+            return Some(vec![builtin_signature(builtin, active)]);
+        }
+        if let Some((info, _)) =
+            super::using::resolve_using_member(file, scope, offset, &root, name, deps)
+        {
+            let params = detail_params(&info.detail);
+            return Some(vec![SignatureData::new(info.detail, params, active)]);
+        }
     }
-    let kind = members::receiver_type_with_deps(file, scope, offset, receiver, deps);
+    let kind = members::resolve_chained_kind(file, scope, offset, chain, deps);
     if let members::TypeKind::Super { enclosing } = kind {
         if enclosing.is_empty() {
             return None;
@@ -457,10 +465,10 @@ fn member_signatures(
         return Some(out);
     }
     if matches!(kind, members::TypeKind::UserType(_)) {
-        if name != "wrap" && name != "unwrap" {
+        if chained || (name != "wrap" && name != "unwrap") {
             return None;
         }
-        let (def, _) = inheritance::find_user_type_across(receiver, file, deps)?;
+        let (def, _) = inheritance::find_user_type_across(&root, file, deps)?;
         let type_name = def.name().unwrap_or_default();
         let underlying = def.underlying().map(|node| node.text()).unwrap_or_default();
         if type_name.is_empty() || underlying.is_empty() {
@@ -491,8 +499,9 @@ fn member_signatures(
         push_contract_functions(&base, name, active, &mut out);
     }
     if out.is_empty() {
-        if let Some((info, _)) =
-            super::using::resolve_using_member(file, scope, offset, receiver, name, deps)
+        if !chained
+            && let Some((info, _)) =
+                super::using::resolve_using_member(file, scope, offset, &root, name, deps)
         {
             let params = detail_params(&info.detail);
             return Some(vec![SignatureData::new(info.detail, params, active)]);
@@ -560,15 +569,50 @@ pub fn signature_at(
     }
     let scope = collect_symbols(file);
     if let Some(receiver) = site.receiver {
+        let chain = chain_for_call(text, at, &receiver, &site.name);
         return member_signatures(
             file,
             &scope,
             deps,
             at,
-            &receiver,
+            &chain,
             &site.name,
             site.active_param,
         );
     }
     plain_signatures(file, &scope, deps, at, &site.name, site.active_param)
+}
+
+/// Full chain for a member call site: root first, final last.
+///
+/// Finds the dot before the final name by scanning back from the open
+/// paren over spaces and the name itself, then reuses
+/// `members::chain_before` for the prefix. Falls back to
+/// `[receiver, name]` when the dot is missing (single level).
+fn chain_for_call(text: &str, open: u32, receiver: &str, name: &str) -> Vec<String> {
+    if receiver.is_empty() || name.is_empty() {
+        return Vec::new();
+    }
+    let bytes = text.as_bytes();
+    let mut end = (open as usize).min(bytes.len());
+    while end > 0 && bytes[end - 1].is_ascii_whitespace() {
+        end -= 1;
+    }
+    let mut start = end;
+    while start > 0 && is_word_byte(bytes[start - 1]) {
+        start -= 1;
+    }
+    if start == end {
+        return vec![receiver.to_string(), name.to_string()];
+    }
+    if start == 0 || bytes[start - 1] != b'.' {
+        return vec![receiver.to_string(), name.to_string()];
+    }
+    let dot = (start - 1) as u32;
+    let mut chain = members::chain_before(text, dot);
+    if chain.is_empty() {
+        return vec![receiver.to_string(), name.to_string()];
+    }
+    chain.push(name.to_string());
+    chain
 }

@@ -52,29 +52,57 @@ fn receiver_before(text: &str, dot: usize) -> Option<(String, Span)> {
     if dot == 0 || dot > bytes.len() {
         return None;
     }
-    let mut start = dot;
+    // Skip an intermediate call `foo()` before the dot: `a.foo().bar`
+    // treats `foo` as the receiver. Balanced parens only, comments
+    // ignored by the caller scan.
+    let mut cursor = dot;
+    while cursor > 0 && bytes[cursor - 1] == b')' {
+        let mut depth = 0usize;
+        let mut index = cursor - 1;
+        loop {
+            if bytes[index] == b')' {
+                depth += 1;
+            } else if bytes[index] == b'(' {
+                if depth == 0 {
+                    break;
+                }
+                depth -= 1;
+                if depth == 0 {
+                    break;
+                }
+            }
+            if index == 0 {
+                return None;
+            }
+            index -= 1;
+        }
+        cursor = index;
+        while cursor > 0 && bytes[cursor - 1] == b' ' {
+            cursor -= 1;
+        }
+    }
+    let mut start = cursor;
     while start > 0 && is_word_byte(bytes[start - 1]) {
         start -= 1;
     }
-    if start == dot {
+    if start == cursor {
         return None;
     }
-    // Chained `a.b.c` is follow-up work: only single dot resolves.
-    if start > 0 && bytes[start - 1] == b'.' {
-        return None;
-    }
-    let name = text.get(start..dot)?.to_string();
+    let name = text.get(start..cursor)?.to_string();
     if name.is_empty() {
         return None;
     }
-    Some((name, Span::new(start as u32, dot as u32)))
+    Some((name, Span::new(start as u32, cursor as u32)))
 }
 
 /// Member context at `offset` via text scan.
 ///
 /// Covers `p.age` on the member word and `p.` plus `p.ag` after the dot.
 /// Dots with spaces around them return `None`. Chained `a.b.c` returns
-/// `None` so V1 stays single level.
+/// the final segment only (`b` as receiver, `c` as member); callers
+/// resolve the full chain with `chain_before` plus `resolve_chained_kind`.
+/// Intermediate calls (`a.foo().bar`) skip the parens and treat `foo`
+/// as the receiver.
 pub fn member_context_at(text: &str, offset: u32) -> Option<MemberContext> {
     let bytes = text.as_bytes();
     let len = bytes.len();
@@ -296,6 +324,358 @@ pub(crate) fn receiver_type_with_deps(
         return TypeKind::Struct(type_text);
     }
     TypeKind::Unknown
+}
+
+/// Full ident chain before the dot at `dot`.
+///
+/// Walks backwards through `.` separated words, skipping intermediate
+/// `(...)` calls. Capped at receiver plus first member plus
+/// `MAX_CHAIN_TAILS` tails (six idents max). Returns root first, so
+/// `a.b.c` gives `["a", "b"]` for the dot before `c`.
+pub fn chain_before(text: &str, dot: u32) -> Vec<String> {
+    use crate::MAX_CHAIN_TAILS;
+    let bytes = text.as_bytes();
+    let mut out: Vec<String> = Vec::new();
+    let mut cursor = dot as usize;
+    let cap = MAX_CHAIN_TAILS + 2;
+    loop {
+        if out.len() >= cap {
+            break;
+        }
+        if cursor == 0 || cursor > bytes.len() {
+            break;
+        }
+        let mut probe = cursor;
+        while probe > 0 && bytes[probe - 1] == b')' {
+            let mut depth = 0usize;
+            let mut index = probe - 1;
+            let mut found = None;
+            loop {
+                if bytes[index] == b')' {
+                    depth += 1;
+                } else if bytes[index] == b'(' {
+                    if depth == 0 {
+                        break;
+                    }
+                    depth -= 1;
+                    if depth == 0 {
+                        found = Some(index);
+                        break;
+                    }
+                }
+                if index == 0 {
+                    break;
+                }
+                index -= 1;
+            }
+            let Some(open) = found else {
+                return out.into_iter().rev().collect();
+            };
+            probe = open;
+            while probe > 0 && bytes[probe - 1] == b' ' {
+                probe -= 1;
+            }
+        }
+        let mut start = probe;
+        while start > 0 && is_word_byte(bytes[start - 1]) {
+            start -= 1;
+        }
+        if start == probe {
+            break;
+        }
+        let Some(word) = text.get(start..probe).map(|part| part.to_string()) else {
+            break;
+        };
+        if word.is_empty() {
+            break;
+        }
+        out.push(word);
+        if start == 0 || bytes[start - 1] != b'.' {
+            break;
+        }
+        cursor = start - 1;
+    }
+    out.into_iter().rev().collect()
+}
+
+/// Map a declared type text to a `TypeKind` with dep fallback.
+///
+/// Covers arrays, addresses, bytes, strings, external functions, then
+/// single-word contracts, structs, enums, and user types across files.
+/// Anything else stays unknown.
+fn kind_of_type_text(
+    file: &SolidityFile,
+    type_text: &str,
+    deps: &[(PathBuf, SolidityFile)],
+) -> TypeKind {
+    if let Some(dynamic) = array::array_shape(type_text) {
+        return TypeKind::Array { dynamic };
+    }
+    if address::is_address_type(type_text) {
+        return TypeKind::Address;
+    }
+    if bytes::is_bytes_type(type_text) {
+        return TypeKind::Bytes;
+    }
+    if bytes::is_string_type(type_text) {
+        return TypeKind::String;
+    }
+    if function::is_external_function_type(type_text) {
+        return TypeKind::Function;
+    }
+    if !is_single_word(type_text) {
+        return TypeKind::Unknown;
+    }
+    if inheritance::find_contract_across(type_text, file, deps).is_some() {
+        return TypeKind::Contract(type_text.to_string());
+    }
+    if inheritance::find_struct_across(type_text, file, deps).is_some() {
+        return TypeKind::Struct(type_text.to_string());
+    }
+    if inheritance::find_enum_across(type_text, file, deps).is_some() {
+        return TypeKind::Enum(type_text.to_string());
+    }
+    if inheritance::find_user_type_across(type_text, file, deps).is_some() {
+        return TypeKind::UserType(type_text.to_string());
+    }
+    TypeKind::Unknown
+}
+
+/// Declared type of `member` inside a contract parent.
+///
+/// Searches own state vars and functions, then linearized bases same
+/// file plus across files. State vars use their type text; functions
+/// use their first return type (intermediate calls are skipped, so the
+/// return counts). Getters and using members stay out of scope for
+/// intermediates and yield unknown.
+fn contract_member_kind(
+    file: &SolidityFile,
+    target: &str,
+    member: &str,
+    deps: &[(PathBuf, SolidityFile)],
+) -> Option<TypeKind> {
+    if target.is_empty() || member.is_empty() {
+        return None;
+    }
+    let (def, _) = inheritance::find_contract_across(target, file, deps)?;
+    for var in def.state_vars() {
+        if var.name().as_deref() == Some(member) {
+            let type_text = var.type_node().map(|node| node.text()).unwrap_or_default();
+            if type_text.is_empty() {
+                return Some(TypeKind::Unknown);
+            }
+            return Some(kind_of_type_text(file, &type_text, deps));
+        }
+    }
+    for function in def.functions() {
+        if function.name().as_deref() == Some(member) {
+            let returns = function.return_types();
+            let Some(first) = returns.first() else {
+                return Some(TypeKind::Unknown);
+            };
+            let type_text = first.text();
+            if type_text.is_empty() {
+                return Some(TypeKind::Unknown);
+            }
+            return Some(kind_of_type_text(file, &type_text, deps));
+        }
+    }
+    for base in inheritance::linearize(file, target) {
+        for var in base.state_vars() {
+            if var.name().as_deref() == Some(member) {
+                let type_text = var.type_node().map(|node| node.text()).unwrap_or_default();
+                if type_text.is_empty() {
+                    return Some(TypeKind::Unknown);
+                }
+                return Some(kind_of_type_text(file, &type_text, deps));
+            }
+        }
+        for function in base.functions() {
+            if function.name().as_deref() == Some(member) {
+                let returns = function.return_types();
+                let Some(first) = returns.first() else {
+                    return Some(TypeKind::Unknown);
+                };
+                let type_text = first.text();
+                if type_text.is_empty() {
+                    return Some(TypeKind::Unknown);
+                }
+                return Some(kind_of_type_text(file, &type_text, deps));
+            }
+        }
+    }
+    for (base, _) in inheritance::linearize_across(file, target, deps) {
+        for var in base.state_vars() {
+            if var.name().as_deref() == Some(member) {
+                let type_text = var.type_node().map(|node| node.text()).unwrap_or_default();
+                if type_text.is_empty() {
+                    return Some(TypeKind::Unknown);
+                }
+                return Some(kind_of_type_text(file, &type_text, deps));
+            }
+        }
+        for function in base.functions() {
+            if function.name().as_deref() == Some(member) {
+                let returns = function.return_types();
+                let Some(first) = returns.first() else {
+                    return Some(TypeKind::Unknown);
+                };
+                let type_text = first.text();
+                if type_text.is_empty() {
+                    return Some(TypeKind::Unknown);
+                }
+                return Some(kind_of_type_text(file, &type_text, deps));
+            }
+        }
+    }
+    None
+}
+
+/// Declared type of `member` inside a struct parent across files.
+fn struct_member_kind(
+    file: &SolidityFile,
+    target: &str,
+    member: &str,
+    deps: &[(PathBuf, SolidityFile)],
+) -> Option<TypeKind> {
+    if target.is_empty() || member.is_empty() {
+        return None;
+    }
+    let (def, _) = inheritance::find_struct_across(target, file, deps)?;
+    for field in def.fields() {
+        if field.name().as_deref() == Some(member) {
+            let type_text = field
+                .type_node()
+                .map(|node| node.text())
+                .unwrap_or_default();
+            if type_text.is_empty() {
+                return Some(TypeKind::Unknown);
+            }
+            return Some(kind_of_type_text(file, &type_text, deps));
+        }
+    }
+    None
+}
+
+/// True for builtin value kinds that terminate chain walking.
+///
+/// Arrays, addresses, bytes, strings, functions, metadata, and globals
+/// have no contract lineage: further intermediates stay silent and the
+/// final segment resolves in the builtin table only.
+fn is_builtin_kind(kind: &TypeKind) -> bool {
+    matches!(
+        kind,
+        TypeKind::Array { .. }
+            | TypeKind::Address
+            | TypeKind::Bytes
+            | TypeKind::String
+            | TypeKind::Function
+            | TypeKind::Meta(_)
+            | TypeKind::Global(_)
+    )
+}
+
+/// Kind of the last element in a root-first chain.
+///
+/// `["o"]` gives the receiver type; `["o", "inner"]` gives the declared
+/// type of `inner`; longer chains walk per level with cross-file lookup.
+/// Unknown members and builtin intermediates yield unknown.
+pub fn kind_of_chain(
+    file: &SolidityFile,
+    scope: &Scope,
+    offset: u32,
+    chain: &[String],
+    deps: &[(PathBuf, SolidityFile)],
+) -> TypeKind {
+    let Some(root) = chain.first() else {
+        return TypeKind::Unknown;
+    };
+    let mut kind = receiver_type_with_deps(file, scope, offset, root, deps);
+    if chain.len() == 1 {
+        return kind;
+    }
+    for member in &chain[1..] {
+        if matches!(kind, TypeKind::Unknown) || is_builtin_kind(&kind) {
+            return TypeKind::Unknown;
+        }
+        let next = match &kind {
+            TypeKind::Contract(target) => contract_member_kind(file, target, member, deps),
+            TypeKind::Struct(target) => struct_member_kind(file, target, member, deps),
+            TypeKind::Super { enclosing } => {
+                let mut found = None;
+                for base in inheritance::linearize(file, enclosing) {
+                    let Some(base_name) = base.name() else {
+                        continue;
+                    };
+                    if base_name.is_empty() {
+                        continue;
+                    }
+                    if let Some(next) = contract_member_kind(file, &base_name, member, deps) {
+                        found = Some(next);
+                        break;
+                    }
+                }
+                found
+            }
+            _ => None,
+        };
+        let Some(next) = next else {
+            return TypeKind::Unknown;
+        };
+        kind = next;
+    }
+    kind
+}
+
+/// Parent kind for the final segment of a chain.
+///
+/// Walks `chain` root first: root via `receiver_type_with_deps`, each
+/// intermediate via its declared type with cross-file lookup per level.
+/// Unknown members and builtin intermediates yield unknown (intermediate
+/// silent). Builtins terminate: no further lineage is followed.
+pub fn resolve_chained_kind(
+    file: &SolidityFile,
+    scope: &Scope,
+    offset: u32,
+    chain: &[String],
+    deps: &[(PathBuf, SolidityFile)],
+) -> TypeKind {
+    if chain.len() <= 2 {
+        let Some(root) = chain.first() else {
+            return TypeKind::Unknown;
+        };
+        if chain.len() < 2 {
+            return TypeKind::Unknown;
+        }
+        return receiver_type_with_deps(file, scope, offset, root, deps);
+    }
+    let prefix = &chain[..chain.len() - 1];
+    kind_of_chain(file, scope, offset, prefix, deps)
+}
+
+/// Parent kind for a member context with chained fallback.
+///
+/// Uses `chain_before` prefix kind when it holds more than one ident;
+/// otherwise falls back to single-level `receiver_type_with_deps`.
+/// Final-segment-only: only the last member resolves, intermediates
+/// stay silent.
+pub fn parent_kind_for_member(
+    file: &SolidityFile,
+    scope: &Scope,
+    text: &str,
+    offset: u32,
+    ctx: &MemberContext,
+    deps: &[(PathBuf, SolidityFile)],
+) -> TypeKind {
+    let prefix = chain_before(text, ctx.dot_pos);
+    if prefix.len() >= 2 {
+        let resolved = kind_of_chain(file, scope, offset, &prefix, deps);
+        if resolved != TypeKind::Unknown {
+            return resolved;
+        }
+        return TypeKind::Unknown;
+    }
+    receiver_type_with_deps(file, scope, offset, &ctx.receiver, deps)
 }
 
 /// Wrap and unwrap entries for a user defined value type.

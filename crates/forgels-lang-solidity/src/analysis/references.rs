@@ -123,8 +123,7 @@ fn resolve_member_target(
     if super::meta::is_meta_at(text, offset) {
         return None;
     }
-    let kind =
-        super::members::receiver_type_with_deps(file, &scope, offset, &member.receiver, deps);
+    let kind = super::members::parent_kind_for_member(file, &scope, text, offset, member, deps);
     if !matches!(
         kind,
         super::members::TypeKind::Contract(_) | super::members::TypeKind::Struct(_)
@@ -263,7 +262,7 @@ fn resolve_member_usage(
         return None;
     }
     let scope = collect_symbols(file);
-    let kind = super::members::receiver_type_with_deps(file, &scope, at, &member.receiver, deps);
+    let kind = super::members::parent_kind_for_member(file, &scope, text, at, &member, deps);
     if !matches!(
         kind,
         super::members::TypeKind::Contract(_) | super::members::TypeKind::Struct(_)

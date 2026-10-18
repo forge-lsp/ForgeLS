@@ -247,20 +247,29 @@ pub fn member_arity_diagnostics(
                 if !member.is_call() {
                     continue;
                 }
-                let Some(receiver) = member.receiver() else {
+                let chain = member.chain();
+                if chain.len() < 2 {
+                    continue;
+                }
+                let Some(name) = member.final_member() else {
                     continue;
                 };
-                let Some(name) = member.member() else {
-                    continue;
-                };
-                if receiver.is_empty() || name.is_empty() {
+                if name.is_empty() {
                     continue;
                 }
                 let offset = member.syntax().span.start;
-                if forge::member_builtin(&receiver, &name, scope, offset).is_some() {
-                    continue;
+                if chain.len() == 2 {
+                    let root = chain[0].clone();
+                    if root.is_empty() {
+                        continue;
+                    }
+                    if forge::member_builtin(&root, &name, scope, offset).is_some() {
+                        continue;
+                    }
                 }
-                let kind = members::receiver_type_with_deps(file, scope, offset, &receiver, deps);
+                let kind = members::resolve_chained_kind(file, scope, offset, &chain, deps);
+                let chained = chain.len() > 2;
+                let root_name = chain.first().cloned().unwrap_or_default();
                 if let members::TypeKind::Array { dynamic } = &kind {
                     let Some(expected) = array::array_expected_arity(&name, *dynamic) else {
                         continue;
@@ -366,9 +375,11 @@ pub fn member_arity_diagnostics(
                     continue;
                 }
                 let members::TypeKind::Contract(target) = kind else {
-                    if let Some(expected) = super::using::using_expected_arity(
-                        file, scope, offset, &receiver, &name, deps,
-                    ) {
+                    if !chained
+                        && let Some(expected) = super::using::using_expected_arity(
+                            file, scope, offset, &root_name, &name, deps,
+                        )
+                    {
                         let actual = member.arg_count();
                         if expected != actual {
                             out.push(DiagnosticData {
@@ -432,7 +443,13 @@ pub fn member_arity_diagnostics(
                         .or_insert(getter.params.len());
                 }
                 let Some(expected) = params_of.get(&name).copied().or_else(|| {
-                    super::using::using_expected_arity(file, scope, offset, &receiver, &name, deps)
+                    if chained {
+                        None
+                    } else {
+                        super::using::using_expected_arity(
+                            file, scope, offset, &root_name, &name, deps,
+                        )
+                    }
                 }) else {
                     continue;
                 };

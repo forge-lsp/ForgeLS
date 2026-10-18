@@ -495,7 +495,7 @@ fn member_call_unclosed_falls_back_to_plain() {
 }
 
 #[test]
-fn chained_member_call_keeps_first_pair_only() {
+fn chained_member_call_keeps_tails_with_final_call() {
     let text = "contract C {\nfunction f() public {\na.b.c(1);\n}\n}";
     let lexer = SolidityLexer;
     let tokens = lexer.tokenize(text);
@@ -505,7 +505,14 @@ fn chained_member_call_keeps_first_pair_only() {
     assert_eq!(body.members().len(), 1);
     assert_eq!(body.members()[0].receiver().as_deref(), Some("a"));
     assert_eq!(body.members()[0].member().as_deref(), Some("b"));
-    assert!(!body.members()[0].is_call());
+    assert_eq!(
+        body.members()[0].chain(),
+        vec!["a".to_string(), "b".to_string(), "c".to_string()]
+    );
+    assert_eq!(body.members()[0].tails(), vec!["c".to_string()]);
+    assert_eq!(body.members()[0].final_member().as_deref(), Some("c"));
+    assert!(body.members()[0].is_call());
+    assert_eq!(body.members()[0].arg_count(), 1);
 }
 
 #[test]
@@ -982,6 +989,67 @@ fn try_catch_and_unchecked_bodies_parse() {
         .filter_map(LocalVar::name)
         .collect();
     assert_eq!(all, vec!["a", "b", "c", "d"]);
+}
+
+#[test]
+fn try_returns_and_catch_params_become_wrapper_params() {
+    use crate::Param;
+    let text = "contract C {\nfunction f() public {\ntry this.greet() returns (uint amount) {\nuint b = amount;\n} catch (bytes memory e) {\nuint c = 1;\n}\n}\n}";
+    let lexer = SolidityLexer;
+    let tokens = lexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let body = file.contracts()[0].functions()[0].body().expect("body");
+    assert_eq!(body.child_blocks().len(), 1);
+    let wrapper = body.child_blocks()[0].clone();
+    let names: Vec<String> = wrapper.params().iter().filter_map(Param::name).collect();
+    assert_eq!(names, vec!["amount", "e"]);
+    let all_params: Vec<String> = body.all_params().iter().filter_map(Param::name).collect();
+    assert_eq!(all_params, vec!["amount", "e"]);
+}
+
+#[test]
+fn try_new_parses_deploy_for_arity() {
+    let text = "contract Vault {\nconstructor(uint a, uint b) {}\n}\ncontract C {\nfunction f() public {\ntry new Vault(1) {\n} catch {\n}\n}\n}";
+    let lexer = SolidityLexer;
+    let tokens = lexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let body = file.contracts()[1].functions()[0].body().expect("body");
+    assert_eq!(body.all_news().len(), 1);
+    assert_eq!(body.all_news()[0].contract_name().as_deref(), Some("Vault"));
+    assert_eq!(body.all_news()[0].arg_count(), 1);
+}
+
+#[test]
+fn chained_tails_cap_at_four() {
+    let text = "contract C {\nfunction f() public {\na.b.c.d.e.f.g;\n}\n}";
+    let lexer = SolidityLexer;
+    let tokens = lexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let body = file.contracts()[0].functions()[0].body().expect("body");
+    assert_eq!(body.members().len(), 1);
+    let chain = body.members()[0].chain();
+    assert_eq!(chain.len(), 6);
+    assert_eq!(body.members()[0].tails().len(), 4);
+    assert_eq!(body.members()[0].final_member().as_deref(), Some("f"));
+}
+
+#[test]
+fn chained_intermediate_call_is_skipped() {
+    let text = "contract C {\nfunction f() public {\na.b().c;\n}\n}";
+    let lexer = SolidityLexer;
+    let tokens = lexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let body = file.contracts()[0].functions()[0].body().expect("body");
+    assert_eq!(body.members().len(), 1);
+    assert_eq!(
+        body.members()[0].chain(),
+        vec!["a".to_string(), "b".to_string(), "c".to_string()]
+    );
+    assert!(!body.members()[0].is_call());
 }
 
 #[test]

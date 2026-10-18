@@ -221,20 +221,27 @@ pub fn payable_diagnostics(
                 if !options_contain_value(text, options) {
                     continue;
                 }
-                let Some(receiver) = member.receiver() else {
+                let chain = member.chain();
+                if chain.len() < 2 {
+                    continue;
+                }
+                let Some(name) = member.final_member() else {
                     continue;
                 };
-                let Some(name) = member.member() else {
-                    continue;
-                };
-                if receiver.is_empty() || name.is_empty() {
+                if name.is_empty() {
                     continue;
                 }
                 let offset = member.syntax().span.start;
-                if forge::member_builtin(&receiver, &name, scope, offset).is_some() {
-                    continue;
+                if chain.len() == 2 {
+                    let root = chain[0].clone();
+                    if root.is_empty() {
+                        continue;
+                    }
+                    if forge::member_builtin(&root, &name, scope, offset).is_some() {
+                        continue;
+                    }
                 }
-                let kind = members::receiver_type_with_deps(file, scope, offset, &receiver, deps);
+                let kind = members::resolve_chained_kind(file, scope, offset, &chain, deps);
                 let found = match kind {
                     members::TypeKind::Super { enclosing } => {
                         super_function(file, &enclosing, &name, deps)

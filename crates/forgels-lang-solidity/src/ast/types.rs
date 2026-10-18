@@ -64,7 +64,8 @@ fn join_type_text(parts: &[&str]) -> String {
     out
 }
 
-/// Function or lone block body. Children hold LocalVar, Call, Emit,
+/// Function or lone block body. Children hold LocalVar, Param (try
+/// returns plus catch params in the `try` wrapper only), Call, Emit,
 /// Revert, New, Member, and nested Block nodes; other statements are
 /// skipped but stay inside the span. Nested blocks come from bare
 /// `{ ... }` groups and from `if`, `for`, `while`, `unchecked`, and
@@ -88,6 +89,33 @@ impl BlockNode {
                 _ => None,
             })
             .collect()
+    }
+
+    /// Direct `try` returns plus `catch` params in the wrapper only.
+    ///
+    /// Other blocks hold no params; `function_scope` owns function
+    /// params. Used for scope only, never for outline.
+    pub fn params(&self) -> Vec<crate::Param> {
+        use forgels_syntax::AstNode;
+        self.syntax
+            .children
+            .iter()
+            .filter_map(|element| match element {
+                SyntaxElement::Node(node) if node.kind == SolidityNode::Param.as_u16() => {
+                    crate::Param::cast(node.clone())
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// All params in this block plus nested blocks, depth first.
+    pub fn all_params(&self) -> Vec<crate::Param> {
+        let mut out = self.params();
+        for child in self.child_blocks() {
+            out.extend(child.all_params());
+        }
+        out
     }
 
     /// Direct nested blocks: bare groups plus control bodies.

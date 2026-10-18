@@ -1292,6 +1292,91 @@ fn chained_member_returns_scope_fallback() {
 }
 
 #[test]
+fn chained_struct_field_resolves_final_only() {
+    let text = "struct Inner {\nuint x;\n}\nstruct Outer {\nInner inner;\n}\ncontract C {\nfunction f() public {\nOuter o;\no.inner.x\n}\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let at = text.rfind("o.inner.x").expect("chain") as u32 + 8;
+    let found = hover_at(&file, text, at).expect("hover");
+    assert!(
+        found.contents.contains("uint"),
+        "contents: {}",
+        found.contents
+    );
+    assert!(found.contents.contains("x"), "contents: {}", found.contents);
+}
+
+#[test]
+fn chained_builtin_parent_resolves_final() {
+    let text = "contract C {\nfunction f() public {\naddress owner;\nowner.balance\n}\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let at = text.rfind("owner.balance").expect("chain") as u32 + 8;
+    let found = hover_at(&file, text, at).expect("hover");
+    assert!(
+        found.contents.contains("balance"),
+        "contents: {}",
+        found.contents
+    );
+}
+
+#[test]
+fn chained_unknown_intermediate_stays_silent() {
+    let text = "struct Inner {\nuint x;\n}\ncontract C {\nfunction f() public {\nInner o;\no.missing.x\n}\n}";
+    let found = diagnostics_of(text);
+    assert!(found.is_empty(), "diags: {found:?}");
+}
+
+#[test]
+fn try_returns_param_resolves_in_body() {
+    let text = "contract C {\nfunction f() public {\ntry this.greet() returns (uint amount) {\namount;\n}\ncatch {\n}\n}\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let at = text.rfind("amount;").expect("use") as u32;
+    let found = hover_at(&file, text, at).expect("hover");
+    assert!(
+        found.contents.contains("uint"),
+        "contents: {}",
+        found.contents
+    );
+    assert!(
+        found.contents.contains("amount"),
+        "contents: {}",
+        found.contents
+    );
+}
+
+#[test]
+fn try_catch_param_resolves_in_body() {
+    let text = "contract C {\nfunction f() public {\ntry this.greet() {\n} catch (bytes memory e) {\ne;\n}\n}\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let at = text.rfind("\ne;\n").expect("use") as u32 + 1;
+    let found = hover_at(&file, text, at).expect("hover");
+    assert!(
+        found.contents.contains("bytes"),
+        "contents: {}",
+        found.contents
+    );
+    assert!(found.contents.contains("e"), "contents: {}", found.contents);
+}
+
+#[test]
+fn try_new_reuses_deploy_arity() {
+    let text = "contract Vault {\nconstructor(uint a, uint b) { a; b; }\n}\ncontract C {\nfunction f() public {\ntry new Vault(1) {\n} catch {\n}\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "this constructor for 'Vault' takes 2 arguments but 1 supplied"
+    );
+}
+
+#[test]
 fn inherited_plain_completion_shows_base_function() {
     let text = "contract B {\nfunction greet(uint a) public { a; }\n}\ncontract D is B {\nfunction f() public {\ngre\n}\n}";
     let at = text.rfind("gre").expect("prefix") as u32 + 3;
@@ -1364,6 +1449,42 @@ fn inherited_diamond_keeps_first_origin_once() {
         hits[0].detail.contains("from A"),
         "detail: {}",
         hits[0].detail
+    );
+}
+
+#[test]
+fn inherited_c3_direct_before_transitive() {
+    use super::inheritance;
+    let text = "contract A {}\ncontract B is A {}\ncontract C is B {}\n";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let chain = inheritance::linearize(&file, "C");
+    let names: Vec<String> = chain.into_iter().filter_map(|def| def.name()).collect();
+    assert_eq!(names, vec!["B", "A"]);
+}
+
+#[test]
+fn inherited_c3_diamond_orders_directs_first() {
+    use super::inheritance;
+    let text = "contract A {}\ncontract B is A {}\ncontract C is A {}\ncontract D is B, C {}\n";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let chain = inheritance::linearize(&file, "D");
+    let names: Vec<String> = chain.into_iter().filter_map(|def| def.name()).collect();
+    assert_eq!(names, vec!["B", "C", "A"]);
+}
+
+#[test]
+fn inherited_inconsistent_falls_back_with_diagnostic() {
+    let text = "contract A {}\ncontract B is A {}\ncontract C is B {}\ncontract D is A, C {}\n";
+    let found = diagnostics_of(text);
+    assert!(
+        found
+            .iter()
+            .any(|diag| diag.message.contains("inconsistent linearization")),
+        "diags: {found:?}"
     );
 }
 

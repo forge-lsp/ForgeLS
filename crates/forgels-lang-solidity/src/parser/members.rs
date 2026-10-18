@@ -1,6 +1,7 @@
 use super::cursor::{Cursor, token_element};
 use super::types::{is_type_start, parse_type};
 use crate::SolidityNode;
+use crate::ast::MAX_CHAIN_TAILS;
 use crate::lexer::SolidityKind;
 use forgels_syntax::{ParseError, Span, SyntaxElement, SyntaxNode};
 
@@ -625,52 +626,147 @@ fn parse_unchecked(
     }
 }
 
-/// Parse `try callee [returns (...)] body (catch ... body)*`.
+/// Parse `try callee [returns (...)] body (catch ... body)*` as one wrapper.
 ///
-/// Bodies recurse as child blocks. Catch params stay deferred: the
-/// parenthesized list is skipped balanced with no symbols, so catch
-/// bindings never resolve in V1.
+/// The whole statement becomes one child `Block` from `try` to body end,
+/// like `parse_for`. Try returns params and catch params become `Param`
+/// nodes inside the wrapper so uses in bodies resolve. Bodies recurse
+/// via `parse_control_body`, so nested `try` works. `try new C(args)`
+/// parses the deploy as a `New` node inside the wrapper so deploy arity
+/// reuses the same check as top-level `new`.
 fn parse_try(cursor: &mut Cursor, errors: &mut Vec<ParseError>, items: &mut Vec<SyntaxElement>) {
-    cursor.bump();
-    loop {
-        match cursor.peek_kind() {
-            None => return,
-            Some(kind) if kind == SolidityKind::LBrace.as_u16() => break,
-            Some(kind)
-                if kind == SolidityKind::Semicolon.as_u16()
-                    || kind == SolidityKind::RBrace.as_u16() =>
-            {
-                return;
-            }
-            Some(kind) if kind == SolidityKind::LParen.as_u16() => skip_parens(cursor),
-            _ => {
-                cursor.bump();
+    let Some(try_token) = cursor.bump() else {
+        return;
+    };
+    let start = try_token.span.start;
+    let mut inner: Vec<SyntaxElement> = Vec::new();
+    if cursor.peek_kind() == Some(SolidityKind::New.as_u16()) {
+        if let Some(deploy) = try_parse_new(cursor) {
+            inner.push(SyntaxElement::Node(deploy));
+        }
+    } else {
+        loop {
+            match cursor.peek_kind() {
+                None => return,
+                Some(kind) if kind == SolidityKind::LBrace.as_u16() => break,
+                Some(kind)
+                    if kind == SolidityKind::Semicolon.as_u16()
+                        || kind == SolidityKind::RBrace.as_u16() =>
+                {
+                    return;
+                }
+                Some(kind) if kind == SolidityKind::Returns.as_u16() => break,
+                Some(kind) if kind == SolidityKind::LParen.as_u16() => skip_parens(cursor),
+                _ => {
+                    cursor.bump();
+                }
             }
         }
     }
-    parse_control_body(cursor, errors, items);
+    if cursor.peek_kind() == Some(SolidityKind::Returns.as_u16()) {
+        cursor.bump();
+        if cursor.peek_kind() == Some(SolidityKind::LParen.as_u16()) {
+            for param in parse_try_params(cursor) {
+                inner.push(SyntaxElement::Node(param));
+            }
+        }
+    }
+    if cursor.peek_kind() != Some(SolidityKind::LBrace.as_u16())
+        && cursor.peek_kind() != Some(SolidityKind::If.as_u16())
+        && cursor.peek_kind() != Some(SolidityKind::For.as_u16())
+        && cursor.peek_kind() != Some(SolidityKind::While.as_u16())
+        && cursor.peek_kind() != Some(SolidityKind::Unchecked.as_u16())
+        && cursor.peek_kind() != Some(SolidityKind::Try.as_u16())
+    {
+        loop {
+            match cursor.peek_kind() {
+                None => return,
+                Some(kind) if kind == SolidityKind::LBrace.as_u16() => break,
+                Some(kind)
+                    if kind == SolidityKind::Semicolon.as_u16()
+                        || kind == SolidityKind::RBrace.as_u16() =>
+                {
+                    return;
+                }
+                Some(kind) if kind == SolidityKind::LParen.as_u16() => skip_parens(cursor),
+                _ => {
+                    cursor.bump();
+                }
+            }
+        }
+    }
+    parse_control_body(cursor, errors, &mut inner);
     loop {
         if cursor.peek_kind() != Some(SolidityKind::Catch.as_u16()) {
-            return;
+            break;
         }
         cursor.bump();
         if cursor.peek_kind() == Some(SolidityKind::Ident.as_u16()) {
             cursor.bump();
         }
         if cursor.peek_kind() == Some(SolidityKind::LParen.as_u16()) {
-            skip_parens(cursor);
+            for param in parse_try_params(cursor) {
+                inner.push(SyntaxElement::Node(param));
+            }
         }
         match cursor.peek_kind() {
-            None => return,
+            None => break,
             Some(kind)
                 if kind == SolidityKind::RBrace.as_u16()
                     || kind == SolidityKind::Catch.as_u16() =>
             {
-                return;
+                break;
             }
-            _ => parse_control_body(cursor, errors, items),
+            _ => parse_control_body(cursor, errors, &mut inner),
         }
     }
+    let mut end = try_token.span.end;
+    for element in &inner {
+        if let SyntaxElement::Node(node) = element {
+            end = end.max(node.span.end);
+        }
+    }
+    if let Some(prev) = cursor.tokens.get(cursor.pos().saturating_sub(1)) {
+        end = end.max(prev.span.end);
+    }
+    items.push(SyntaxElement::Node(SyntaxNode::with_children(
+        SolidityNode::Block.as_u16(),
+        Span::new(start, end),
+        inner,
+    )));
+}
+
+/// Parse `(T a, U b)` after `returns` or `catch` into `Param` nodes.
+///
+/// Assumes the cursor sits at `(`. Consumes through `)`. Lenient: bad
+/// elements are skipped to the next `,` or `)` with no error, so bodies
+/// still parse when params are broken.
+fn parse_try_params(cursor: &mut Cursor) -> Vec<SyntaxNode> {
+    let mut out = Vec::new();
+    if cursor.peek_kind() != Some(SolidityKind::LParen.as_u16()) {
+        return out;
+    }
+    cursor.bump();
+    loop {
+        match cursor.peek_kind() {
+            None => break,
+            Some(kind) if kind == SolidityKind::RParen.as_u16() => {
+                cursor.bump();
+                break;
+            }
+            Some(kind) if kind == SolidityKind::RBrace.as_u16() => break,
+            Some(kind) if kind == SolidityKind::Comma.as_u16() => {
+                cursor.bump();
+            }
+            _ => match parse_param(cursor) {
+                Ok(param) => out.push(param),
+                Err(_) => {
+                    cursor.bump();
+                }
+            },
+        }
+    }
+    out
 }
 
 /// Parse the `(init; cond; post)` header, keeping an init declaration.
@@ -979,15 +1075,62 @@ fn scan_options_call(
     Some((lbrace, rbrace, markers, rparen, close_pos))
 }
 
+/// End index of a balanced `( ... )` starting at `lparen_pos`.
+///
+/// Returns `None` on unbalanced input or on `{` inside, so callers
+/// fall back to plain. Comments are skipped during the scan.
+fn paren_end_at(
+    tokens: &[forgels_syntax::Token],
+    lparen_pos: usize,
+    comment: u16,
+) -> Option<usize> {
+    let mut paren_depth = 0u32;
+    let mut bracket_depth = 0u32;
+    let mut index = lparen_pos;
+    while let Some(token) = tokens.get(index) {
+        if token.kind == comment {
+            index += 1;
+            continue;
+        }
+        let kind = token.kind;
+        if kind == crate::lexer::SolidityKind::LBrace.as_u16() {
+            return None;
+        }
+        if kind == crate::lexer::SolidityKind::LParen.as_u16() {
+            paren_depth += 1;
+        } else if kind == crate::lexer::SolidityKind::RParen.as_u16() {
+            if paren_depth == 0 {
+                return None;
+            }
+            paren_depth -= 1;
+            if paren_depth == 0 {
+                return Some(index);
+            }
+        } else if kind == crate::lexer::SolidityKind::LBracket.as_u16() {
+            bracket_depth += 1;
+        } else if kind == crate::lexer::SolidityKind::RBracket.as_u16() {
+            if bracket_depth == 0 {
+                return None;
+            }
+            bracket_depth -= 1;
+        }
+        index += 1;
+    }
+    None
+}
+
 /// Try `recv.member` with single ident receiver, including `this`/`super`.
 ///
-/// Returns the Member node and consumes through the member name (or dot
-/// when the name is still missing). Only the first dot is stored; chained
-/// tails like `.c` in `a.b.c` stay for `recover_statement`. Calls add
+/// Returns the Member node and consumes through the final tail (or dot
+/// when the name is still missing). Up to `MAX_CHAIN_TAILS` extra
+/// `.ident` tails are stored for `a.b.c`; beyond the cap the rest stays
+/// for `recover_statement`. Intermediate calls are skipped (consumed,
+/// never stored); only the final segment keeps call markers. Calls add
 /// markers: `(` plus commas for non-empty, `)` alone for empty. Options
 /// like `{value: 1}` add `{` and `}` markers when balanced and followed
 /// by parens. Span covers `recv` through `)` for calls, `recv` through
-/// member for plain. Unclosed or braced call suffixes fall back to plain.
+/// final member for plain. Unclosed or braced call suffixes fall back
+/// to plain.
 pub(crate) fn try_parse_member(cursor: &mut Cursor) -> Option<SyntaxNode> {
     let tokens = cursor.tokens;
     let comment = SolidityKind::Comment.as_u16();
@@ -1033,19 +1176,83 @@ pub(crate) fn try_parse_member(cursor: &mut Cursor) -> Option<SyntaxNode> {
         let children = vec![token_element(recv), token_element(dot.clone())];
         return finish_plain(cursor, children, dot.span.end, dot_idx);
     };
-    let member_pos = member_idx.unwrap_or(dot_idx);
+    let mut current_pos = member_idx.unwrap_or(dot_idx);
     let mut base = vec![token_element(recv), token_element(dot.clone())];
     base.push(token_element(name.clone()));
-    let plain_end = name.span.end;
-    let Some(after_pos) = next_code(member_pos + 1) else {
-        return finish_plain(cursor, base, plain_end, member_pos);
+    let mut plain_end = name.span.end;
+    let mut tails = 0usize;
+    loop {
+        if tails >= MAX_CHAIN_TAILS {
+            break;
+        }
+        let Some(next_idx) = next_code(current_pos + 1) else {
+            break;
+        };
+        let Some(next) = tokens.get(next_idx).cloned() else {
+            break;
+        };
+        if next.kind == SolidityKind::LBrace.as_u16() {
+            let Some((_, _, _, _, call_end)) = scan_options_call(tokens, next_idx) else {
+                break;
+            };
+            let Some(beyond) = next_code(call_end + 1) else {
+                break;
+            };
+            let Some(beyond_token) = tokens.get(beyond).cloned() else {
+                break;
+            };
+            if beyond_token.kind != SolidityKind::Dot.as_u16() {
+                break;
+            }
+            current_pos = call_end;
+            continue;
+        }
+        if next.kind == SolidityKind::LParen.as_u16() {
+            let Some(call_end) = paren_end_at(tokens, next_idx, comment) else {
+                break;
+            };
+            let Some(beyond) = next_code(call_end + 1) else {
+                break;
+            };
+            let Some(beyond_token) = tokens.get(beyond).cloned() else {
+                break;
+            };
+            if beyond_token.kind != SolidityKind::Dot.as_u16() {
+                break;
+            }
+            current_pos = call_end;
+            continue;
+        }
+        if next.kind != SolidityKind::Dot.as_u16() {
+            break;
+        }
+        let Some(tail_idx) = next_code(next_idx + 1) else {
+            break;
+        };
+        let Some(tail) = tokens.get(tail_idx).cloned() else {
+            break;
+        };
+        if tail.kind != SolidityKind::Ident.as_u16() {
+            plain_end = next.span.end;
+            base.push(token_element(next));
+            current_pos = next_idx;
+            break;
+        }
+        base.push(token_element(next));
+        base.push(token_element(tail.clone()));
+        plain_end = tail.span.end;
+        current_pos = tail_idx;
+        tails += 1;
+    }
+    let Some(after_pos) = next_code(current_pos + 1) else {
+        return finish_plain(cursor, base, plain_end, current_pos);
     };
     let after = tokens.get(after_pos)?.clone();
     if after.kind == SolidityKind::LBrace.as_u16() {
         let Some((open, close, call_markers, rparen, close_pos)) =
             scan_options_call(tokens, after_pos)
         else {
-            return finish_plain(cursor, base, plain_end, member_pos);
+            return finish_plain(cursor, base, plain_end, current_pos);
         };
         let mut children = base;
         children.push(token_element(open));
@@ -1065,7 +1272,7 @@ pub(crate) fn try_parse_member(cursor: &mut Cursor) -> Option<SyntaxNode> {
         ));
     }
     if after.kind != SolidityKind::LParen.as_u16() {
-        return finish_plain(cursor, base, plain_end, member_pos);
+        return finish_plain(cursor, base, plain_end, current_pos);
     }
     let lparen_pos = after_pos;
     let lparen = after;
@@ -1081,13 +1288,13 @@ pub(crate) fn try_parse_member(cursor: &mut Cursor) -> Option<SyntaxNode> {
         }
         let kind = token.kind;
         if kind == SolidityKind::LBrace.as_u16() {
-            return finish_plain(cursor, base, plain_end, member_pos);
+            return finish_plain(cursor, base, plain_end, current_pos);
         }
         if kind == SolidityKind::LParen.as_u16() {
             paren_depth += 1;
         } else if kind == SolidityKind::RParen.as_u16() {
             if paren_depth == 0 {
-                return finish_plain(cursor, base, plain_end, member_pos);
+                return finish_plain(cursor, base, plain_end, current_pos);
             }
             paren_depth -= 1;
             if paren_depth == 0 {
@@ -1098,7 +1305,7 @@ pub(crate) fn try_parse_member(cursor: &mut Cursor) -> Option<SyntaxNode> {
             bracket_depth += 1;
         } else if kind == SolidityKind::RBracket.as_u16() {
             if bracket_depth == 0 {
-                return finish_plain(cursor, base, plain_end, member_pos);
+                return finish_plain(cursor, base, plain_end, current_pos);
             }
             bracket_depth -= 1;
         } else if kind == SolidityKind::Comma.as_u16() && paren_depth == 1 && bracket_depth == 0 {
@@ -1108,7 +1315,7 @@ pub(crate) fn try_parse_member(cursor: &mut Cursor) -> Option<SyntaxNode> {
     }
     let close_pos = match rparen_pos {
         Some(pos) => pos,
-        None => return finish_plain(cursor, base, plain_end, member_pos),
+        None => return finish_plain(cursor, base, plain_end, current_pos),
     };
     let rparen = tokens.get(close_pos)?.clone();
     let after_lparen = next_code(lparen_pos + 1);

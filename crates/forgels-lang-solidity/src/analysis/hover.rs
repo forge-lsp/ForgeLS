@@ -37,11 +37,13 @@ pub fn hover_at(file: &SolidityFile, text: &str, offset: u32) -> Option<Hover> {
         });
     }
     // Receiver itself keeps scope hover; only the member uses type lookup.
+    // Chained `a.b.c` resolves the final segment only via the full chain.
     if let Some(ctx) = super::members::member_context_at(text, offset)
         && (ctx.member_span.contains(offset) || ctx.member_span.end == offset)
     {
         let scope = collect_symbols(file);
-        let kind = super::members::receiver_type(file, &scope, offset, &ctx.receiver);
+        let chained = super::members::chain_before(text, ctx.dot_pos).len() >= 2;
+        let kind = super::members::parent_kind_for_member(file, &scope, text, offset, &ctx, &[]);
         if let super::members::TypeKind::Array { dynamic } = kind
             && let Some(found) = super::array::array_member(&ctx.member, dynamic)
         {
@@ -105,22 +107,25 @@ pub fn hover_at(file: &SolidityFile, text: &str, offset: u32) -> Option<Hover> {
         }
         {
             let scope = collect_symbols(file);
-            if let Some((found, _)) = super::using::resolve_using_member(
-                file,
-                &scope,
-                offset,
-                &ctx.receiver,
-                &ctx.member,
-                &[],
-            ) {
+            if !chained
+                && let Some((found, _)) = super::using::resolve_using_member(
+                    file,
+                    &scope,
+                    offset,
+                    &ctx.receiver,
+                    &ctx.member,
+                    &[],
+                )
+            {
                 return Some(Hover {
                     contents: with_docs(text, &found.detail, found.kind, found.span.start),
                     span: found.span,
                 });
             }
         }
-        if let Some(builtin) =
-            super::forge::member_builtin(&ctx.receiver, &ctx.member, &scope, offset)
+        if !chained
+            && let Some(builtin) =
+                super::forge::member_builtin(&ctx.receiver, &ctx.member, &scope, offset)
         {
             return Some(Hover {
                 contents: super::forge::builtin_detail(builtin),

@@ -28,7 +28,8 @@ pub fn goto_definition(file: &SolidityFile, text: &str, offset: u32) -> Option<S
         && (ctx.member_span.contains(offset) || ctx.member_span.end == offset)
     {
         let scope = collect_symbols(file);
-        let kind = super::members::receiver_type(file, &scope, offset, &ctx.receiver);
+        let chained = super::members::chain_before(text, ctx.dot_pos).len() >= 2;
+        let kind = super::members::parent_kind_for_member(file, &scope, text, offset, &ctx, &[]);
         if matches!(
             kind,
             super::members::TypeKind::Array { .. }
@@ -47,6 +48,9 @@ pub fn goto_definition(file: &SolidityFile, text: &str, offset: u32) -> Option<S
             .find(|member| member.name == ctx.member);
         if let Some(found) = found {
             return Some(found.span);
+        }
+        if chained {
+            return None;
         }
         let scope = collect_symbols(file);
         let (found, _) = super::using::resolve_using_member(
