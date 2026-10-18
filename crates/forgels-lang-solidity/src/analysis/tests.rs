@@ -3209,7 +3209,7 @@ fn variable_completion_shows_param_and_local_types() {
         .iter()
         .find(|item| item.label == "count")
         .expect("local hit");
-    assert_eq!(local_hit.detail, "uint count");
+    assert_eq!(local_hit.detail, "uint count = 1");
     assert_eq!(completion_item_kind(local_hit.kind).value(), 6);
 }
 
@@ -3299,7 +3299,7 @@ fn hover_shows_param_and_local_types() {
     assert!(param.span.start <= decl_param && decl_param < param.span.end);
     let at_local = text.rfind("count;").expect("use") as u32;
     let local = hover_at(&file, text, at_local).expect("hover");
-    assert_eq!(local.contents, "uint count");
+    assert_eq!(local.contents, "uint count = 1");
     let decl_local = text.find("count").expect("decl") as u32;
     assert!(local.span.start <= decl_local && decl_local < local.span.end);
 }
@@ -4400,7 +4400,7 @@ fn for_header_local_visible_in_body() {
     let at_use = text.rfind("\ni;\n").expect("use") as u32 + 1;
     let found = scope.resolve("i", at_use).expect("found");
     assert_eq!(found.kind, SymbolKind::LocalVar);
-    assert_eq!(found.detail, "uint i");
+    assert_eq!(found.detail, "uint i = 0");
     assert!(diagnostics_of(text).is_empty());
 }
 
@@ -5192,4 +5192,121 @@ fn error_arity_uses_dep_contract_fallback() {
         found[0].message,
         "this error 'Insufficient' takes 1 arguments but 2 supplied"
     );
+}
+
+#[test]
+fn hover_shows_state_var_value_for_single_literal() {
+    let text = "contract C {\nuint256 total = 42;\nstring name = \"hi\";\nbool on = true;\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    for (needle, want) in [
+        (" total", "uint256 total = 42"),
+        (" name", "string name = \"hi\""),
+        (" on", "bool on = true"),
+    ] {
+        let at = text.find(needle).expect("decl") as u32 + 1;
+        let hover = hover_at(&file, text, at).expect("hover");
+        assert_eq!(hover.contents, want);
+    }
+}
+
+#[test]
+fn hover_hides_value_for_complex_initializer() {
+    let text = "contract C {\nuint256 fee = 1 ether;\nuint256 calc = 1 + 2;\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let at_fee = text.find("fee").expect("decl") as u32;
+    let fee = hover_at(&file, text, at_fee).expect("hover");
+    assert_eq!(fee.contents, "uint256 fee");
+    let at_calc = text.find("calc").expect("decl") as u32;
+    let calc = hover_at(&file, text, at_calc).expect("hover");
+    assert_eq!(calc.contents, "uint256 calc");
+}
+
+#[test]
+fn hover_shows_line_natspec_for_function() {
+    let text = "contract C {\n/// @notice Adds one.\n/// @param x input.\nfunction add(uint x) public returns (uint) {\nx;\n}\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let at = text.rfind("add").expect("use") as u32;
+    let hover = hover_at(&file, text, at).expect("hover");
+    assert!(
+        hover
+            .contents
+            .starts_with("function add(uint x) returns (uint)"),
+        "contents: {}",
+        hover.contents
+    );
+    assert!(
+        hover
+            .contents
+            .contains("@notice Adds one.\n@param x input."),
+        "contents: {}",
+        hover.contents
+    );
+}
+
+#[test]
+fn hover_shows_block_natspec_for_state_var() {
+    let text =
+        "contract C {\n/**\n* @notice Total supply.\n* @dev Capped at 100.\n*/\nuint256 total;\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let at = text.find("total").expect("decl") as u32;
+    let hover = hover_at(&file, text, at).expect("hover");
+    assert_eq!(
+        hover.contents,
+        "uint256 total\n\n@notice Total supply.\n@dev Capped at 100."
+    );
+}
+
+#[test]
+fn hover_ignores_plain_comment_and_wide_gap() {
+    let text = "contract C {\n// plain note\nuint256 a;\n/// @notice Stale.\n\n\n\nuint256 b;\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let at_a = text.find("uint256 a").expect("decl") as u32 + 8;
+    let hover_a = hover_at(&file, text, at_a).expect("hover");
+    assert_eq!(hover_a.contents, "uint256 a");
+    let at_b = text.rfind("uint256 b").expect("decl") as u32 + 8;
+    let hover_b = hover_at(&file, text, at_b).expect("hover");
+    assert_eq!(hover_b.contents, "uint256 b");
+}
+
+#[test]
+fn hover_skips_natspec_for_params() {
+    let text = "contract C {\n/// @notice Stray.\nfunction f(uint amount) public {\namount;\n}\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let at = text.rfind("amount;").expect("use") as u32;
+    let hover = hover_at(&file, text, at).expect("hover");
+    assert_eq!(hover.contents, "uint amount");
+}
+
+#[test]
+fn dep_hover_places_natspec_before_origin() {
+    let dep = "/// @notice Vault.\ncontract Vault {\n/// @notice Withdraw.\nfunction withdraw(uint a) public {}\n}";
+    let cur = "import \"./B.sol\";\ncontract A {\nfunction f() public {\nwithdraw;\n}\n}";
+    let mut workspace = open_workspace(&[("/A.sol", cur), ("/B.sol", dep)]);
+    workspace.set_file_deps(PathBuf::from("/A.sol"), vec![PathBuf::from("/B.sol")]);
+    let hit = hover_multi(&workspace, "/A.sol", cur, "withdraw").expect("dep hover");
+    assert!(
+        hit.contents.starts_with("function withdraw(uint a)"),
+        "contents: {}",
+        hit.contents
+    );
+    assert!(
+        hit.contents.contains("@notice Withdraw."),
+        "contents: {}",
+        hit.contents
+    );
+    let docs_at = hit.contents.find("@notice").expect("docs");
+    let from_at = hit.contents.find("from B.sol").expect("origin");
+    assert!(docs_at < from_at, "contents: {}", hit.contents);
 }

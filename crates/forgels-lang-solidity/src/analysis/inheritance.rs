@@ -278,6 +278,10 @@ pub(crate) fn inherited_symbols(file: &SolidityFile, contract: &ContractDef) -> 
             let mut detail = var.type_node().map(|node| node.text()).unwrap_or_default();
             detail.push(' ');
             detail.push_str(&var_name);
+            if let Some(init) = var.initializer() {
+                detail.push_str(" = ");
+                detail.push_str(&init.text);
+            }
             detail.push_str(&suffix);
             out.push(Symbol {
                 name: var_name,
@@ -338,6 +342,10 @@ pub(crate) fn inherited_members(file: &SolidityFile, contract_name: &str) -> Vec
             let mut detail = var.type_node().map(|node| node.text()).unwrap_or_default();
             detail.push(' ');
             detail.push_str(&var_name);
+            if let Some(init) = var.initializer() {
+                detail.push_str(" = ");
+                detail.push_str(&init.text);
+            }
             detail.push_str(&suffix);
             out.push(MemberInfo {
                 name: var_name,

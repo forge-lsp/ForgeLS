@@ -33,6 +33,7 @@ mod inlay;
 pub(crate) mod members;
 pub(crate) mod meta;
 mod mutability;
+mod natspec;
 #[path = "override.rs"]
 mod override_diagnostics;
 mod payable;
@@ -390,6 +391,10 @@ fn contract_scope(file: &SolidityFile, contract: &ContractDef) -> Scope {
             let mut detail = var.type_node().map(|node| node.text()).unwrap_or_default();
             detail.push(' ');
             detail.push_str(&name);
+            if let Some(init) = var.initializer() {
+                detail.push_str(" = ");
+                detail.push_str(&init.text);
+            }
             scope.symbols.push(Symbol::new(
                 name,
                 SymbolKind::StateVar,
@@ -496,6 +501,10 @@ fn block_scope(block: &crate::BlockNode) -> Scope {
                 .unwrap_or_default();
             detail.push(' ');
             detail.push_str(&name);
+            if let Some(init) = local.initializer() {
+                detail.push_str(" = ");
+                detail.push_str(&init.text);
+            }
             scope.symbols.push(Symbol::new(
                 name,
                 SymbolKind::LocalVar,
@@ -544,7 +553,6 @@ impl SolidityAnalyzer {
 
     fn member_completion(
         file: &SolidityFile,
-        ctx_text: &str,
         offset: u32,
         member: &members::MemberContext,
         deps: &[(std::path::PathBuf, SolidityFile)],
@@ -620,7 +628,6 @@ impl SolidityAnalyzer {
             });
         }
         out.sort_by(|left, right| left.label.cmp(&right.label));
-        let _ = ctx_text;
         out
     }
 
@@ -740,6 +747,7 @@ impl Analyzer for SolidityAnalyzer {
         }
         if let Some((name, span)) = emits::emit_name_at(ctx.text, ctx.offset) {
             let deps = Self::dep_files(ctx);
+            let texts = forgels_core::dep_texts(ctx, 16);
             for (path, dep_file) in &deps {
                 let Some(found) = emits::find_emit_in_dep(dep_file, &name) else {
                     continue;
@@ -747,8 +755,17 @@ impl Analyzer for SolidityAnalyzer {
                 let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
                     continue;
                 };
+                let docs = texts
+                    .iter()
+                    .find(|(dep_path, _)| dep_path == path)
+                    .and_then(|(_, dep_text)| {
+                        if !natspec::allows_kind(found.kind) {
+                            return None;
+                        }
+                        natspec::natspec_for(dep_text, found.span.start)
+                    });
                 return Some(HoverData {
-                    contents: format!("{} - from {}", found.detail, file_name),
+                    contents: natspec::with_natspec_origin(&found.detail, docs, file_name),
                     span,
                 });
             }
@@ -756,6 +773,7 @@ impl Analyzer for SolidityAnalyzer {
         }
         if let Some((name, span)) = errors::revert_name_at(ctx.text, ctx.offset) {
             let deps = Self::dep_files(ctx);
+            let texts = forgels_core::dep_texts(ctx, 16);
             for (path, dep_file) in &deps {
                 let Some(found) = errors::find_error_in_dep(dep_file, &name) else {
                     continue;
@@ -763,8 +781,17 @@ impl Analyzer for SolidityAnalyzer {
                 let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
                     continue;
                 };
+                let docs = texts
+                    .iter()
+                    .find(|(dep_path, _)| dep_path == path)
+                    .and_then(|(_, dep_text)| {
+                        if !natspec::allows_kind(found.kind) {
+                            return None;
+                        }
+                        natspec::natspec_for(dep_text, found.span.start)
+                    });
                 return Some(HoverData {
-                    contents: format!("{} - from {}", found.detail, file_name),
+                    contents: natspec::with_natspec_origin(&found.detail, docs, file_name),
                     span,
                 });
             }
@@ -796,15 +823,26 @@ impl Analyzer for SolidityAnalyzer {
                     });
                 }
             }
-            if let Some((info, _)) =
+            if let Some((info, dep_path)) =
                 members::resolve_member_cross_file(&file, &kind, &member.member, &deps)
             {
+                let texts = forgels_core::dep_texts(ctx, 16);
+                let docs =
+                    texts
+                        .iter()
+                        .find(|(path, _)| *path == dep_path)
+                        .and_then(|(_, dep_text)| {
+                            if !natspec::allows_kind(info.kind) {
+                                return None;
+                            }
+                            natspec::natspec_for(dep_text, info.span.start)
+                        });
                 return Some(HoverData {
-                    contents: info.detail,
+                    contents: natspec::insert_before_origin(&info.detail, docs),
                     span: member.member_span,
                 });
             }
-            if let Some((info, _)) = using::resolve_using_member(
+            if let Some((info, dep_path)) = using::resolve_using_member(
                 &file,
                 &scope,
                 ctx.offset,
@@ -812,8 +850,30 @@ impl Analyzer for SolidityAnalyzer {
                 &member.member,
                 &deps,
             ) {
+                let contents = match dep_path {
+                    Some(path) => {
+                        let texts = forgels_core::dep_texts(ctx, 16);
+                        let docs = texts.iter().find(|(known, _)| *known == path).and_then(
+                            |(_, dep_text)| {
+                                if !natspec::allows_kind(info.kind) {
+                                    return None;
+                                }
+                                natspec::natspec_for(dep_text, info.span.start)
+                            },
+                        );
+                        natspec::insert_before_origin(&info.detail, docs)
+                    }
+                    None => natspec::with_natspec(
+                        &info.detail,
+                        if natspec::allows_kind(info.kind) {
+                            natspec::natspec_for(ctx.text, info.span.start)
+                        } else {
+                            None
+                        },
+                    ),
+                };
                 return Some(HoverData {
-                    contents: info.detail,
+                    contents,
                     span: member.member_span,
                 });
             }
@@ -825,8 +885,20 @@ impl Analyzer for SolidityAnalyzer {
             };
             for item in completion::exports_of(&dep_text) {
                 if item.label == word {
+                    let dep_file = Self::parse_file(&dep_text);
+                    let scope = collect_symbols(&dep_file);
+                    let docs = scope
+                        .export_symbols()
+                        .into_iter()
+                        .find(|symbol| symbol.name == word)
+                        .and_then(|symbol| {
+                            if !natspec::allows_kind(symbol.kind) {
+                                return None;
+                            }
+                            natspec::natspec_for(&dep_text, symbol.span.start)
+                        });
                     return Some(HoverData {
-                        contents: format!("{} - from {}", item.detail, file_name),
+                        contents: natspec::with_natspec_origin(&item.detail, docs, file_name),
                         span,
                     });
                 }
@@ -870,7 +942,7 @@ impl Analyzer for SolidityAnalyzer {
         let file = Self::parse_file(ctx.text);
         if let Some(member) = members::member_context_at(ctx.text, ctx.offset) {
             let deps = Self::dep_files(ctx);
-            return Self::member_completion(&file, ctx.text, ctx.offset, &member, &deps);
+            return Self::member_completion(&file, ctx.offset, &member, &deps);
         }
         if let Some(type_ctx) = meta::type_context_at(ctx.text, ctx.offset) {
             let kind = members::TypeKind::Meta(type_ctx.inner.clone());

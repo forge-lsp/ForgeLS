@@ -2,6 +2,14 @@ use super::{collect_symbols, word_at};
 use crate::SolidityFile;
 use forgels_syntax::Span;
 
+/// Detail plus attached NatSpec when the kind allows it.
+fn with_docs(text: &str, detail: &str, kind: super::SymbolKind, decl_start: u32) -> String {
+    if !super::natspec::allows_kind(kind) {
+        return detail.to_string();
+    }
+    super::natspec::with_natspec(detail, super::natspec::natspec_for(text, decl_start))
+}
+
 /// Hover result: display text plus the declaration span.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Hover {
@@ -91,7 +99,7 @@ pub fn hover_at(file: &SolidityFile, text: &str, offset: u32) -> Option<Hover> {
             .find(|member| member.name == ctx.member)
         {
             return Some(Hover {
-                contents: found.detail,
+                contents: with_docs(text, &found.detail, found.kind, found.span.start),
                 span: found.span,
             });
         }
@@ -106,7 +114,7 @@ pub fn hover_at(file: &SolidityFile, text: &str, offset: u32) -> Option<Hover> {
                 &[],
             ) {
                 return Some(Hover {
-                    contents: found.detail,
+                    contents: with_docs(text, &found.detail, found.kind, found.span.start),
                     span: found.span,
                 });
             }
@@ -124,14 +132,14 @@ pub fn hover_at(file: &SolidityFile, text: &str, offset: u32) -> Option<Hover> {
     if let Some((name, span)) = super::emits::emit_name_at(text, offset) {
         let found = super::emits::resolve_local_emit(file, offset, &name)?;
         return Some(Hover {
-            contents: found.detail,
+            contents: with_docs(text, &found.detail, found.kind, found.span.start),
             span,
         });
     }
     if let Some((name, span)) = super::errors::revert_name_at(text, offset) {
         let found = super::errors::resolve_local_error(file, offset, &name)?;
         return Some(Hover {
-            contents: found.detail,
+            contents: with_docs(text, &found.detail, found.kind, found.span.start),
             span,
         });
     }
@@ -139,7 +147,7 @@ pub fn hover_at(file: &SolidityFile, text: &str, offset: u32) -> Option<Hover> {
     let scope = collect_symbols(file);
     if let Some(symbol) = scope.resolve(&word, offset) {
         return Some(Hover {
-            contents: symbol.detail.clone(),
+            contents: with_docs(text, &symbol.detail, symbol.kind, symbol.span.start),
             span: symbol.span,
         });
     }
