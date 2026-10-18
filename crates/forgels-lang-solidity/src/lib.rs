@@ -21,7 +21,7 @@ pub use ast::{
     NewStmt, Param, PragmaDirective, Returns, RevertStmt, SolidityFile, SolidityNode, StateVar,
     StructDef, TypeNode, UserTypeDef, UsingDirective, Visibility,
 };
-pub use lexer::{KEYWORDS, SolidityKind, SolidityLexer, keyword_kind, symbol_kind};
+pub use lexer::{KEYWORDS, SolidityKind, SolidityLexer, builtin_types, keyword_kind, symbol_kind};
 pub use parser::SolidityParser;
 
 pub const LANGUAGE_ID: &str = "solidity";

@@ -1,4 +1,4 @@
-use super::{SolidityKind, SolidityLexer, keyword_kind, symbol_kind};
+use super::{SolidityKind, SolidityLexer, builtin_types, keyword_kind, symbol_kind};
 use forgels_syntax::Lexer;
 
 #[test]
@@ -105,6 +105,22 @@ fn sized_types_cover_valid_ranges_only() {
         } else {
             assert_eq!(keyword_kind(word), None, "word {word}");
         }
+    }
+}
+
+#[test]
+fn builtin_types_cover_ninety_six_in_order() {
+    let all = builtin_types();
+    assert_eq!(all.len(), 96);
+    assert_eq!(all.first().expect("first").as_str(), "uint8");
+    assert_eq!(all[31].as_str(), "uint256");
+    assert_eq!(all[32].as_str(), "int8");
+    assert_eq!(all[63].as_str(), "int256");
+    assert_eq!(all[64].as_str(), "bytes1");
+    assert_eq!(all.last().expect("last").as_str(), "bytes32");
+    let mut seen = std::collections::HashSet::new();
+    for name in &all {
+        assert!(seen.insert(name.clone()), "duplicate: {name}");
     }
 }
 

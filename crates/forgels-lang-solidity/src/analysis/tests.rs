@@ -174,6 +174,73 @@ fn completion_suggests_keywords_by_prefix() {
 }
 
 #[test]
+fn completion_suggests_builtin_types_for_uin() {
+    let text = "contract C {\nfunction f() public {\nuin";
+    let at = text.len() as u32;
+    let labels = complete_labels(text, at);
+    for want in ["uint8", "uint128", "uint256"] {
+        assert!(labels.contains(&want.to_string()), "labels: {labels:?}");
+    }
+}
+
+#[test]
+fn completion_suggests_builtin_types_for_byte() {
+    let text = "contract C {\nfunction f() public {\nbyte";
+    let at = text.len() as u32;
+    let labels = complete_labels(text, at);
+    for want in ["bytes1", "bytes32"] {
+        assert!(labels.contains(&want.to_string()), "labels: {labels:?}");
+    }
+}
+
+#[test]
+fn completion_suggests_builtin_types_for_uint2() {
+    let text = "contract C {\nfunction f() public {\nuint2";
+    let at = text.len() as u32;
+    let labels = complete_labels(text, at);
+    assert!(
+        labels.contains(&"uint256".to_string()),
+        "labels: {labels:?}"
+    );
+}
+
+#[test]
+fn completion_builtin_type_kind_and_detail() {
+    let text = "contract C {\nfunction f() public {\nuin";
+    let at = text.len() as u32;
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, _) = SolidityParser.parse_with_errors(&tokens);
+    let hit = complete_at(&file, text, at)
+        .into_iter()
+        .find(|item| item.label == "uint8")
+        .expect("builtin hit");
+    assert_eq!(hit.detail, "builtin type");
+    assert_eq!(hit.kind, CompletionKind::BuiltinType);
+    assert_eq!(completion_item_kind(hit.kind).value(), 14);
+}
+
+#[test]
+fn completion_builtin_types_have_no_duplicates() {
+    let text = "contract C {\nuint256 uintVar;\nfunction f() public {\nuint";
+    let at = text.len() as u32;
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, _) = SolidityParser.parse_with_errors(&tokens);
+    let labels: Vec<String> = complete_at(&file, text, at)
+        .iter()
+        .map(|item| item.label.clone())
+        .collect();
+    assert!(labels.contains(&"uint8".to_string()), "labels: {labels:?}");
+    assert!(
+        labels.contains(&"uintVar".to_string()),
+        "labels: {labels:?}"
+    );
+    let mut seen = std::collections::HashSet::new();
+    for label in &labels {
+        assert!(seen.insert(label.clone()), "duplicate: {label}");
+    }
+}
+
+#[test]
 fn completion_hides_other_function_locals() {
     let text =
         "contract C {\nfunction f() public {\nuint hidden = 1;\n}\nfunction g() public {\n}\n}";

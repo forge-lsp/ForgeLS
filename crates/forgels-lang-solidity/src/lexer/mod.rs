@@ -6,5 +6,5 @@ mod scan;
 #[cfg(test)]
 mod tests;
 
-pub use kinds::{KEYWORDS, SolidityKind, keyword_kind, symbol_kind};
+pub use kinds::{KEYWORDS, SolidityKind, builtin_types, keyword_kind, symbol_kind};
 pub use scan::SolidityLexer;
