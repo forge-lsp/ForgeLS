@@ -163,6 +163,10 @@ Status: beta lexer, parser, and analysis implemented.
 - Arity: `transfer`, `send`, `call`, `delegatecall`, and `staticcall`
   take 1, same message as plain calls. `balance`, `code`, and `codehash`
   calls stay silent. Unknown names stay silent.
+- Context: `delegatecall` runs target code in caller storage with
+  caller `msg.sender` and `msg.value`. V1 checks arity only (1 arg);
+  sender, storage, and reentrancy checks are deferred, documented
+  here only.
 - Limits: payable not distinguished, no signature help, chained `a.b.c`
   resolves final only.
 
@@ -271,8 +275,8 @@ Status: beta lexer, parser, and analysis implemented.
     function, not a block member.
   - `tx` (2 fields): `gasprice` (`uint256`), `origin` (`address`).
   - `abi` (6 methods): `decode` (2 args), `encode` (variadic),
-    `encodePacked` (variadic), `encodeWithSelector` (variadic),
-    `encodeWithSignature` (variadic), `encodeCall` (2 args).
+    `encodePacked` (variadic), `encodeWithSelector` (min 1),
+    `encodeWithSignature` (min 1), `encodeCall` (2 args).
   - Details add ` - from solidity`, kinds reuse Field (5) and
     Function (3).
 - Completion: `members_of` returns the receiver table, cross file stays empty.
@@ -281,9 +285,26 @@ Status: beta lexer, parser, and analysis implemented.
 - Goto: returns `None` by design with a dep guard, so `sender` never
   jumps to coincidental same-name declarations.
 - Arity: `block.blobhash` takes 1, `abi.decode` and `abi.encodeCall`
-  take 2, same message as plain calls. Fields stay silent and variadic
-  `abi.encode*` stays silent by design. Unknown names stay silent.
+  take 2, same message as plain calls. `abi.encodeWithSelector` and
+  `abi.encodeWithSignature` need at least 1 arg each with a
+  `takes at least N` message. Fields stay silent, bare `abi.encode`
+  and `abi.encodePacked` stay silent. Unknown names stay silent.
 - Limits: no signature help, chained `a.b.c` resolves final only.
+
+## Builtin arity
+
+- Scope: `analysis::builtin` plus wiring in `mod::diagnostics_for`.
+  No new `SymbolKind`, no grammar change.
+- Table: fixed counts for plain globals only: `gasleft` (0),
+  `keccak256` (1), `sha256` (1), `ripemd160` (1), `ecrecover` (4),
+  `addmod` (3), `mulmod` (3), `blockhash` (1), `selfdestruct` (1),
+  `assert` (1). Same message shape as plain calls.
+- Rules: user definitions win via the scope check first. Unknown
+  names stay silent. `require` and `revert` accept several shapes so
+  they stay silent. Forge asserts, `vm`, `console`, `abi`, and
+  `type()` members are owned by their own checks.
+- Limits: contract bodies only, no free function bodies, no
+  signature help.
 
 ## Unknown identifiers
 
@@ -439,8 +460,25 @@ Status: beta lexer, parser, and analysis implemented.
   targets, and gas-only options stay silent.
 - Lookup: plain calls use own plus linearized bases, member calls use
   receiver contract plus same file and dep bases. Derived wins.
+- Options: unknown keys and `salt` misuse are owned by call options
+  below. This check only reads `value` against payable targets.
 - Limits: no `msg.value` checks, no payable address split, no fallback
   or receive rules.
+
+## Call options
+
+- Scope: `analysis::options` plus wiring in `mod::diagnostics_for`.
+  Reads `{...}` spans from `CallStmt`, `MemberExpr`, and `NewStmt`.
+  No new `SymbolKind`, no grammar change.
+- Rule: unknown keys error with `unknown call option 'x'` at the key
+  span. Allowed keys are `value` and `gas` for calls, plus `salt` for
+  `new` (create2). `salt` on plain or member calls errors with
+  `call option 'salt' only allowed for 'new'`.
+- Keys: first ident before a colon per top-level comma segment, so
+  nested calls in values never split keys. Segments without that
+  shape stay silent.
+- Limits: `payable` owns the `value` check separately, never doubled
+  here. No duplicate key checks, no value type checks.
 
 ## Type mismatch
 

@@ -4224,6 +4224,134 @@ fn payable_builtin_with_value_stays_silent() {
 }
 
 #[test]
+fn builtin_arity_wrong_count_reports_exact_message() {
+    for (name, arity) in [
+        ("gasleft", 0),
+        ("keccak256", 1),
+        ("sha256", 1),
+        ("ripemd160", 1),
+        ("ecrecover", 4),
+        ("addmod", 3),
+        ("mulmod", 3),
+        ("blockhash", 1),
+        ("selfdestruct", 1),
+        ("assert", 1),
+    ] {
+        let args = (0..arity + 1).map(|_| "1").collect::<Vec<_>>().join(", ");
+        let text = format!("contract C {{\nfunction f() public {{\n{name}({args});\n}}\n}}");
+        let found = diagnostics_of(&text);
+        assert_eq!(found.len(), 1, "{name}: {found:?}");
+        assert_eq!(
+            found[0].message,
+            format!(
+                "this function '{name}' takes {arity} arguments but {} supplied",
+                arity + 1
+            )
+        );
+        let covered = &text[found[0].span.start as usize..found[0].span.end as usize];
+        assert!(
+            covered.starts_with(name) && covered.ends_with(')'),
+            "span: {covered}"
+        );
+    }
+}
+
+#[test]
+fn builtin_arity_correct_count_stays_silent() {
+    for (name, arity) in [
+        ("gasleft", 0),
+        ("keccak256", 1),
+        ("sha256", 1),
+        ("ripemd160", 1),
+        ("ecrecover", 4),
+        ("addmod", 3),
+        ("mulmod", 3),
+        ("blockhash", 1),
+        ("selfdestruct", 1),
+    ] {
+        let args = (0..arity).map(|_| "1").collect::<Vec<_>>().join(", ");
+        let text = format!("contract C {{\nfunction f() public {{\n{name}({args});\n}}\n}}");
+        assert!(diagnostics_of(&text).is_empty(), "{name}: ok");
+    }
+    let text = "contract C {\nfunction f() public {\nassert(true);\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn builtin_arity_user_definition_wins() {
+    let text = "contract C {\nfunction gasleft(uint a) public { a; }\nfunction f() public {\ngasleft(1);\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn builtin_arity_variadic_stays_silent() {
+    let text = "contract C {\nfunction f(bool ok) public {\nrequire(ok);\nrequire(ok, \"no\");\nrevert();\nrevert(\"no\");\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn options_unknown_key_errors() {
+    let text = "contract C {\nfunction f() public {}\nfunction g() public {\nf{foo: 1}();\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(found[0].message, "unknown call option 'foo'");
+    let covered = &text[found[0].span.start as usize..found[0].span.end as usize];
+    assert_eq!(covered, "foo");
+}
+
+#[test]
+fn options_unknown_key_errors_for_member_and_new() {
+    let member = "contract H {\nfunction f() public {}\n}\ncontract C {\nfunction g() public {\nH h;\nh.f{foo: 1}();\n}\n}";
+    let found = diagnostics_of(member);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(found[0].message, "unknown call option 'foo'");
+    let deploy =
+        "contract C {\nconstructor(uint a) { a; }\nfunction f() public {\nnew C{foo: 1}(1);\n}\n}";
+    let deploy_found = diagnostics_of(deploy);
+    assert_eq!(deploy_found.len(), 1, "diags: {deploy_found:?}");
+    assert_eq!(deploy_found[0].message, "unknown call option 'foo'");
+}
+
+#[test]
+fn options_salt_only_allowed_for_new() {
+    let text = "contract C {\nfunction f() public {}\nfunction g() public {\nf{salt: 1}();\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "call option 'salt' only allowed for 'new'"
+    );
+    let deploy =
+        "contract C {\nconstructor(uint a) { a; }\nfunction f() public {\nnew C{salt: 1}(1);\n}\n}";
+    assert!(diagnostics_of(deploy).is_empty());
+}
+
+#[test]
+fn options_known_keys_and_nested_values_stay_silent() {
+    let text = "contract C {\nfunction f() payable {}\nfunction h(uint a, uint b) public { a; b; }\nfunction g(uint x) public {\nf{value: 1}();\nf{gas: 5000}();\nf{value: x, gas: 5000}();\nf{value: h(1, 2)}();\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn abi_encode_with_selector_needs_at_least_one() {
+    for name in ["encodeWithSelector", "encodeWithSignature"] {
+        let text = format!("contract C {{\nfunction f() public {{\nabi.{name}();\n}}\n}}");
+        let found = diagnostics_of(&text);
+        assert_eq!(found.len(), 1, "{name}: {found:?}");
+        assert_eq!(
+            found[0].message,
+            format!("this function '{name}' takes at least 1 arguments but 0 supplied")
+        );
+        let one = format!("contract C {{\nfunction f() public {{\nabi.{name}(1);\n}}\n}}");
+        assert!(diagnostics_of(&one).is_empty(), "{name}: one");
+        let two = format!("contract C {{\nfunction f() public {{\nabi.{name}(1, 2);\n}}\n}}");
+        assert!(diagnostics_of(&two).is_empty(), "{name}: two");
+    }
+    let encode = "contract C {\nfunction f() public {\nabi.encode();\nabi.encodePacked();\n}\n}";
+    assert!(diagnostics_of(encode).is_empty());
+}
+
+#[test]
 fn type_mismatch_uint_string_errors() {
     let text = "contract C {\nuint x = \"hi\";\n}";
     let found = diagnostics_of(text);

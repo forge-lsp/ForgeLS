@@ -207,10 +207,25 @@ pub(crate) fn global_member(receiver: &str, name: &str) -> Option<MemberInfo> {
 ///
 /// `block.blobhash` takes 1, `abi.decode` and `abi.encodeCall` take 2.
 /// Fields stay silent and variadic `abi.encode*` stays silent by design.
+/// `encodeWithSelector` and `encodeWithSignature` need minimum arity
+/// instead, see `global_min_arity`.
 pub(crate) fn global_expected_arity(receiver: &str, name: &str) -> Option<usize> {
     match (receiver, name) {
         ("block", "blobhash") => Some(1),
         ("abi", "decode") | ("abi", "encodeCall") => Some(2),
+        _ => None,
+    }
+}
+
+/// Minimum call arity for variadic global methods.
+///
+/// `abi.encodeWithSelector` and `abi.encodeWithSignature` take a
+/// leading selector or signature plus a variadic tail, so one or more
+/// args must be present. Bare `abi.encode` and `abi.encodePacked`
+/// accept an empty tail and stay silent.
+pub(crate) fn global_min_arity(receiver: &str, name: &str) -> Option<usize> {
+    match (receiver, name) {
+        ("abi", "encodeWithSelector") | ("abi", "encodeWithSignature") => Some(1),
         _ => None,
     }
 }

@@ -12,6 +12,7 @@ use crate::{
 
 pub(crate) mod address;
 pub(crate) mod array;
+mod builtin;
 pub(crate) mod bytes;
 mod call_hierarchy;
 mod calls;
@@ -34,6 +35,7 @@ pub(crate) mod members;
 pub(crate) mod meta;
 mod mutability;
 mod natspec;
+mod options;
 #[path = "override.rs"]
 mod override_diagnostics;
 mod payable;
@@ -720,6 +722,8 @@ impl SolidityAnalyzer {
         out.extend(calls::arity_diagnostics(file, scope));
         out.extend(calls::member_arity_diagnostics(file, scope, deps));
         out.extend(calls::deploy_arity_diagnostics(file, deps));
+        out.extend(builtin::builtin_arity_diagnostics(file, scope));
+        out.extend(options::options_diagnostics(file, text));
         out.extend(forge::assert_arity_diagnostics(file, scope));
         out.extend(emits::emit_arity_diagnostics(file));
         out.extend(errors::revert_arity_diagnostics(file, deps));
