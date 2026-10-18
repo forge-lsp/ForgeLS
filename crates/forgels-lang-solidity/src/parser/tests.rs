@@ -1343,6 +1343,20 @@ fn function_type_broken_keeps_valid_siblings() {
 }
 
 #[test]
+fn unchecked_call_forms_only_bare_is_direct_member() {
+    let text = "contract C {\nfunction f() public {\naddr.call(\"\");\nbool ok = addr.call(\"\");\n(ok, data) = addr.call(\"\");\nsink(addr.call(\"\"));\n}\n}";
+    let file = parse_ok(text);
+    let body = file.contracts()[0].functions()[0].body().expect("body");
+    assert_eq!(body.members().len(), 1);
+    assert_eq!(body.members()[0].final_member().as_deref(), Some("call"));
+    // Assigned, destructured, and arg forms hold no Member node, so the
+    // unchecked-call check stays silent for them by construction.
+    for child in body.child_blocks() {
+        assert!(child.all_members().is_empty());
+    }
+}
+
+#[test]
 fn function_definition_still_parses_after_function_types() {
     let text = "contract C {\nfunction (uint) external cb;\nfunction add(uint a) public returns (uint) {\nreturn a;\n}\n}";
     let file = parse_ok(text);

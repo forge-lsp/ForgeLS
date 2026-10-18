@@ -73,6 +73,7 @@ impl LintPlugin for StylePlugin {
             RuleId::NO_L_O_I,
             RuleId::NO_CONSOLE,
             RuleId::NO_SHADOW_BUILTIN,
+            RuleId::TEST_NAMING,
         ]
         .iter()
         .map(|id| RuleMeta {
@@ -85,6 +86,37 @@ impl LintPlugin for StylePlugin {
 
 pub fn builtin_style_plugin() -> Vec<RuleMeta> {
     StylePlugin::rules()
+}
+
+// Safety batch: best-effort single-function patterns, warn by default.
+// False negatives beat false positives; every limit is documented
+// at the check site in the language crate.
+pub struct SafetyPlugin;
+
+impl LintPlugin for SafetyPlugin {
+    fn name() -> &'static str {
+        "safety"
+    }
+
+    fn rules() -> Vec<RuleMeta> {
+        [
+            RuleId::TX_ORIGIN,
+            RuleId::UNCHECKED_CALL,
+            RuleId::REENTRANCY_PATTERN,
+            RuleId::ENCODE_PACKED_DYNAMIC,
+            RuleId::PAYABLE_FALLBACK,
+        ]
+        .iter()
+        .map(|id| RuleMeta {
+            id: *id,
+            default: id.default_severity(),
+        })
+        .collect()
+    }
+}
+
+pub fn builtin_safety_plugin() -> Vec<RuleMeta> {
+    SafetyPlugin::rules()
 }
 
 // Rule lookup keyed by full `group/name` string.
@@ -102,6 +134,7 @@ impl Registry {
         let mut out = Self::new();
         out.register::<CorrectnessPlugin>();
         out.register::<StylePlugin>();
+        out.register::<SafetyPlugin>();
         out
     }
 
@@ -140,7 +173,16 @@ mod tests {
     #[test]
     fn style_plugin_lists_warn_defaults() {
         let rules = builtin_style_plugin();
-        assert_eq!(rules.len(), 18);
+        assert_eq!(rules.len(), 19);
+        for meta in &rules {
+            assert_eq!(meta.default, Severity::Warning);
+        }
+    }
+
+    #[test]
+    fn safety_plugin_lists_warn_defaults() {
+        let rules = builtin_safety_plugin();
+        assert_eq!(rules.len(), 5);
         for meta in &rules {
             assert_eq!(meta.default, Severity::Warning);
         }
@@ -160,7 +202,7 @@ mod tests {
     #[test]
     fn register_covers_every_rule_id() {
         let registry = Registry::with_builtins();
-        assert_eq!(registry.len(), 40);
+        assert_eq!(registry.len(), 46);
         for id in RuleId::all() {
             assert!(registry.get(id.as_str()).is_some());
         }

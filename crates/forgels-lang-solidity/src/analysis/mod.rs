@@ -44,6 +44,7 @@ mod override_diagnostics;
 mod payable;
 mod references;
 mod rename;
+mod safety;
 mod selection;
 mod semantic;
 mod shadow;
@@ -748,6 +749,8 @@ impl SolidityAnalyzer {
             file, text, scope, deps,
         ));
         out.extend(style::style_diagnostics(file, text));
+        out.extend(safety::safety_diagnostics(file, text, scope));
+        out.extend(safety::test_naming_diagnostics(file));
         out.sort_by(|left, right| {
             left.span
                 .start
