@@ -219,3 +219,119 @@ fn unknown_rule_exits_two() {
     assert!(String::from_utf8_lossy(&out.stderr).contains("unknown lint rule"));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn init_writes_exact_grouped_json() {
+    let dir = fresh_dir("init");
+    let out = run_in(&dir, &["init"]);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = std::fs::read_to_string(dir.join("fls.json")).expect("fls.json written");
+    let value: serde_json::Value = serde_json::from_str(&text).expect("valid json");
+    let lint = value.pointer("/lint").expect("lint group");
+    assert_eq!(
+        lint.pointer("/includes").expect("includes"),
+        &serde_json::json!(["**/*.sol"])
+    );
+    assert_eq!(
+        lint.pointer("/excludes").expect("excludes"),
+        &serde_json::json!([])
+    );
+    let rules = lint
+        .pointer("/rules")
+        .expect("rules")
+        .as_object()
+        .expect("object");
+    for rule in forgels_lint::RuleId::all() {
+        assert_eq!(
+            rules.get(rule.as_str()),
+            Some(&serde_json::Value::String("err".to_string())),
+            "rule {} explicit err",
+            rule.as_str()
+        );
+    }
+    assert_eq!(rules.len(), forgels_lint::RuleId::all().len());
+    let format = value.pointer("/format").expect("format group");
+    assert_eq!(
+        format.pointer("/includes").expect("includes"),
+        &serde_json::json!([])
+    );
+    assert_eq!(
+        format.pointer("/excludes").expect("excludes"),
+        &serde_json::json!([])
+    );
+    assert_eq!(
+        format.pointer("/rules").expect("rules"),
+        &serde_json::json!({})
+    );
+    let expected = serde_json::to_string_pretty(&value).expect("pretty");
+    assert_eq!(text, expected, "pretty output is exactly to_string_pretty");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn init_without_force_keeps_existing() {
+    let dir = fresh_dir("init-exists");
+    write_file(&dir.join("fls.json"), "{\"lint\":{}}\n");
+    let out = run_in(&dir, &["init"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("already exists"),
+        "stderr warns"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.join("fls.json")).expect("read"),
+        "{\"lint\":{}}\n"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn init_force_overwrites_existing() {
+    let dir = fresh_dir("init-force");
+    write_file(&dir.join("fls.json"), "{\"lint\":{}}\n");
+    let out = run_in(&dir, &["init", "--force"]);
+    assert_eq!(out.status.code(), Some(0));
+    let text = std::fs::read_to_string(dir.join("fls.json")).expect("read");
+    let value: serde_json::Value = serde_json::from_str(&text).expect("valid json");
+    assert!(
+        value.pointer("/lint/rules").is_some(),
+        "overwritten with template"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn check_respects_lint_includes_and_excludes() {
+    let dir = fresh_dir("filter");
+    write_file(&dir.join("src/a.sol"), OVERRIDE_SRC);
+    write_file(&dir.join("lib/b.sol"), OVERRIDE_SRC);
+    write_file(
+        &dir.join("fls.json"),
+        "{\"lint\":{\"includes\":[\"**/*.sol\"],\"excludes\":[\"lib/**\"]},\"format\":{}}",
+    );
+    let out = run_in(&dir, &["check", "--json"]);
+    assert_eq!(out.status.code(), Some(1));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let value: serde_json::Value = serde_json::from_str(&stdout).expect("valid json");
+    let files = value
+        .pointer("/files")
+        .expect("files")
+        .as_array()
+        .expect("array");
+    assert_eq!(files.len(), 1, "only included file reported: {stdout}");
+    assert!(
+        files[0]
+            .pointer("/path")
+            .expect("path")
+            .as_str()
+            .expect("str")
+            .ends_with("src/a.sol"),
+        "src file kept: {stdout}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -19,6 +19,8 @@ pub enum Command {
     Lsp(LspArgs),
     /// Lint Solidity files.
     Check(CheckArgs),
+    /// Scaffold ./fls.json with default lint levels.
+    Init(InitArgs),
 }
 
 #[derive(Debug, Args)]
@@ -39,6 +41,13 @@ pub struct CheckArgs {
     /// Emit JSON report.
     #[arg(long)]
     pub json: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct InitArgs {
+    /// Overwrite an existing fls.json.
+    #[arg(long)]
+    pub force: bool,
 }
 
 pub fn parse() -> Cli {
