@@ -117,6 +117,13 @@ pub fn hover_at(file: &SolidityFile, text: &str, offset: u32) -> Option<Hover> {
             span,
         });
     }
+    if let Some((name, span)) = super::errors::revert_name_at(text, offset) {
+        let found = super::errors::resolve_local_error(file, offset, &name)?;
+        return Some(Hover {
+            contents: found.detail,
+            span,
+        });
+    }
     let (word, span) = word_at(text, offset)?;
     let scope = collect_symbols(file);
     if let Some(symbol) = scope.resolve(&word, offset) {

@@ -1,6 +1,6 @@
 use super::emits::EmitStmt;
 use super::members::{LocalVar, MemberExpr};
-use super::{CallStmt, SolidityNode, cast_node};
+use super::{CallStmt, NewStmt, RevertStmt, SolidityNode, cast_node};
 use forgels_syntax::{AstNode, SyntaxElement, SyntaxNode};
 
 /// Type reference: elementary, mapping, sized, array, or user type.
@@ -65,11 +65,12 @@ fn join_type_text(parts: &[&str]) -> String {
 }
 
 /// Function or lone block body. Children hold LocalVar, Call, Emit,
-/// Member, and nested Block nodes; other statements are skipped but stay
-/// inside the span. Nested blocks come from bare `{ ... }` groups and
-/// from `if`, `for`, `while`, `unchecked`, and `try` bodies, so scopes
-/// and diagnostics recurse with `all_*` while `locals`, `calls`,
-/// `members`, and `emits` stay direct children only.
+/// Revert, New, Member, and nested Block nodes; other statements are
+/// skipped but stay inside the span. Nested blocks come from bare
+/// `{ ... }` groups and from `if`, `for`, `while`, `unchecked`, and
+/// `try` bodies, so scopes and diagnostics recurse with `all_*` while
+/// `locals`, `calls`, `members`, `emits`, `reverts`, and `news` stay
+/// direct children only.
 #[derive(Debug, Clone)]
 pub struct BlockNode {
     syntax: SyntaxNode,
@@ -139,6 +140,24 @@ impl BlockNode {
         out
     }
 
+    /// All revert statements in this block plus nested blocks, depth first.
+    pub fn all_reverts(&self) -> Vec<RevertStmt> {
+        let mut out = self.reverts();
+        for child in self.child_blocks() {
+            out.extend(child.all_reverts());
+        }
+        out
+    }
+
+    /// All deploy statements in this block plus nested blocks, depth first.
+    pub fn all_news(&self) -> Vec<NewStmt> {
+        let mut out = self.news();
+        for child in self.child_blocks() {
+            out.extend(child.all_news());
+        }
+        out
+    }
+
     pub fn calls(&self) -> Vec<CallStmt> {
         self.syntax
             .children
@@ -172,6 +191,32 @@ impl BlockNode {
             .filter_map(|element| match element {
                 SyntaxElement::Node(node) if node.kind == SolidityNode::Emit.as_u16() => {
                     EmitStmt::cast(node.clone())
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    pub fn reverts(&self) -> Vec<RevertStmt> {
+        self.syntax
+            .children
+            .iter()
+            .filter_map(|element| match element {
+                SyntaxElement::Node(node) if node.kind == SolidityNode::Revert.as_u16() => {
+                    RevertStmt::cast(node.clone())
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    pub fn news(&self) -> Vec<NewStmt> {
+        self.syntax
+            .children
+            .iter()
+            .filter_map(|element| match element {
+                SyntaxElement::Node(node) if node.kind == SolidityNode::New.as_u16() => {
+                    NewStmt::cast(node.clone())
                 }
                 _ => None,
             })

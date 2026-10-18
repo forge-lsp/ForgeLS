@@ -60,6 +60,10 @@ pub fn goto_definition(file: &SolidityFile, text: &str, offset: u32) -> Option<S
         let found = super::emits::resolve_local_emit(file, offset, &name)?;
         return Some(found.span);
     }
+    if let Some((name, _)) = super::errors::revert_name_at(text, offset) {
+        let found = super::errors::resolve_local_error(file, offset, &name)?;
+        return Some(found.span);
+    }
     let (word, _) = word_at(text, offset)?;
     let scope = collect_symbols(file);
     scope.resolve(&word, offset).map(|symbol| symbol.span)

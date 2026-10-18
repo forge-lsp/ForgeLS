@@ -1009,8 +1009,8 @@ fn member_dep_inherited_arity_uses_base() {
 }
 
 #[test]
-fn super_and_new_calls_stay_silent() {
-    let text = "contract C {\nfunction greet(uint a, uint b) public {}\nfunction f() public {\nsuper.greet(1);\nnew C(1, 2, 3);\nsuper(1);\nconstructor(1);\n}\n}";
+fn super_and_constructor_calls_stay_silent() {
+    let text = "contract C {\nfunction greet(uint a, uint b) public {}\nfunction f() public {\nsuper.greet(1);\nsuper(1);\nconstructor(1);\n}\n}";
     assert!(diagnostics_of(text).is_empty());
 }
 
@@ -4470,4 +4470,244 @@ fn nested_emit_arity_reports() {
         found[0].message,
         "this event 'Transfer' takes 2 arguments but 1 supplied"
     );
+}
+
+#[test]
+fn error_too_few_reports_exact_message() {
+    let text = "contract C {\nerror Insufficient(uint a, uint b);\nfunction f() public {\nrevert Insufficient(1);\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "this error 'Insufficient' takes 2 arguments but 1 supplied"
+    );
+    let covered = &text[found[0].span.start as usize..found[0].span.end as usize];
+    assert!(
+        covered.starts_with("revert") && covered.ends_with(')'),
+        "span: {covered}"
+    );
+}
+
+#[test]
+fn error_too_many_reports_exact_message() {
+    let text = "contract C {\nerror Insufficient(uint a);\nfunction f() public {\nrevert Insufficient(1, 2);\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "this error 'Insufficient' takes 1 arguments but 2 supplied"
+    );
+}
+
+#[test]
+fn error_correct_count_stays_silent() {
+    let text = "contract C {\nerror Insufficient(uint a, uint b);\nfunction f() public {\nrevert Insufficient(1, 2);\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn error_inherited_arity_uses_base() {
+    let text = "contract B {\nerror Insufficient(uint a, uint b);\n}\ncontract D is B {\nfunction f() public {\nrevert Insufficient(1);\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "this error 'Insufficient' takes 2 arguments but 1 supplied"
+    );
+}
+
+#[test]
+fn error_unknown_reports_name_span_once() {
+    let text = "contract C {\nfunction f() public {\nrevert Missing(1);\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(found[0].message, "unresolved error 'Missing'");
+    let at = text.find("Missing(1)").expect("use") as u32;
+    assert_eq!(found[0].span.start, at);
+    assert_eq!(found[0].span.end, at + 7);
+}
+
+#[test]
+fn error_bare_revert_stays_silent() {
+    let bare = "contract C {\nfunction f() public {\nrevert;\n}\n}";
+    assert!(diagnostics_of(bare).is_empty());
+    let reason = "contract C {\nfunction f() public {\nrevert(\"msg\");\n}\n}";
+    assert!(diagnostics_of(reason).is_empty());
+}
+
+#[test]
+fn error_dep_stays_silent() {
+    let b = "contract B {\nerror Insufficient(uint a);\n}";
+    let a =
+        "import \"./B.sol\";\ncontract A {\nfunction f() public {\nrevert Insufficient(1);\n}\n}";
+    let mut workspace = open_workspace(&[("/A.sol", a), ("/B.sol", b)]);
+    workspace.set_file_deps(PathBuf::from("/A.sol"), vec![PathBuf::from("/B.sol")]);
+    assert!(diagnostics_multi(&workspace, "/A.sol", a).is_empty());
+}
+
+#[test]
+fn error_untracked_dep_still_errors() {
+    let a = "import \"./Missing.sol\";\ncontract A {\nfunction f() public {\nrevert Insufficient(1);\n}\n}";
+    let mut workspace = open_workspace(&[("/A.sol", a)]);
+    workspace.set_file_deps(PathBuf::from("/A.sol"), vec![PathBuf::from("/Missing.sol")]);
+    let found = diagnostics_multi(&workspace, "/A.sol", a);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(found[0].message, "unresolved error 'Insufficient'");
+}
+
+#[test]
+fn error_hover_shows_detail() {
+    let text = "contract C {\nerror Insufficient(uint a);\nfunction f() public {\nrevert Insufficient(1);\n}\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let at = text.rfind("Insufficient(1)").expect("use") as u32;
+    let hover = hover_at(&file, text, at).expect("hover");
+    assert_eq!(hover.contents, "error Insufficient");
+}
+
+#[test]
+fn error_goto_jumps_to_declaration() {
+    let text = "contract C {\nerror Insufficient(uint a);\nfunction f() public {\nrevert Insufficient(1);\n}\n}";
+    let at_use = text.rfind("Insufficient(1)").expect("use") as u32;
+    let at_decl = text.find("Insufficient").expect("decl") as u32;
+    let target = goto_target(text, at_use);
+    assert!(target.start <= at_decl && at_decl < target.end);
+}
+
+#[test]
+fn struct_too_few_reports_exact_message() {
+    let text = "contract C {\nstruct Person {\nuint age;\nstring name;\n}\nfunction f() public {\nPerson(1);\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "this struct 'Person' takes 2 arguments but 1 supplied"
+    );
+    let covered = &text[found[0].span.start as usize..found[0].span.end as usize];
+    assert!(
+        covered.starts_with("Person") && covered.ends_with(')'),
+        "span: {covered}"
+    );
+}
+
+#[test]
+fn struct_too_many_reports_exact_message() {
+    let text =
+        "struct Person {\nuint age;\n}\ncontract C {\nfunction f() public {\nPerson(1, 2);\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "this struct 'Person' takes 1 arguments but 2 supplied"
+    );
+}
+
+#[test]
+fn struct_correct_count_stays_silent() {
+    let text =
+        "contract C {\nstruct Person {\nuint age;\n}\nfunction f() public {\nPerson(1);\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn struct_inherited_first_hit_wins() {
+    let text = "contract B {\nstruct Person {\nuint age;\nuint height;\n}\n}\ncontract D is B {\nfunction f() public {\nPerson(1);\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "this struct 'Person' takes 2 arguments but 1 supplied"
+    );
+}
+
+#[test]
+fn struct_unknown_callee_reports_identifier_once() {
+    let text = "contract C {\nfunction f() public {\nMissing(1, 2);\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(found[0].message, "unresolved identifier 'Missing'");
+}
+
+#[test]
+fn deploy_implicit_ctor_too_many_reports() {
+    let text = "contract C {\nfunction f() public {\nnew C(1);\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "this constructor for 'C' takes 0 arguments but 1 supplied"
+    );
+    let covered = &text[found[0].span.start as usize..found[0].span.end as usize];
+    assert!(
+        covered.starts_with("new") && covered.ends_with(')'),
+        "span: {covered}"
+    );
+}
+
+#[test]
+fn deploy_implicit_ctor_empty_stays_silent() {
+    let text = "contract C {\nfunction f() public {\nnew C();\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn deploy_explicit_ctor_wrong_count_reports() {
+    let text =
+        "contract C {\nconstructor(uint a, uint b) {}\nfunction f() public {\nnew C(1);\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "this constructor for 'C' takes 2 arguments but 1 supplied"
+    );
+}
+
+#[test]
+fn deploy_explicit_ctor_correct_stays_silent() {
+    let text = "contract C {\nconstructor(uint a) {}\nfunction f() public {\nnew C(1);\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn deploy_across_file_uses_target_ctor() {
+    let dep = "contract Vault {\nconstructor(uint a, uint b) {}\n}";
+    let cur = "import \"./V.sol\";\ncontract C {\nfunction f() public {\nnew Vault(1);\n}\n}";
+    let mut workspace = open_workspace(&[("/V.sol", dep), ("/C.sol", cur)]);
+    workspace.set_file_deps(PathBuf::from("/C.sol"), vec![PathBuf::from("/V.sol")]);
+    let found = diagnostics_multi(&workspace, "/C.sol", cur);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "this constructor for 'Vault' takes 2 arguments but 1 supplied"
+    );
+}
+
+#[test]
+fn deploy_across_implicit_ctor_reports() {
+    let dep = "contract Vault {\n}";
+    let cur = "import \"./V.sol\";\ncontract C {\nfunction f() public {\nnew Vault(1);\n}\n}";
+    let mut workspace = open_workspace(&[("/V.sol", dep), ("/C.sol", cur)]);
+    workspace.set_file_deps(PathBuf::from("/C.sol"), vec![PathBuf::from("/V.sol")]);
+    let found = diagnostics_multi(&workspace, "/C.sol", cur);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "this constructor for 'Vault' takes 0 arguments but 1 supplied"
+    );
+}
+
+#[test]
+fn deploy_unknown_target_stays_silent_without_double() {
+    let text = "contract C {\nfunction f() public {\nnew Missing(1);\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn deploy_option_and_named_args_stay_silent() {
+    let option =
+        "contract C {\nconstructor(uint a) {}\nfunction f() public {\nnew C{value: 1}(1);\n}\n}";
+    assert!(diagnostics_of(option).is_empty());
+    let named = "contract C {\nconstructor(uint a) {}\nfunction f() public {\nnew C({a: 1});\n}\n}";
+    assert!(diagnostics_of(named).is_empty());
 }
