@@ -16,16 +16,16 @@ ForgeLS is a Language Server Protocol server for smart contract languages. It ru
 Requires Rust stable with cargo.
 
 ```sh
-cargo install --path crates/forgels
+cargo install --path crates/fls
 ```
 
 Or run from source:
 
 ```sh
-cargo run -p forgels
+cargo run -p fls -- lsp
 ```
 
-The server speaks JSON-RPC over stdio. Point any generic LSP client at the `forgels` binary with language id `solidity` for `.sol` files.
+The server speaks JSON-RPC over stdio. Point any generic LSP client at the `fls lsp` binary with language id `solidity` for `.sol` files.
 
 ## Configuration
 
@@ -36,12 +36,13 @@ publish_delay_ms = 200
 log_level = "warn"
 ```
 
-Flags: `--log-level <error|warn|info|debug|trace>`. Flags win over the file. Missing or broken files fall back to defaults with a stderr warning.
+Flags: `fls lsp --log-level <error|warn|info|debug|trace>` and `fls check [--write] [--json] [PATH...]`. Flags win over the file. Missing or broken files fall back to defaults with a stderr warning.
 
 ## Documentation
 
 - [Docs index](docs/readme.md): map of all official docs.
 - [Architecture](docs/architecture.md): crate layout and dependency rules.
+- [fls](docs/fls.md): entrypoint usage for `lsp` and `check`.
 - [Syntax toolkit](docs/syntax-toolkit.md): shared AST, lexer, and parser base.
 - [Solidity support](docs/lang-solidity.md): token and grammar status.
 - [Noir support](docs/lang-noir.md): token and grammar status.

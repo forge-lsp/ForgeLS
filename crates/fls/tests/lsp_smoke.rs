@@ -22,6 +22,17 @@ fn lsp_help_exits_zero() {
 }
 
 #[test]
+fn version_exits_zero_and_names_fls() {
+    let out = Command::new(binary())
+        .arg("--version")
+        .output()
+        .expect("run fls --version");
+    assert_eq!(out.status.code(), Some(0));
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("fls"), "version names fls: {text}");
+}
+
+#[test]
 fn lsp_handshake_answers_initialize_and_exits_zero() {
     let mut child = Command::new(binary())
         .arg("lsp")

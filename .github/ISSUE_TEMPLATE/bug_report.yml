@@ -11,7 +11,7 @@ body:
     id: version
     attributes:
       label: ForgeLS version
-      description: Output of `forgels --version`, or the release tag.
+      description: Output of `fls --version`, or the release tag.
       placeholder: v0.1.0
     validations:
       required: true

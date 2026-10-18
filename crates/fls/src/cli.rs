@@ -5,6 +5,7 @@ use clap::{Args, Parser, Subcommand};
 #[derive(Debug, Parser)]
 #[command(
     name = "fls",
+    version,
     about = "ForgeLS entrypoint: lsp server plus check linter"
 )]
 pub struct Cli {

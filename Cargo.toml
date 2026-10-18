@@ -1,7 +1,6 @@
 [workspace]
 members = [
   "crates/fls",
-  "crates/forgels",
   "crates/forgels-core",
   "crates/forgels-protocol",
   "crates/forgels-syntax",
