@@ -851,6 +851,40 @@ Status: beta lexer, parser, and analysis implemented.
   itself is skipped.
 - Noir: trait defaults return `None`, no noir grammar change.
 
+## Assembly (Yul)
+
+- Scope: `analysis::yul` plus thin wiring in `unknown`, `completion`,
+  `hover`, `goto`, `references`, and `parser::skip_assembly`. No new
+  `SymbolKind`, no grammar change.
+- Shape: flat token scan inside `assembly_ranges`. `let x, y` collects
+  each name as `Let`, `function f(params) -> rets` collects the name as
+  `Function` plus each param and return name as `Param`. Assignment uses
+  (`x := ...`) never count as decls.
+- Builtins: fixed opcode subset (`add`, `sstore`, `keccak256`, and rest)
+  with `function <name> - from yul` detail. `is_yul_builtin` gates
+  completion, hover, and goto. Arity stays deferred, so calls never lint.
+- Order: `find_yul_decl` keeps only decls with `start <= offset`, latest
+  wins. Forward uses never resolve to later decls.
+- Parse: `skip_assembly` takes `errors` and reports `unclosed assembly`
+  when `{` never closes. Balanced bodies stay silent, surrounding locals
+  keep parsing.
+- Unknown: assembly idents resolve Yul decl, then Yul builtin, then outer
+  scope and dep exports. Remaining idents stay silent: unknown opcodes
+  are deferred.
+- Completion: assembly positions suggest flat Yul decls plus Yul builtins
+  plus outer scope, filtered by prefix. Yul decls win over outer names.
+- Hover: Yul decl shows `let x - from yul` with the decl span, builtin
+  shows `function add - from yul` with the cursor span, outer names reuse
+  scope hover with docs.
+- Goto: Yul decl jumps to its decl span. Yul builtin returns `None` by
+  design with a dep guard, so opcodes never jump to coincidental matches.
+- References: plain scan keeps outer uses inside assembly. Yul builtins,
+  Yul decl tokens, and Yul shadowed names stay skipped. Member and emit
+  scans still skip assembly.
+- Limits: nested scoping stays flat, so `let x := x` may resolve to
+  itself. Yul arity, unknown opcodes, Yul decl targets for references
+  and rename, plus outline, semantic, and inlay for Yul stay deferred.
+
 ## V1 limits
 
 - Tracked only: `dep_texts` skips untracked and missing files.

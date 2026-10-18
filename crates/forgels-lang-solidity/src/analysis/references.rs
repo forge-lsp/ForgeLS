@@ -195,6 +195,23 @@ fn resolve_plain_target(
     current: &Path,
     deps: &[(PathBuf, SolidityFile)],
 ) -> Option<Target> {
+    if super::yul::is_yul_builtin(word) {
+        let tokens = SolidityLexer.tokenize(text);
+        let assemblies = super::unknown::assembly_ranges(&tokens);
+        if super::yul::is_in_assembly(&assemblies, offset) {
+            return None;
+        }
+    }
+    {
+        let tokens = SolidityLexer.tokenize(text);
+        let assemblies = super::unknown::assembly_ranges(&tokens);
+        if super::yul::is_in_assembly(&assemblies, offset) {
+            let decls = super::yul::collect_yul_decls(&tokens, &assemblies);
+            if super::yul::find_yul_decl(&decls, word, offset).is_some() {
+                return None;
+            }
+        }
+    }
     let scope = collect_symbols(file);
     if let Some(symbol) = scope.resolve(word, offset) {
         return Some(Target {
@@ -298,6 +315,7 @@ fn scan_plain(
     let decl_set: HashSet<(u32, u32)> = decls.iter().map(|span| (span.start, span.end)).collect();
     let imports = super::unknown::import_spans(candidate_file);
     let assemblies = super::unknown::assembly_ranges(&tokens);
+    let yul_decls = super::yul::collect_yul_decls(&tokens, &assemblies);
     let members = super::unknown::member_spans(candidate_file);
     let member_set: HashSet<(u32, u32)> =
         members.iter().map(|span| (span.start, span.end)).collect();
@@ -317,7 +335,15 @@ fn scan_plain(
             continue;
         }
         if super::unknown::inside_any(&assemblies, span.start) {
-            continue;
+            if super::yul::is_yul_builtin(&token.text) {
+                continue;
+            }
+            if super::yul::is_yul_decl_token(&yul_decls, span) {
+                continue;
+            }
+            if super::yul::find_yul_decl(&yul_decls, &token.text, span.start).is_some() {
+                continue;
+            }
         }
         if member_set.contains(&(span.start, span.end)) {
             continue;
@@ -802,5 +828,25 @@ mod tests {
         let found = refs_in(&workspace, "/A.sol", text, "cb;\n}\n}").expect("refs");
         assert_eq!(found.len(), 2);
         assert_eq!(found.iter().filter(|item| item.is_declaration).count(), 1);
+    }
+
+    #[test]
+    fn outer_var_lists_assembly_use() {
+        let text =
+            "contract C {\nuint x = 1;\nfunction f() public {\nx;\nassembly {\nlet y := x\n}\n}\n}";
+        let workspace = workspace_with(&[("/A.sol", text)]);
+        let base = text.rfind("let y := x").expect("assembly use");
+        let at = (base + "let y := ".len()) as u32;
+        let found = refs_at(&workspace, "/A.sol", text, at).expect("refs");
+        assert_eq!(found.len(), 3, "found: {found:?}");
+        assert_eq!(found.iter().filter(|item| item.is_declaration).count(), 1);
+    }
+
+    #[test]
+    fn yul_builtin_use_returns_none() {
+        let text = "contract C {\nfunction f() public {\nassembly {\nlet y := add(1, 2)\n}\n}\n}";
+        let workspace = workspace_with(&[("/A.sol", text)]);
+        let at = text.rfind("add").expect("builtin") as u32;
+        assert!(refs_at(&workspace, "/A.sol", text, at).is_none());
     }
 }

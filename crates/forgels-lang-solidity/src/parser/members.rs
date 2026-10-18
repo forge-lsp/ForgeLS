@@ -436,7 +436,7 @@ pub(crate) fn parse_block(cursor: &mut Cursor, errors: &mut Vec<ParseError>) -> 
             }
             Some(kind) if kind == SolidityKind::RBrace.as_u16() => break,
             Some(kind) if kind == SolidityKind::Assembly.as_u16() => {
-                skip_assembly(cursor);
+                skip_assembly(cursor, errors);
             }
             Some(kind) if kind == SolidityKind::LBrace.as_u16() => {
                 if let Some(nested) = parse_block(cursor, errors) {
@@ -572,7 +572,7 @@ fn parse_control_body(
             parse_unchecked(cursor, errors, items);
         }
         Some(kind) if kind == SolidityKind::Try.as_u16() => parse_try(cursor, errors, items),
-        Some(kind) if kind == SolidityKind::Assembly.as_u16() => skip_assembly(cursor),
+        Some(kind) if kind == SolidityKind::Assembly.as_u16() => skip_assembly(cursor, errors),
         _ => recover_statement(cursor),
     }
 }
@@ -2011,11 +2011,13 @@ pub(crate) fn try_parse_new(cursor: &mut Cursor) -> Option<SyntaxNode> {
     Some(node)
 }
 
-/// Skip an inline assembly block without errors.
+/// Skip an inline assembly block, reporting unclosed braces.
 ///
 /// Full Yul parsing is deferred: the optional dialect string and the
 /// balanced brace body are consumed so surrounding locals keep parsing.
-pub(crate) fn skip_assembly(cursor: &mut Cursor) {
+/// An opened `{` without its close reports `unclosed assembly` instead
+/// of staying silent, so the missing brace surfaces in diagnostics.
+pub(crate) fn skip_assembly(cursor: &mut Cursor, errors: &mut Vec<ParseError>) {
     cursor.bump();
     if cursor.peek_kind() == Some(SolidityKind::StringLit.as_u16()) {
         cursor.bump();
@@ -2023,9 +2025,24 @@ pub(crate) fn skip_assembly(cursor: &mut Cursor) {
     if cursor.peek_kind() == Some(SolidityKind::LParen.as_u16()) {
         skip_parens(cursor);
     }
-    if cursor.peek_kind() == Some(SolidityKind::LBrace.as_u16()) {
-        skip_balanced(cursor);
+    if cursor.peek_kind() != Some(SolidityKind::LBrace.as_u16()) {
+        return;
     }
+    let mut depth = 0u32;
+    while let Some(kind) = cursor.peek_kind() {
+        if kind == SolidityKind::LBrace.as_u16() {
+            depth += 1;
+        } else if kind == SolidityKind::RBrace.as_u16() {
+            depth -= 1;
+            cursor.bump();
+            if depth == 0 {
+                return;
+            }
+            continue;
+        }
+        cursor.bump();
+    }
+    errors.push(ParseError::new(cursor.peek_span(), "unclosed assembly"));
 }
 
 /// Parse `using L for T;`, `using L for *;`, and `using L for T global;`.

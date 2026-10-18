@@ -49,8 +49,12 @@ pub fn completion_item_kind(kind: CompletionKind) -> CompletionItemKind {
 /// Shadowed names appear once with the innermost detail. Keywords whose
 /// spelling matches the prefix follow the symbols. Positions after a dot
 /// suggest members of the receiver type instead of scope symbols.
-/// `type(Inner).` positions suggest the inner dispatch set.
+/// `type(Inner).` positions suggest the inner dispatch set. Assembly
+/// bodies suggest flat Yul decls plus Yul builtins plus outer scope.
 pub fn complete_at(file: &SolidityFile, text: &str, offset: u32) -> Vec<CompletionItem> {
+    if let Some(items) = complete_yul_at(file, text, offset) {
+        return items;
+    }
     if let Some(type_ctx) = super::meta::type_context_at(text, offset) {
         let kind = super::members::TypeKind::Meta(type_ctx.inner.clone());
         let mut items: Vec<CompletionItem> = super::members::members_of(file, &kind)
@@ -191,6 +195,70 @@ fn complete_emit_events(file: &SolidityFile, text: &str, offset: u32) -> Vec<Com
         .collect();
     items.sort_by(|left, right| left.label.cmp(&right.label));
     items
+}
+
+/// Yul completions inside assembly, or `None` outside.
+///
+/// Flat decls before `offset` plus Yul builtins plus outer scope, all
+/// filtered by prefix. Yul decls win over outer names. Order checked,
+/// so forward decls never suggest.
+fn complete_yul_at(file: &SolidityFile, text: &str, offset: u32) -> Option<Vec<CompletionItem>> {
+    let tokens = SolidityLexer.tokenize(text);
+    let assemblies = super::unknown::assembly_ranges(&tokens);
+    if !super::yul::is_in_assembly(&assemblies, offset) {
+        return None;
+    }
+    let prefix = prefix_at(text, offset);
+    let decls = super::yul::collect_yul_decls(&tokens, &assemblies);
+    let scope = collect_symbols(file);
+    let mut seen: Vec<String> = Vec::new();
+    let mut items: Vec<CompletionItem> = Vec::new();
+    for decl in &decls {
+        if decl.span.start > offset {
+            continue;
+        }
+        if decl.name.is_empty() || !decl.name.starts_with(prefix.as_str()) {
+            continue;
+        }
+        if seen.contains(&decl.name) {
+            continue;
+        }
+        seen.push(decl.name.clone());
+        items.push(CompletionItem {
+            label: decl.name.clone(),
+            detail: super::yul::yul_decl_detail(decl),
+            kind: CompletionKind::Symbol(super::SymbolKind::LocalVar),
+        });
+    }
+    for builtin in super::yul::YUL_BUILTINS {
+        if !builtin.starts_with(prefix.as_str()) {
+            continue;
+        }
+        if seen.contains(&(*builtin).to_string()) {
+            continue;
+        }
+        seen.push((*builtin).to_string());
+        items.push(CompletionItem {
+            label: (*builtin).to_string(),
+            detail: super::yul::yul_builtin_detail(builtin),
+            kind: CompletionKind::Symbol(super::SymbolKind::Function),
+        });
+    }
+    for symbol in scope.visible_at(offset) {
+        if symbol.name.is_empty() || !symbol.name.starts_with(prefix.as_str()) {
+            continue;
+        }
+        if seen.contains(&symbol.name) {
+            continue;
+        }
+        seen.push(symbol.name.clone());
+        items.push(CompletionItem {
+            label: symbol.name.clone(),
+            detail: symbol.detail.clone(),
+            kind: CompletionKind::Symbol(symbol.kind),
+        });
+    }
+    Some(items)
 }
 
 /// Typed fragment ending at `offset`: word chars directly before it.

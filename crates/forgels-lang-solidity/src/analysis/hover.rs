@@ -23,9 +23,13 @@ pub struct Hover {
 /// Array, address, bytes, function, and global members use the cursor
 /// member span since their detail spans are synthetic. `type(Inner)`
 /// members resolve via the inner dispatch set the same way. Emit name slots resolve to event declarations only, so a
-/// function with the same name never shadows the event. Positions on
+/// function with the same name never shadows the event. Assembly bodies
+/// resolve flat Yul decls, then Yul builtins, then outer scope. Positions on
 /// whitespace, operators, or undeclared words return `None`.
 pub fn hover_at(file: &SolidityFile, text: &str, offset: u32) -> Option<Hover> {
+    if let Some(found) = hover_yul_at(file, text, offset) {
+        return Some(found);
+    }
     if let Some(type_ctx) = super::meta::type_context_at(text, offset)
         && (type_ctx.member_span.contains(offset) || type_ctx.member_span.end == offset)
         && !type_ctx.member.is_empty()
@@ -160,5 +164,42 @@ pub fn hover_at(file: &SolidityFile, text: &str, offset: u32) -> Option<Hover> {
     Some(Hover {
         contents: super::forge::builtin_detail(builtin),
         span,
+    })
+}
+
+/// Yul hover inside assembly, or `None` outside or on unknown words.
+///
+/// Order is flat Yul decl, Yul builtin, then outer scope. Yul decls use
+/// their declaration span, builtins and outer uses keep the cursor word
+/// span for builtins and the outer decl span for scope hits.
+fn hover_yul_at(file: &SolidityFile, text: &str, offset: u32) -> Option<Hover> {
+    use forgels_syntax::Lexer;
+    let tokens = crate::SolidityLexer.tokenize(text);
+    let assemblies = super::unknown::assembly_ranges(&tokens);
+    if !super::yul::is_in_assembly(&assemblies, offset) {
+        return None;
+    }
+    let (word, span) = word_at(text, offset)?;
+    if word.is_empty() {
+        return None;
+    }
+    let decls = super::yul::collect_yul_decls(&tokens, &assemblies);
+    if let Some(decl) = super::yul::find_yul_decl(&decls, &word, offset) {
+        return Some(Hover {
+            contents: super::yul::yul_decl_detail(decl),
+            span: decl.span,
+        });
+    }
+    if super::yul::is_yul_builtin(&word) {
+        return Some(Hover {
+            contents: super::yul::yul_builtin_detail(&word),
+            span,
+        });
+    }
+    let scope = collect_symbols(file);
+    let symbol = scope.resolve(&word, offset)?;
+    Some(Hover {
+        contents: with_docs(text, &symbol.detail, symbol.kind, symbol.span.start),
+        span: symbol.span,
     })
 }
