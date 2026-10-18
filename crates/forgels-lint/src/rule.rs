@@ -34,6 +34,10 @@ impl RuleId {
     pub const IMPORT_POSITION: Self = Self("style/import-position");
     pub const MAPPING_GLUE: Self = Self("style/mapping-glue");
     pub const ARRAY_GLUE: Self = Self("style/array-glue");
+    pub const BLANK_LINES: Self = Self("style/blank-lines");
+    pub const NATSPEC_MISSING: Self = Self("style/natspec-missing");
+    pub const NATSPEC_PARAM: Self = Self("style/natspec-param");
+    pub const LINE_LENGTH: Self = Self("style/line-length");
 
     pub const fn as_str(self) -> &'static str {
         self.0
@@ -47,7 +51,11 @@ impl RuleId {
             | "style/layout-order"
             | "style/import-position"
             | "style/mapping-glue"
-            | "style/array-glue" => Severity::Warning,
+            | "style/array-glue"
+            | "style/blank-lines"
+            | "style/natspec-missing"
+            | "style/natspec-param"
+            | "style/line-length" => Severity::Warning,
             _ => Severity::Error,
         }
     }
@@ -57,7 +65,7 @@ impl RuleId {
     }
 }
 
-const ALL: [RuleId; 29] = [
+const ALL: [RuleId; 33] = [
     RuleId::PARSE_ERROR,
     RuleId::CALL_ARITY,
     RuleId::STRUCT_ARITY,
@@ -87,4 +95,8 @@ const ALL: [RuleId; 29] = [
     RuleId::IMPORT_POSITION,
     RuleId::MAPPING_GLUE,
     RuleId::ARRAY_GLUE,
+    RuleId::BLANK_LINES,
+    RuleId::NATSPEC_MISSING,
+    RuleId::NATSPEC_PARAM,
+    RuleId::LINE_LENGTH,
 ];

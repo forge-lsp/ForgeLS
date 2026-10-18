@@ -26,7 +26,7 @@ fn write_file(path: &Path, text: &str) {
     std::fs::write(path, text).expect("write fixture");
 }
 
-const OVERRIDE_SRC: &str = "contract B {\nfunction greet(uint a) public virtual { a; }\n}\ncontract D is B {\nfunction greet(uint a) public { a; }\n}\n";
+const OVERRIDE_SRC: &str = "contract B {\n/// @notice Greets.\n/// @param a Value.\nfunction greet(uint a) public virtual { a; }\n}\n\n\ncontract D is B {\n/// @notice Greets.\n/// @param a Value.\nfunction greet(uint a) public { a; }\n}\n";
 const CLEAN_SRC: &str = "contract A {}\n";
 
 fn run_in(dir: &Path, args: &[&str]) -> std::process::Output {
@@ -49,7 +49,7 @@ fn human_shape_reports_one_based_line_col() {
         stdout.contains("error[correctness/override]"),
         "human line: {stdout}"
     );
-    assert!(stdout.contains(":5:10:"), "one based position: {stdout}");
+    assert!(stdout.contains(":11:10:"), "one based position: {stdout}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -73,7 +73,7 @@ fn json_shape_has_zero_based_ranges_fixed_and_summary() {
     );
     assert_eq!(
         diag.pointer("/range/start").expect("start"),
-        &serde_json::json!({"line": 4, "character": 9})
+        &serde_json::json!({"line": 10, "character": 9})
     );
     assert_eq!(
         diag.pointer("/fixed").expect("fixed"),
