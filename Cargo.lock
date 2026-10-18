@@ -16,7 +16,7 @@ checksum = "00d174d5400e5e8fd687ad1049e2f578285fa914201b1af7e8b112a4546bd826"
 
 [[package]]
 name = "forgels"
-version = "0.1.0"
+version = "0.2.0-beta"
 dependencies = [
  "forgels-common",
  "forgels-core",
@@ -27,7 +27,7 @@ dependencies = [
 
 [[package]]
 name = "forgels-common"
-version = "0.1.0"
+version = "0.2.0-beta"
 dependencies = [
  "tracing",
  "tracing-subscriber",
@@ -35,7 +35,7 @@ dependencies = [
 
 [[package]]
 name = "forgels-core"
-version = "0.1.0"
+version = "0.2.0-beta"
 dependencies = [
  "forgels-common",
  "forgels-protocol",
@@ -46,7 +46,7 @@ dependencies = [
 
 [[package]]
 name = "forgels-lang-noir"
-version = "0.1.0"
+version = "0.2.0-beta"
 dependencies = [
  "forgels-common",
  "forgels-core",
@@ -56,7 +56,7 @@ dependencies = [
 
 [[package]]
 name = "forgels-lang-solidity"
-version = "0.1.0"
+version = "0.2.0-beta"
 dependencies = [
  "forgels-common",
  "forgels-core",
@@ -68,11 +68,11 @@ dependencies = [
 
 [[package]]
 name = "forgels-protocol"
-version = "0.1.0"
+version = "0.2.0-beta"
 
 [[package]]
 name = "forgels-syntax"
-version = "0.1.0"
+version = "0.2.0-beta"
 
 [[package]]
 name = "hashbrown"
