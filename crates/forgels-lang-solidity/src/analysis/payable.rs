@@ -108,10 +108,54 @@ fn target_function(
     None
 }
 
+/// Base function for `super` member checks: same file bases plus deps.
+///
+/// Derived functions never count: `super` bypasses the enclosing
+/// contract. First base wins on name clash, same as member lookup.
+fn super_function(
+    file: &SolidityFile,
+    enclosing: &str,
+    name: &str,
+    deps: &[(PathBuf, SolidityFile)],
+) -> Option<crate::FunctionDef> {
+    if enclosing.is_empty() || name.is_empty() {
+        return None;
+    }
+    let mut seen: HashSet<String> = HashSet::new();
+    for base in inheritance::linearize(file, enclosing) {
+        for function in base.functions() {
+            let Some(func_name) = function.name() else {
+                continue;
+            };
+            if func_name.is_empty() || !seen.insert(func_name.clone()) {
+                continue;
+            }
+            if func_name == name {
+                return Some(function);
+            }
+        }
+    }
+    for (base, _) in inheritance::linearize_across(file, enclosing, deps) {
+        for function in base.functions() {
+            let Some(func_name) = function.name() else {
+                continue;
+            };
+            if func_name.is_empty() || !seen.insert(func_name.clone()) {
+                continue;
+            }
+            if func_name == name {
+                return Some(function);
+            }
+        }
+    }
+    None
+}
+
 /// Non-payable functions must not receive `value` call options.
 ///
 /// Plain `f{value: 1}()` and member `o.f{value: 1}()` error when the
-/// target resolves to a function without `payable`. Builtins, unknown
+/// target resolves to a function without `payable`. `super.f{value: 1}`
+/// resolves through the base lineage across files. Builtins, unknown
 /// targets, and gas-only options stay silent.
 pub fn payable_diagnostics(
     file: &SolidityFile,
@@ -186,18 +230,21 @@ pub fn payable_diagnostics(
                 if receiver.is_empty() || name.is_empty() {
                     continue;
                 }
-                if receiver == "super" {
-                    continue;
-                }
                 let offset = member.syntax().span.start;
                 if forge::member_builtin(&receiver, &name, scope, offset).is_some() {
                     continue;
                 }
                 let kind = members::receiver_type_with_deps(file, scope, offset, &receiver, deps);
-                let members::TypeKind::Contract(target) = kind else {
-                    continue;
+                let found = match kind {
+                    members::TypeKind::Super { enclosing } => {
+                        super_function(file, &enclosing, &name, deps)
+                    }
+                    members::TypeKind::Contract(target) => {
+                        target_function(file, &target, &name, deps)
+                    }
+                    _ => None,
                 };
-                let Some(found) = target_function(file, &target, &name, deps) else {
+                let Some(found) = found else {
                     continue;
                 };
                 if found.mutability() == Some(crate::Mutability::Payable) {

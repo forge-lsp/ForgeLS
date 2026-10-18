@@ -176,19 +176,60 @@ pub fn deploy_arity_diagnostics(
     out
 }
 
+/// Base function arities for `super` calls: same file bases plus deps.
+///
+/// Derived functions never count: `super` bypasses the enclosing
+/// contract. First base wins on name clash, same as member lookup.
+fn super_params_of(
+    file: &SolidityFile,
+    enclosing: &str,
+    deps: &[(PathBuf, SolidityFile)],
+) -> HashMap<String, usize> {
+    let mut params_of: HashMap<String, usize> = HashMap::new();
+    for base in inheritance::linearize(file, enclosing) {
+        for item in base.functions() {
+            let Some(item_name) = item.name() else {
+                continue;
+            };
+            if item_name.is_empty() {
+                continue;
+            }
+            params_of
+                .entry(item_name)
+                .or_insert_with(|| item.params().len());
+        }
+    }
+    for (base, _) in inheritance::linearize_across(file, enclosing, deps) {
+        for item in base.functions() {
+            let Some(item_name) = item.name() else {
+                continue;
+            };
+            if item_name.is_empty() {
+                continue;
+            }
+            params_of
+                .entry(item_name)
+                .or_insert_with(|| item.params().len());
+        }
+    }
+    params_of
+}
+
 /// Arity checks for member calls: `recv.member(args)` against the receiver type.
 ///
 /// Builtins skip first via `member_builtin`, so `vm.*` and `console.*`
-/// stay silent. Receiver resolves with deps, structs stay silent, unknown
-/// types stay silent. Arrays check `push` (1) and `pop` (0) on dynamic
-/// only: `length` calls and fixed array calls stay silent, unknown names
-/// stay silent. Addresses check `transfer`, `send`, `call`,
+/// stay silent. Receiver resolves with deps, structs and enums stay
+/// silent, unknown types stay silent. Arrays check `push` (1) and `pop`
+/// (0) on dynamic only: `length` calls and fixed array calls stay silent,
+/// unknown names stay silent. Addresses check `transfer`, `send`, `call`,
 /// `delegatecall`, and `staticcall` (1 each): `balance`, `code`, and
 /// `codehash` calls stay silent, unknown names stay silent. Functions
 /// check `gas` and `value` (1 each): `selector` calls stay silent.
 /// Globals check `block.blobhash` (1), `abi.decode` (2), and
 /// `abi.encodeCall` (2): fields and variadic `abi.encode*` stay silent.
 /// Bytes `length`, string members, and `type()` metadata stay silent.
+/// `super` calls check base signatures across files, derived bypassed.
+/// `wrap` and `unwrap` take 1 arg each, other user type names stay silent.
 /// Target functions collect own plus linear order bases
 /// across files, derived wins and first base wins. Same message as plain.
 pub fn member_arity_diagnostics(
@@ -287,6 +328,41 @@ pub fn member_arity_diagnostics(
                 }
                 if let members::TypeKind::Meta(ref inner) = kind {
                     let _ = meta::meta_expected_arity(inner, &name);
+                    continue;
+                }
+                if let members::TypeKind::Super { enclosing } = &kind {
+                    if enclosing.is_empty() {
+                        continue;
+                    }
+                    let params_of = super_params_of(file, enclosing, deps);
+                    let Some(expected) = params_of.get(&name).copied() else {
+                        continue;
+                    };
+                    let actual = member.arg_count();
+                    if expected != actual {
+                        out.push(DiagnosticData {
+                            span: member.syntax().span,
+                            message: format!(
+                                "this function '{name}' takes {expected} arguments but {actual} supplied"
+                            ),
+                        });
+                    }
+                    continue;
+                }
+                if matches!(kind, members::TypeKind::UserType(_)) {
+                    if name != "wrap" && name != "unwrap" {
+                        continue;
+                    }
+                    let expected = 1;
+                    let actual = member.arg_count();
+                    if expected != actual {
+                        out.push(DiagnosticData {
+                            span: member.syntax().span,
+                            message: format!(
+                                "this function '{name}' takes {expected} arguments but {actual} supplied"
+                            ),
+                        });
+                    }
                     continue;
                 }
                 let members::TypeKind::Contract(target) = kind else {

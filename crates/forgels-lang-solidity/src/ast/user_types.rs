@@ -125,6 +125,21 @@ impl EnumDef {
             .skip(1)
             .collect()
     }
+
+    /// Variant names paired with their token spans, in order.
+    pub fn variant_entries(&self) -> Vec<(String, Span)> {
+        self.syntax
+            .children
+            .iter()
+            .filter_map(|element| match element {
+                SyntaxElement::Token(token) if token.kind == SolidityKind::Ident.as_u16() => {
+                    Some((token.text.clone(), token.span))
+                }
+                _ => None,
+            })
+            .skip(1)
+            .collect()
+    }
 }
 
 impl AstNode for EnumDef {

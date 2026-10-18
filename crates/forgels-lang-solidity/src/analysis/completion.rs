@@ -23,7 +23,6 @@ pub enum CompletionKind {
 /// Map a completion origin to its LSP number.
 ///
 /// State vars stay Variable (6), same as locals and params.
-/// Enum members map to 20 once the symbol exists (follow-up).
 pub fn completion_item_kind(kind: CompletionKind) -> CompletionItemKind {
     match kind {
         CompletionKind::Keyword => CompletionItemKind::KEYWORD,
@@ -38,6 +37,7 @@ pub fn completion_item_kind(kind: CompletionKind) -> CompletionItemKind {
             SymbolKind::Field => CompletionItemKind::FIELD,
             SymbolKind::Struct => CompletionItemKind::STRUCT,
             SymbolKind::Enum => CompletionItemKind::ENUM,
+            SymbolKind::EnumMember => CompletionItemKind::ENUM_MEMBER,
             SymbolKind::Error | SymbolKind::Event => CompletionItemKind::EVENT,
             SymbolKind::UserType => CompletionItemKind::TYPE_PARAMETER,
         },

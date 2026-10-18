@@ -75,6 +75,17 @@ pub fn hover_at(file: &SolidityFile, text: &str, offset: u32) -> Option<Hover> {
             });
         }
         // String has no members by design: fall through to no hover.
+        // User type entries are synthetic: show the cursor member span.
+        if let super::members::TypeKind::UserType(_) = kind
+            && let Some(found) = super::members::members_of(file, &kind)
+                .into_iter()
+                .find(|member| member.name == ctx.member)
+        {
+            return Some(Hover {
+                contents: found.detail,
+                span: ctx.member_span,
+            });
+        }
         if let Some(found) = super::members::members_of(file, &kind)
             .into_iter()
             .find(|member| member.name == ctx.member)

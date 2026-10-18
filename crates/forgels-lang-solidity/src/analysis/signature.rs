@@ -439,9 +439,42 @@ fn member_signatures(
         let params = detail_params(&info.detail);
         return Some(vec![SignatureData::new(info.detail, params, active)]);
     }
-    let members::TypeKind::Contract(target) =
-        members::receiver_type_with_deps(file, scope, offset, receiver, deps)
-    else {
+    let kind = members::receiver_type_with_deps(file, scope, offset, receiver, deps);
+    if let members::TypeKind::Super { enclosing } = kind {
+        if enclosing.is_empty() {
+            return None;
+        }
+        let mut out = Vec::new();
+        for base in inheritance::linearize(file, &enclosing) {
+            push_contract_functions(&base, name, active, &mut out);
+        }
+        for (base, _) in inheritance::linearize_across(file, &enclosing, deps) {
+            push_contract_functions(&base, name, active, &mut out);
+        }
+        if out.is_empty() {
+            return None;
+        }
+        return Some(out);
+    }
+    if matches!(kind, members::TypeKind::UserType(_)) {
+        if name != "wrap" && name != "unwrap" {
+            return None;
+        }
+        let (def, _) = inheritance::find_user_type_across(receiver, file, deps)?;
+        let type_name = def.name().unwrap_or_default();
+        let underlying = def.underlying().map(|node| node.text()).unwrap_or_default();
+        if type_name.is_empty() || underlying.is_empty() {
+            return None;
+        }
+        let label = if name == "wrap" {
+            format!("function wrap({underlying} value) returns ({type_name})")
+        } else {
+            format!("function unwrap({type_name} value) returns ({underlying})")
+        };
+        let params = detail_params(&label);
+        return Some(vec![SignatureData::new(label, params, active)]);
+    }
+    let members::TypeKind::Contract(target) = kind else {
         return None;
     };
     if target.is_empty() {

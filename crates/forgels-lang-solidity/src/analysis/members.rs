@@ -11,6 +11,9 @@ use crate::{SolidityFile, TypeNode};
 pub enum TypeKind {
     Contract(String),
     Struct(String),
+    Enum(String),
+    UserType(String),
+    Super { enclosing: String },
     Array { dynamic: bool },
     Address,
     Bytes,
@@ -147,9 +150,11 @@ fn var_type_of_detail(detail: &str) -> Option<String> {
     Some(left.to_string())
 }
 
-/// Classify the receiver: `this` is the enclosing contract, variables use
-/// their declared type, `super` and anything else stay unknown.
+/// Classify the receiver: `this` is the enclosing contract, `super`
+/// is the enclosing contract bases, variables use their declared type,
+/// and anything else stays unknown.
 ///
+/// `super` bypasses the derived contract: only base members resolve.
 /// Array types use the outer suffix only: `uint[2][]` is dynamic while
 /// `uint[][2]` is fixed. Data location (`memory`, `storage`, `calldata`)
 /// is already stripped from the stored type, so V1 ignores it. Address
@@ -158,8 +163,10 @@ fn var_type_of_detail(detail: &str) -> Option<String> {
 /// `bytes` and `bytes32` share one set with `length` only, `string` has
 /// no members by design. External `function` types yield `Function`,
 /// internal ones stay unknown. Named functions resolve as `Function` so
-/// `f.selector` works. Undeclared `msg`, `block`, `tx`, and `abi` yield
-/// `Global`; user declarations shadow them.
+/// `f.selector` works. Enum and user type names resolve as `Enum` and
+/// `UserType` so `Status.Active` and `MyNumber.wrap` work. Undeclared
+/// `msg`, `block`, `tx`, and `abi` yield `Global`; user declarations
+/// shadow them.
 pub fn receiver_type(file: &SolidityFile, scope: &Scope, offset: u32, receiver: &str) -> TypeKind {
     if receiver == "this" {
         let Some(contract) = contract_at(file, offset) else {
@@ -174,7 +181,16 @@ pub fn receiver_type(file: &SolidityFile, scope: &Scope, offset: u32, receiver: 
         return TypeKind::Contract(name);
     }
     if receiver == "super" {
-        return TypeKind::Unknown;
+        let Some(contract) = contract_at(file, offset) else {
+            return TypeKind::Unknown;
+        };
+        let Some(name) = contract.name() else {
+            return TypeKind::Unknown;
+        };
+        if name.is_empty() {
+            return TypeKind::Unknown;
+        }
+        return TypeKind::Super { enclosing: name };
     }
     let Some(symbol) = scope.resolve(receiver, offset) else {
         if globals::is_global_receiver(receiver) {
@@ -184,6 +200,12 @@ pub fn receiver_type(file: &SolidityFile, scope: &Scope, offset: u32, receiver: 
     };
     if symbol.kind == SymbolKind::Function {
         return TypeKind::Function;
+    }
+    if symbol.kind == SymbolKind::Enum {
+        return TypeKind::Enum(symbol.name.clone());
+    }
+    if symbol.kind == SymbolKind::UserType {
+        return TypeKind::UserType(symbol.name.clone());
     }
     if !matches!(
         symbol.kind,
@@ -223,8 +245,9 @@ pub fn receiver_type(file: &SolidityFile, scope: &Scope, offset: u32, receiver: 
 
 /// Classify the receiver with deps: same file first, then dep files.
 ///
-/// `super` stays unknown and chained receivers stay unknown. Dep lookup
-/// lets `Hello h; h.greet` resolve when `Hello` lives in an import.
+/// `super` and `this` resolve locally only. Dep lookup lets `Hello h;
+/// h.greet` resolve when `Hello` lives in an import, and lets
+/// `Status.Active` resolve when the enum lives in an import.
 /// Arrays, addresses, bytes, strings, functions, and globals resolve
 /// locally via `receiver_type`, so no dep lookup applies.
 pub(crate) fn receiver_type_with_deps(
@@ -242,6 +265,12 @@ pub(crate) fn receiver_type_with_deps(
         return TypeKind::Unknown;
     }
     let Some(symbol) = scope.resolve(receiver, offset) else {
+        if inheritance::find_enum_across(receiver, file, deps).is_some() {
+            return TypeKind::Enum(receiver.to_string());
+        }
+        if inheritance::find_user_type_across(receiver, file, deps).is_some() {
+            return TypeKind::UserType(receiver.to_string());
+        }
         return TypeKind::Unknown;
     };
     if !matches!(
@@ -265,13 +294,50 @@ pub(crate) fn receiver_type_with_deps(
     TypeKind::Unknown
 }
 
+/// Wrap and unwrap entries for a user defined value type.
+///
+/// Both are synthetic with no declaration span: callers show the cursor
+/// member span for hover and return `None` for goto. Empty when the
+/// definition lacks a name or an underlying type.
+fn user_type_members(item: &crate::UserTypeDef) -> Vec<MemberInfo> {
+    let Some(name) = item.name() else {
+        return Vec::new();
+    };
+    if name.is_empty() {
+        return Vec::new();
+    }
+    let Some(underlying) = item.underlying().map(|node| node.text()) else {
+        return Vec::new();
+    };
+    if underlying.is_empty() {
+        return Vec::new();
+    }
+    let span = Span::new(0, 0);
+    vec![
+        MemberInfo {
+            name: String::from("wrap"),
+            detail: format!("function wrap({underlying} value) returns ({name})"),
+            kind: SymbolKind::Function,
+            span,
+        },
+        MemberInfo {
+            name: String::from("unwrap"),
+            detail: format!("function unwrap({name} value) returns ({underlying})"),
+            kind: SymbolKind::Function,
+            span,
+        },
+    ]
+}
+
 /// Members of a contract (state vars plus functions), struct (fields),
-/// array (`length` always, `push` and `pop` for dynamic only),
-/// address (three fields plus five methods), bytes (`length` only,
-/// string has none), function (`selector`, `gas`, `value`), globals
-/// (`msg`, `block`, `tx`, `abi` tables), or `type()` metadata by inner.
-/// Unknown types yield no members. Contract members include same file
-/// inheritance with ` - from Base` origin, derived wins.
+/// enum (variants), user type (`wrap` and `unwrap`), super (base vars
+/// plus base functions, derived bypassed), array (`length` always,
+/// `push` and `pop` for dynamic only), address (three fields plus five
+/// methods), bytes (`length` only, string has none), function
+/// (`selector`, `gas`, `value`), globals (`msg`, `block`, `tx`, `abi`
+/// tables), or `type()` metadata by inner. Unknown types yield no
+/// members. Contract members include same file inheritance with
+/// ` - from Base` origin, derived wins.
 pub fn members_of(file: &SolidityFile, kind: &TypeKind) -> Vec<MemberInfo> {
     match kind {
         TypeKind::Unknown => Vec::new(),
@@ -282,6 +348,27 @@ pub fn members_of(file: &SolidityFile, kind: &TypeKind) -> Vec<MemberInfo> {
         TypeKind::Function => function::function_members(),
         TypeKind::Meta(inner) => super::meta::meta_members_for(inner),
         TypeKind::Global(name) => globals::global_members(name),
+        TypeKind::Super { enclosing } => inheritance::inherited_members(file, enclosing),
+        TypeKind::Enum(name) => {
+            let Some(item) = inheritance::find_enum(file, name) else {
+                return Vec::new();
+            };
+            item.variant_entries()
+                .into_iter()
+                .map(|(variant, span)| MemberInfo {
+                    name: variant.clone(),
+                    detail: format!("{name}.{variant}"),
+                    kind: SymbolKind::EnumMember,
+                    span,
+                })
+                .collect()
+        }
+        TypeKind::UserType(name) => {
+            let Some(item) = inheritance::find_user_type(file, name) else {
+                return Vec::new();
+            };
+            user_type_members(&item)
+        }
         TypeKind::Contract(name) => {
             let Some(contract) = inheritance::find_contract(file, name) else {
                 return Vec::new();
@@ -423,6 +510,9 @@ fn own_member_info(
 ///
 /// Skips names already present locally so derived wins. Used for member
 /// completion across imports. Deps come from `dep_texts` in index order.
+/// Super skips same file bases (`None` paths): they are already local.
+/// User type members are synthetic, so dep entries only fill in when the
+/// primary file lacks the definition.
 pub(crate) fn collect_cross_file_members(
     primary: &SolidityFile,
     kind: &TypeKind,
@@ -635,6 +725,142 @@ pub(crate) fn collect_cross_file_members(
                         SymbolKind::Field,
                         field.syntax().span,
                     ),
+                    path.clone(),
+                ));
+            }
+            out
+        }
+        TypeKind::Super { enclosing } => {
+            for (base, path) in inheritance::linearize_across(primary, enclosing, deps) {
+                let Some(path) = path else {
+                    continue;
+                };
+                let file_name = file_label(&path);
+                let Some(base_name) = base.name() else {
+                    continue;
+                };
+                if base_name.is_empty() {
+                    continue;
+                }
+                for var in base.state_vars() {
+                    let Some(var_name) = var.name() else {
+                        continue;
+                    };
+                    if var_name.is_empty() || !seen.insert(var_name.clone()) {
+                        continue;
+                    }
+                    let mut base_detail =
+                        var.type_node().map(|node| node.text()).unwrap_or_default();
+                    base_detail.push(' ');
+                    base_detail.push_str(&var_name);
+                    out.push((
+                        own_member_info(
+                            &base_name,
+                            &file_name,
+                            var_name,
+                            base_detail,
+                            SymbolKind::StateVar,
+                            var.syntax().span,
+                        ),
+                        path.clone(),
+                    ));
+                }
+                for function in base.functions() {
+                    let Some(func_name) = function.name() else {
+                        continue;
+                    };
+                    if func_name.is_empty() || !seen.insert(func_name.clone()) {
+                        continue;
+                    }
+                    let params: Vec<String> = function
+                        .params()
+                        .iter()
+                        .map(|param| {
+                            let mut text = param
+                                .type_node()
+                                .map(|node| node.text())
+                                .unwrap_or_default();
+                            if let Some(param_name) = param.name() {
+                                text.push(' ');
+                                text.push_str(&param_name);
+                            }
+                            text
+                        })
+                        .collect();
+                    let mut base_detail = format!("function {func_name}({})", params.join(", "));
+                    let returns: Vec<String> = function
+                        .return_types()
+                        .iter()
+                        .map(|node| node.text())
+                        .collect();
+                    if !returns.is_empty() {
+                        base_detail.push_str(" returns (");
+                        base_detail.push_str(&returns.join(", "));
+                        base_detail.push(')');
+                    }
+                    out.push((
+                        own_member_info(
+                            &base_name,
+                            &file_name,
+                            func_name,
+                            base_detail,
+                            SymbolKind::Function,
+                            function.syntax().span,
+                        ),
+                        path.clone(),
+                    ));
+                }
+            }
+            out
+        }
+        TypeKind::Enum(name) => {
+            let Some((item, Some(path))) = inheritance::find_enum_across(name, primary, deps)
+            else {
+                return out;
+            };
+            let file_name = file_label(&path);
+            for (variant, span) in item.variant_entries() {
+                if variant.is_empty() || !seen.insert(variant.clone()) {
+                    continue;
+                }
+                let mut detail = format!("{name}.{variant}");
+                detail.push_str(" - from ");
+                detail.push_str(&file_name);
+                out.push((
+                    MemberInfo {
+                        name: variant,
+                        detail,
+                        kind: SymbolKind::EnumMember,
+                        span,
+                    },
+                    path.clone(),
+                ));
+            }
+            out
+        }
+        TypeKind::UserType(name) => {
+            if !local.is_empty() {
+                return out;
+            }
+            let Some((item, Some(path))) = inheritance::find_user_type_across(name, primary, deps)
+            else {
+                return out;
+            };
+            let file_name = file_label(&path);
+            for info in user_type_members(&item) {
+                if !seen.insert(info.name.clone()) {
+                    continue;
+                }
+                let mut detail = info.detail.clone();
+                detail.push_str(" - from ");
+                detail.push_str(&file_name);
+                out.push((
+                    MemberInfo {
+                        name: info.name.clone(),
+                        detail,
+                        kind: info.kind,
+                        span: info.span,
+                    },
                     path.clone(),
                 ));
             }
