@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use forgels_lint::{FileReport, Severity, report, report_json};
+use forgels_lint::{FileReport, Severity, report, report_json, should_lint};
 
 use super::bridge::diagnostics_for_file;
 use super::config::LoadedConfig;
@@ -23,6 +23,10 @@ pub fn run(args: &CheckArgs, cwd: &Path, config: &LoadedConfig) -> i32 {
         }
     };
     for warning in &config.warnings {
+        eprintln!("{warning}");
+    }
+    let (files, filter_warnings) = filter_files(cwd, files, config);
+    for warning in &filter_warnings {
         eprintln!("{warning}");
     }
     // Explicit paths must exist as *.sol. The walker already rejects
@@ -105,4 +109,37 @@ fn path_display(cwd: &Path, path: &Path) -> String {
         return rel.to_string_lossy().into_owned();
     }
     path.to_string_lossy().into_owned()
+}
+
+fn relative_posix(cwd: &Path, path: &Path) -> String {
+    if let Ok(rel) = path.strip_prefix(cwd)
+        && !rel.as_os_str().is_empty()
+    {
+        return rel.to_string_lossy().replace('\\', "/");
+    }
+    path.to_string_lossy().replace('\\', "/")
+}
+
+// Keep walker output but drop files outside lint includes/excludes.
+// Invalid patterns warn once and are ignored; caps and bridge stay.
+fn filter_files(
+    cwd: &Path,
+    files: Vec<PathBuf>,
+    config: &LoadedConfig,
+) -> (Vec<PathBuf>, Vec<String>) {
+    let mut kept = Vec::new();
+    let mut warnings: Vec<String> = Vec::new();
+    for path in files {
+        let rel = relative_posix(cwd, &path);
+        let (keep, mut warns) = should_lint(&rel, &config.lint.includes, &config.lint.excludes);
+        for warn in warns.drain(..) {
+            if !warnings.contains(&warn) {
+                warnings.push(warn);
+            }
+        }
+        if keep {
+            kept.push(path);
+        }
+    }
+    (kept, warnings)
 }

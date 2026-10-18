@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use forgels_common::paths::{Remapping, parse_remapping};
+use forgels_lint::LintConfig;
 
 /// Publish debounce default: quiet period after the last keystroke.
 pub const DEFAULT_PUBLISH_DELAY_MS: u64 = 200;
@@ -20,6 +21,8 @@ pub struct Config {
     pub log_level: String,
     /// Prefix remappings in Foundry `prefix=target` form.
     pub remappings: Vec<Remapping>,
+    /// Lint levels plus include/exclude filters for publish.
+    pub lint: LintConfig,
 }
 
 impl Default for Config {
@@ -29,6 +32,7 @@ impl Default for Config {
             root: None,
             log_level: String::from("warn"),
             remappings: Vec::new(),
+            lint: LintConfig::default(),
         }
     }
 }

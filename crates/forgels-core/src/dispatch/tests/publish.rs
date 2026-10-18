@@ -299,3 +299,89 @@ fn publish_maps_error_and_warning_numbers() {
         );
     }
 }
+
+#[test]
+fn off_level_drops_matching_diagnostic() {
+    let mut session = session_with_stub(true);
+    session.config.lint.rules.insert(
+        "correctness/parse-error".to_string(),
+        forgels_lint::RuleLevel::Off,
+    );
+    let mut workspace = Workspace::new();
+    super::stub::init(&mut session, &mut workspace);
+    let open = r#"{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///repo/O.sol","languageId":"solidity","version":1,"text":"broken"}}}"#;
+    assert!(handle_message(&mut session, &mut workspace, open).is_none());
+    let notes = immediate_notifications(&session, &mut workspace, open);
+    assert_eq!(notes.len(), 1);
+    let value: Value = serde_json::from_str(&notes[0]).expect("frame is json");
+    let diagnostics = value
+        .pointer("/params/diagnostics")
+        .expect("has diagnostics")
+        .as_array()
+        .expect("array");
+    assert!(diagnostics.is_empty(), "off drops the diagnostic");
+}
+
+#[test]
+fn warn_and_err_override_applied() {
+    let mut session = Session::new();
+    session
+        .analyzers
+        .insert(crate::routing::Language::Solidity, Box::new(MixedStub));
+    session.config.lint.rules.insert(
+        "correctness/parse-error".to_string(),
+        forgels_lint::RuleLevel::Warn,
+    );
+    session.config.lint.rules.insert(
+        "correctness/unused".to_string(),
+        forgels_lint::RuleLevel::Err,
+    );
+    let mut workspace = Workspace::new();
+    super::stub::init(&mut session, &mut workspace);
+    let open = r#"{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///repo/W.sol","languageId":"solidity","version":1,"text":"ab"}}}"#;
+    assert!(handle_message(&mut session, &mut workspace, open).is_none());
+    let notes = immediate_notifications(&session, &mut workspace, open);
+    assert_eq!(notes.len(), 1);
+    let value: Value = serde_json::from_str(&notes[0]).expect("frame is json");
+    let diagnostics = value
+        .pointer("/params/diagnostics")
+        .expect("has diagnostics")
+        .as_array()
+        .expect("array");
+    assert_eq!(diagnostics.len(), 2);
+    assert_eq!(
+        diagnostics[0].pointer("/severity").expect("severity"),
+        &serde_json::json!(2),
+        "parse-error downgraded to warn"
+    );
+    assert_eq!(
+        diagnostics[1].pointer("/severity").expect("severity"),
+        &serde_json::json!(1),
+        "unused upgraded to err"
+    );
+}
+
+#[test]
+fn excluded_file_publishes_empty_and_clears_store() {
+    let mut session = session_with_stub(true);
+    session.config.lint.excludes = vec!["lib/**".to_string()];
+    let mut workspace = Workspace::new();
+    super::stub::init(&mut session, &mut workspace);
+    workspace.set_roots(vec![std::path::PathBuf::from("/repo")]);
+    let open = r#"{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///repo/lib/E.sol","languageId":"solidity","version":1,"text":"broken"}}}"#;
+    assert!(handle_message(&mut session, &mut workspace, open).is_none());
+    let notes = immediate_notifications(&session, &mut workspace, open);
+    assert_eq!(notes.len(), 1);
+    let value: Value = serde_json::from_str(&notes[0]).expect("frame is json");
+    let diagnostics = value
+        .pointer("/params/diagnostics")
+        .expect("has diagnostics")
+        .as_array()
+        .expect("array");
+    assert!(diagnostics.is_empty(), "excluded file publishes empty");
+    let path = std::path::PathBuf::from("/repo/lib/E.sol");
+    assert!(
+        workspace.diagnostics_for(&path).is_empty(),
+        "no stale diagnostics stored"
+    );
+}

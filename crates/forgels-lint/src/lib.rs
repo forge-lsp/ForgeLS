@@ -7,6 +7,7 @@
 
 pub mod config;
 pub mod diagnostic;
+pub mod filter;
 pub mod fix;
 pub mod plugin;
 pub mod reporter;
@@ -14,8 +15,9 @@ pub mod rule;
 pub mod runner;
 pub mod severity;
 
-pub use config::{LintConfig, LintConfigError, RuleLevel};
+pub use config::{FlsConfig, FormatConfig, LintConfig, LintConfigError, RuleLevel};
 pub use diagnostic::{Applicability, LintDiagnostic, LintFix};
+pub use filter::should_lint;
 pub use fix::{FixOutcome, apply};
 pub use plugin::{CorrectnessPlugin, LintPlugin, Registry, RuleMeta, builtin_correctness_plugin};
 pub use reporter::{FileReport, report, report_json};
