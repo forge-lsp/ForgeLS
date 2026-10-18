@@ -331,7 +331,8 @@ pub(crate) fn parse_user_type(
 
 /// Parse `event Name(params) [anonymous];`, keeping name plus params.
 ///
-/// Params reuse param parsing so `indexed` stays attached to the name.
+/// Params keep `indexed` via param parsing so counts stay exact.
+/// The trailing `anonymous` token is stored for limit checks.
 /// Missing `;` is one error with the node kept for hover and goto.
 pub(crate) fn parse_event(cursor: &mut Cursor, errors: &mut Vec<ParseError>) -> Option<SyntaxNode> {
     let Some(head) = cursor.bump() else {
@@ -374,8 +375,10 @@ pub(crate) fn parse_event(cursor: &mut Cursor, errors: &mut Vec<ParseError>) -> 
             return None;
         }
     }
-    if cursor.peek_kind() == Some(SolidityKind::Anonymous.as_u16()) {
-        cursor.bump();
+    if cursor.peek_kind() == Some(SolidityKind::Anonymous.as_u16())
+        && let Some(token) = cursor.bump()
+    {
+        children.push(token_element(token));
     }
     let end = match cursor.expect(SolidityKind::Semicolon, "`;`") {
         Ok(semi) => semi.span.end,

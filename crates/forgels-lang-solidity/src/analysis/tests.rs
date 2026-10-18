@@ -6100,3 +6100,117 @@ fn visibility_private_across_files_in_derived_errors() {
         "private function 'foo' cannot be called from derived contract 'D'"
     );
 }
+
+#[test]
+fn unknown_underscore_placeholder_stays_silent() {
+    let text = "contract C {\nmodifier onlyOwner() {\n_;\n}\n}";
+    assert!(
+        diagnostics_of(text).is_empty(),
+        "diags: {:?}",
+        diagnostics_of(text)
+    );
+}
+
+#[test]
+fn unknown_bare_underscore_stays_silent() {
+    let text = "contract C {\nfunction f() public {\n_;\n}\n}";
+    assert!(
+        diagnostics_of(text).is_empty(),
+        "diags: {:?}",
+        diagnostics_of(text)
+    );
+}
+
+#[test]
+fn interface_state_var_errors() {
+    let text = "interface I {\nuint256 total;\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "interface 'I' cannot have state variable 'total'"
+    );
+}
+
+#[test]
+fn interface_constructor_errors() {
+    let text = "interface I {\nconstructor() {}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(found[0].message, "interface 'I' cannot have constructor");
+}
+
+#[test]
+fn interface_clean_stays_silent() {
+    let text = "interface I {\nfunction total() external returns (uint256);\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn contract_state_var_and_constructor_stay_silent() {
+    let text = "contract C {\nuint256 total;\nconstructor() {}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn library_state_var_stays_silent_deferred() {
+    let text = "library L {\nuint256 total;\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn event_indexed_params_are_stored() {
+    let text = "contract C {\nevent Transfer(address indexed from, uint256 value);\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let events = file.contracts()[0].events();
+    assert_eq!(events.len(), 1);
+    let params = events[0].params();
+    assert_eq!(params.len(), 2);
+    assert!(params[0].is_indexed());
+    assert!(params[0].indexed_span().is_some());
+    assert!(!params[1].is_indexed());
+    assert_eq!(params[0].name().as_deref(), Some("from"));
+}
+
+#[test]
+fn event_anonymous_flag_is_stored() {
+    let text = "contract C {\nevent Transfer(address a) anonymous;\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let events = file.contracts()[0].events();
+    assert_eq!(events.len(), 1);
+    assert!(events[0].is_anonymous());
+    assert!(events[0].anonymous_span().is_some());
+}
+
+#[test]
+fn event_four_indexed_errors() {
+    let text = "contract C {\nevent E(address indexed a, uint indexed b, uint indexed c, uint indexed d);\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "event 'E' has 4 indexed params but max is 3"
+    );
+}
+
+#[test]
+fn event_three_indexed_stays_silent() {
+    let text = "contract C {\nevent E(address indexed a, uint indexed b, uint indexed c);\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn event_anonymous_four_indexed_stays_silent() {
+    let text = "contract C {\nevent E(address indexed a, uint indexed b, uint indexed c, uint indexed d) anonymous;\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn event_no_indexed_stays_silent() {
+    let text = "contract C {\nevent Transfer(address from, uint256 value);\n}";
+    assert!(diagnostics_of(text).is_empty());
+}

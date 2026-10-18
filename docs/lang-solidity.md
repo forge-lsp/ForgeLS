@@ -312,6 +312,7 @@ Status: beta lexer, parser, and analysis implemented.
 - Skips: declaration name spans, member names after a dot, emit names (owned by `unknown_emit`), revert names (owned by `unknown_error`), deploy names (owned by deploy arity), import and pragma spans, assembly bodies.
 - Resolve order: scope, dep exports, forge asserts, allowlists (`GLOBAL_RECEIVERS`, `ALWAYS_OK`), then one way prefix escape for typing (`tot` before `total` stays silent, `totalX` still errors).
 - Error: `unresolved identifier '{name}'` with the token span. Unknown plain callees error, unknown member names stay silent, emit and revert names never double.
+- Placeholder: bare `_` stays silent (modifier placeholder, ignored bindings). References and rename return `None` for it by design.
 - Limits: reserved words used as names stay silent (`Ident` only), return param names are not tracked, free functions are out of scope.
 
 ## Block scopes
@@ -755,6 +756,36 @@ Status: beta lexer, parser, and analysis implemented.
   text, except arrays which still check), struct fields, event and
   error params.
 - Severity: Error in V1, same deviation and follow-up note as above.
+
+## Interface rules
+
+- Scope: `analysis::interface` plus `ContractDef::kind_label`. No new
+  `SymbolKind`, no grammar change.
+- Rules:
+  - State variables in an `interface` error with
+    `interface 'I' cannot have state variable 'x'`.
+  - Constructors in an `interface` error with
+    `interface 'I' cannot have constructor`.
+- Silent: plain contracts and libraries stay silent here. Clean
+  interfaces with only functions stay silent.
+- Deferred: library rules fully deferred. Constant versus immutable
+  needs parser support that does not exist yet, so no library check
+  runs. No half implementation.
+
+## Event indexed limit
+
+- Scope: `analysis::event` plus `Param::is_indexed`,
+  `Param::indexed_span`, `EventDef::is_anonymous`, and
+  `EventDef::anonymous_span`. Parser stores `indexed` in `Param` and
+  `anonymous` in `Event`. Name lookup skips `indexed` so param names
+  stay correct.
+- Rule: non-anonymous events with more than 3 indexed params error
+  with `event 'E' has N indexed params but max is 3` at the event
+  name. File level and contract events both lint.
+- Silent: 3 or fewer indexed params stay silent. Anonymous events
+  stay silent here.
+- Deferred: mapping indexed, string or bytes indexed, anonymous
+  limits and combos. Spec is unverified, so no check runs for them.
 
 ## Pragma version (deferred)
 

@@ -21,6 +21,7 @@ mod completion;
 mod data_location;
 mod emits;
 mod errors;
+mod event;
 mod folding;
 pub(crate) mod forge;
 pub(crate) mod function;
@@ -31,6 +32,7 @@ mod hover;
 mod imports;
 pub(crate) mod inheritance;
 mod inlay;
+mod interface;
 pub(crate) mod members;
 pub(crate) mod meta;
 mod mutability;
@@ -737,6 +739,8 @@ impl SolidityAnalyzer {
         out.extend(override_diagnostics::override_diagnostics(file));
         out.extend(shadow::shadow_diagnostics(file, scope));
         out.extend(data_location::data_location_diagnostics(file));
+        out.extend(interface::interface_diagnostics(file));
+        out.extend(event::event_diagnostics(file));
         out.extend(unknown::unknown_identifier_diagnostics(
             file, text, scope, deps,
         ));

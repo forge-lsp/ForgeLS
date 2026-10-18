@@ -282,8 +282,8 @@ impl AstNode for UserTypeDef {
 
 /// Event definition: name plus params.
 ///
-/// Children hold the name token first, then one Param node per arg.
-/// `indexed` is consumed during parsing so the name stays correct.
+/// Children hold the name token first, then one Param node per arg, plus
+/// the `anonymous` token when present. `indexed` lives inside each Param.
 #[derive(Debug, Clone)]
 pub struct EventDef {
     syntax: SyntaxNode,
@@ -321,6 +321,28 @@ impl EventDef {
             .iter()
             .find_map(|element| match element {
                 SyntaxElement::Token(token) if token.kind == SolidityKind::Ident.as_u16() => {
+                    Some(token.span)
+                }
+                _ => None,
+            })
+    }
+
+    pub fn is_anonymous(&self) -> bool {
+        self.syntax.children.iter().any(|element| {
+            matches!(
+                element,
+                SyntaxElement::Token(token)
+                    if token.kind == SolidityKind::Anonymous.as_u16()
+            )
+        })
+    }
+
+    pub fn anonymous_span(&self) -> Option<Span> {
+        self.syntax
+            .children
+            .iter()
+            .find_map(|element| match element {
+                SyntaxElement::Token(token) if token.kind == SolidityKind::Anonymous.as_u16() => {
                     Some(token.span)
                 }
                 _ => None,
