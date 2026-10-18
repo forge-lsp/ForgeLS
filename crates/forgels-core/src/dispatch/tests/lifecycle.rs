@@ -28,16 +28,32 @@ fn advertises_exact_beta_capabilities() {
     assert_eq!(
         keys,
         vec![
+            "callHierarchyProvider",
+            "codeActionProvider",
             "completionProvider",
             "definitionProvider",
+            "documentSymbolProvider",
+            "foldingRangeProvider",
             "hoverProvider",
-            "textDocumentSync"
+            "inlayHintProvider",
+            "referencesProvider",
+            "renameProvider",
+            "selectionRangeProvider",
+            "semanticTokensProvider",
+            "signatureHelpProvider",
+            "textDocumentSync",
+            "typeHierarchyProvider",
+            "workspaceSymbolProvider"
         ]
     );
     let triggers = caps
         .pointer("/completionProvider/triggerCharacters")
         .expect("has triggers");
-    assert_eq!(triggers, &serde_json::json!(["\"", "'", "/"]));
+    assert_eq!(triggers, &serde_json::json!(["\"", "'", "/", "."]));
+    let sig_triggers = caps
+        .pointer("/signatureHelpProvider/triggerCharacters")
+        .expect("has signature triggers");
+    assert_eq!(sig_triggers, &serde_json::json!(["(", ","]));
 }
 
 #[test]
@@ -54,7 +70,7 @@ fn replies_method_not_found_and_keeps_running() {
     let mut session = Session::new();
     let mut workspace = Workspace::new();
     init(&mut session, &mut workspace);
-    let body = r#"{"jsonrpc":"2.0","id":2,"method":"textDocument/signatureHelp","params":{}}"#;
+    let body = r#"{"jsonrpc":"2.0","id":2,"method":"textDocument/inlineValue","params":{}}"#;
     let reply = handle_message(&mut session, &mut workspace, body).expect("must reply");
     let value: Value = serde_json::from_str(&reply).expect("reply is json");
     assert_eq!(

@@ -6,6 +6,9 @@ use forgels_common::paths::{Remapping, parse_remapping};
 /// Publish debounce default: quiet period after the last keystroke.
 pub const DEFAULT_PUBLISH_DELAY_MS: u64 = 200;
 
+/// Deps with Foundry `src` layout: `lib/<name>/src/` holds sources.
+const KNOWN_SRC_DEPS: &[&str] = &["forge-std", "ds-test"];
+
 /// Server configuration. Defaults keep the server running with zero files.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
@@ -102,9 +105,9 @@ impl Config {
     /// Load `foundry.toml` remappings with `libs` fallback.
     ///
     /// Missing files mean defaults with no warnings. Explicit `remappings`
-    /// win; when absent, each immediate subdir of every `libs` dir becomes
-    /// `name/=lib/name/` so plain `import "forge-std/X.sol"` resolves.
-    /// Checks top level then `profile.default`, the Foundry layout.
+    /// win; when absent, known `src` deps resolve to `lib/<name>/src/`,
+    /// then each remaining subdir of every `libs` dir becomes
+    /// `name/=lib/name/`. Checks top level then `profile.default`.
     pub fn load_foundry(path: &Path) -> (Self, Vec<String>) {
         let text = match std::fs::read_to_string(path) {
             Ok(text) => text,
@@ -130,7 +133,14 @@ impl Config {
         }
         let libs = pick_foundry_strings(&table, "libs").unwrap_or(vec![String::from("lib")]);
         let base = path.parent().unwrap_or(Path::new("."));
-        config.remappings = auto_remappings(base, &libs);
+        let mut known = default_known_remappings(base, &libs);
+        let mut auto = auto_remappings(base, &libs);
+        auto.retain(|item| {
+            !is_known_src(&item.prefix) && !known.iter().any(|keep| keep.prefix == item.prefix)
+        });
+        known.extend(auto);
+        known.sort_by(|a, b| a.prefix.cmp(&b.prefix));
+        config.remappings = known;
         (config, warnings)
     }
 
@@ -197,6 +207,40 @@ fn pick_foundry_strings(table: &toml::Table, key: &str) -> Option<Vec<String>> {
         out.push(item.as_str()?.to_string());
     }
     Some(out)
+}
+
+/// Known `src` remappings: `name/` points at `lib/name/src/` when present.
+/// Respects custom `libs`, skips missing `src` silently, first wins.
+fn default_known_remappings(base: &Path, libs: &[String]) -> Vec<Remapping> {
+    let mut out: Vec<Remapping> = Vec::new();
+    for lib in libs {
+        let dir = if Path::new(lib).is_absolute() {
+            PathBuf::from(lib)
+        } else {
+            base.join(lib)
+        };
+        for &name in KNOWN_SRC_DEPS {
+            let prefix = format!("{name}/");
+            if out.iter().any(|item| item.prefix == prefix) {
+                continue;
+            }
+            if dir.join(name).join("src").is_dir() {
+                out.push(Remapping::new(
+                    prefix,
+                    PathBuf::from(lib).join(name).join("src"),
+                ));
+            }
+        }
+    }
+    out.sort_by(|a, b| a.prefix.cmp(&b.prefix));
+    out
+}
+
+/// True when `prefix` names a known `src` dep such as `forge-std/`.
+fn is_known_src(prefix: &str) -> bool {
+    KNOWN_SRC_DEPS
+        .iter()
+        .any(|name| prefix == format!("{name}/"))
 }
 
 /// Auto remappings from `libs` dirs: each immediate subdir `name` in
@@ -273,5 +317,67 @@ mod tests {
         assert_eq!(config.root, Some(PathBuf::from("/repo")));
         assert_eq!(warnings.len(), 1);
         std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn known_src_layout_resolves() {
+        let root = std::env::temp_dir().join(format!("forgels-known-{}-a", std::process::id()));
+        std::fs::create_dir_all(root.join("lib/forge-std/src")).expect("mkdir");
+        std::fs::write(root.join("foundry.toml"), "[profile.default]\n").expect("write");
+        let (config, warnings) = Config::load_foundry(&root.join("foundry.toml"));
+        assert!(warnings.is_empty());
+        assert!(
+            config
+                .remappings
+                .iter()
+                .any(|item| item.prefix == "forge-std/"
+                    && item.target.as_path() == Path::new("lib/forge-std/src"))
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn explicit_remappings_win_over_known() {
+        let root = std::env::temp_dir().join(format!("forgels-known-{}-b", std::process::id()));
+        std::fs::create_dir_all(root.join("lib/forge-std/src")).expect("mkdir");
+        std::fs::write(
+            root.join("foundry.toml"),
+            "remappings = [\"forge-std/=custom/std/\"]\n",
+        )
+        .expect("write");
+        let (config, warnings) = Config::load_foundry(&root.join("foundry.toml"));
+        assert!(warnings.is_empty());
+        assert_eq!(config.remappings.len(), 1);
+        assert_eq!(config.remappings[0].prefix, "forge-std/");
+        assert_eq!(config.remappings[0].target, PathBuf::from("custom/std/"));
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn missing_src_stays_silent() {
+        let root = std::env::temp_dir().join(format!("forgels-known-{}-c", std::process::id()));
+        std::fs::create_dir_all(root.join("lib/forge-std")).expect("mkdir");
+        std::fs::write(root.join("foundry.toml"), "[profile.default]\n").expect("write");
+        let (config, warnings) = Config::load_foundry(&root.join("foundry.toml"));
+        assert!(warnings.is_empty());
+        assert!(config.remappings.is_empty());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn custom_libs_honored_for_known() {
+        let root = std::env::temp_dir().join(format!("forgels-known-{}-d", std::process::id()));
+        std::fs::create_dir_all(root.join("custom/forge-std/src")).expect("mkdir");
+        std::fs::write(root.join("foundry.toml"), "libs = [\"custom\"]\n").expect("write");
+        let (config, warnings) = Config::load_foundry(&root.join("foundry.toml"));
+        assert!(warnings.is_empty());
+        assert!(
+            config
+                .remappings
+                .iter()
+                .any(|item| item.prefix == "forge-std/"
+                    && item.target.as_path() == Path::new("custom/forge-std/src"))
+        );
+        std::fs::remove_dir_all(&root).ok();
     }
 }

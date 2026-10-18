@@ -2,6 +2,14 @@ use super::{collect_symbols, word_at};
 use crate::SolidityFile;
 use forgels_syntax::Span;
 
+/// Detail plus attached NatSpec when the kind allows it.
+fn with_docs(text: &str, detail: &str, kind: super::SymbolKind, decl_start: u32) -> String {
+    if !super::natspec::allows_kind(kind) {
+        return detail.to_string();
+    }
+    super::natspec::with_natspec(detail, super::natspec::natspec_for(text, decl_start))
+}
+
 /// Hover result: display text plus the declaration span.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Hover {
@@ -12,27 +20,186 @@ pub struct Hover {
 /// Hover info for the word at `offset`, if it names a visible declaration.
 ///
 /// Member positions after a dot resolve against the receiver type first.
-/// Positions on whitespace, operators, or undeclared words return `None`.
+/// Array, address, bytes, function, and global members use the cursor
+/// member span since their detail spans are synthetic. `type(Inner)`
+/// members resolve via the inner dispatch set the same way. Emit name slots resolve to event declarations only, so a
+/// function with the same name never shadows the event. Assembly bodies
+/// resolve flat Yul decls, then Yul builtins, then outer scope. Positions on
+/// whitespace, operators, or undeclared words return `None`.
 pub fn hover_at(file: &SolidityFile, text: &str, offset: u32) -> Option<Hover> {
+    if let Some(found) = hover_yul_at(file, text, offset) {
+        return Some(found);
+    }
+    if let Some(type_ctx) = super::meta::type_context_at(text, offset)
+        && (type_ctx.member_span.contains(offset) || type_ctx.member_span.end == offset)
+        && !type_ctx.member.is_empty()
+    {
+        let found = super::meta::meta_member(&type_ctx.inner, &type_ctx.member)?;
+        return Some(Hover {
+            contents: found.detail,
+            span: type_ctx.member_span,
+        });
+    }
     // Receiver itself keeps scope hover; only the member uses type lookup.
+    // Chained `a.b.c` resolves the final segment only via the full chain.
     if let Some(ctx) = super::members::member_context_at(text, offset)
         && (ctx.member_span.contains(offset) || ctx.member_span.end == offset)
     {
         let scope = collect_symbols(file);
-        let kind = super::members::receiver_type(file, &scope, offset, &ctx.receiver);
-        let found = super::members::members_of(file, &kind)
+        let chained = super::members::chain_before(text, ctx.dot_pos).len() >= 2;
+        let kind = super::members::parent_kind_for_member(file, &scope, text, offset, &ctx, &[]);
+        if let super::members::TypeKind::Array { dynamic } = kind
+            && let Some(found) = super::array::array_member(&ctx.member, dynamic)
+        {
+            return Some(Hover {
+                contents: found.detail,
+                span: ctx.member_span,
+            });
+        }
+        if let super::members::TypeKind::Address { payable } = kind
+            && let Some(found) = super::address::address_member(&ctx.member, payable)
+        {
+            return Some(Hover {
+                contents: found.detail,
+                span: ctx.member_span,
+            });
+        }
+        if matches!(kind, super::members::TypeKind::Bytes)
+            && let Some(found) = super::bytes::bytes_member(&ctx.member)
+        {
+            return Some(Hover {
+                contents: found.detail,
+                span: ctx.member_span,
+            });
+        }
+        if matches!(kind, super::members::TypeKind::Function)
+            && let Some(found) = super::function::function_member(&ctx.member)
+        {
+            return Some(Hover {
+                contents: found.detail,
+                span: ctx.member_span,
+            });
+        }
+        if let super::members::TypeKind::Global(ref name) = kind
+            && let Some(found) = super::globals::global_member(name, &ctx.member)
+        {
+            return Some(Hover {
+                contents: found.detail,
+                span: ctx.member_span,
+            });
+        }
+        // String has no members by design: fall through to no hover.
+        // User type entries are synthetic: show the cursor member span.
+        if let super::members::TypeKind::UserType(_) = kind
+            && let Some(found) = super::members::members_of(file, &kind)
+                .into_iter()
+                .find(|member| member.name == ctx.member)
+        {
+            return Some(Hover {
+                contents: found.detail,
+                span: ctx.member_span,
+            });
+        }
+        if let Some(found) = super::members::members_of(file, &kind)
             .into_iter()
-            .find(|member| member.name == ctx.member)?;
+            .find(|member| member.name == ctx.member)
+        {
+            return Some(Hover {
+                contents: with_docs(text, &found.detail, found.kind, found.span.start),
+                span: found.span,
+            });
+        }
+        {
+            let scope = collect_symbols(file);
+            if !chained
+                && let Some((found, _)) = super::using::resolve_using_member(
+                    file,
+                    &scope,
+                    offset,
+                    &ctx.receiver,
+                    &ctx.member,
+                    &[],
+                )
+            {
+                return Some(Hover {
+                    contents: with_docs(text, &found.detail, found.kind, found.span.start),
+                    span: found.span,
+                });
+            }
+        }
+        if !chained
+            && let Some(builtin) =
+                super::forge::member_builtin(&ctx.receiver, &ctx.member, &scope, offset)
+        {
+            return Some(Hover {
+                contents: super::forge::builtin_detail(builtin),
+                span: ctx.member_span,
+            });
+        }
+        return None;
+    }
+    if let Some((name, span)) = super::emits::emit_name_at(text, offset) {
+        let found = super::emits::resolve_local_emit(file, offset, &name)?;
         return Some(Hover {
-            contents: found.detail,
-            span: found.span,
+            contents: with_docs(text, &found.detail, found.kind, found.span.start),
+            span,
         });
     }
-    let (word, _) = word_at(text, offset)?;
+    if let Some((name, span)) = super::errors::revert_name_at(text, offset) {
+        let found = super::errors::resolve_local_error(file, offset, &name)?;
+        return Some(Hover {
+            contents: with_docs(text, &found.detail, found.kind, found.span.start),
+            span,
+        });
+    }
+    let (word, span) = word_at(text, offset)?;
+    let scope = collect_symbols(file);
+    if let Some(symbol) = scope.resolve(&word, offset) {
+        return Some(Hover {
+            contents: with_docs(text, &symbol.detail, symbol.kind, symbol.span.start),
+            span: symbol.span,
+        });
+    }
+    let builtin = super::forge::plain_builtin(file, &scope, offset, &word)?;
+    Some(Hover {
+        contents: super::forge::builtin_detail(builtin),
+        span,
+    })
+}
+
+/// Yul hover inside assembly, or `None` outside or on unknown words.
+///
+/// Order is flat Yul decl, Yul builtin, then outer scope. Yul decls use
+/// their declaration span, builtins and outer uses keep the cursor word
+/// span for builtins and the outer decl span for scope hits.
+fn hover_yul_at(file: &SolidityFile, text: &str, offset: u32) -> Option<Hover> {
+    use forgels_syntax::Lexer;
+    let tokens = crate::SolidityLexer.tokenize(text);
+    let assemblies = super::unknown::assembly_ranges(&tokens);
+    if !super::yul::is_in_assembly(&assemblies, offset) {
+        return None;
+    }
+    let (word, span) = word_at(text, offset)?;
+    if word.is_empty() {
+        return None;
+    }
+    let decls = super::yul::collect_yul_decls(&tokens, &assemblies);
+    if let Some(decl) = super::yul::find_yul_decl(&decls, &word, offset) {
+        return Some(Hover {
+            contents: super::yul::yul_decl_detail(decl),
+            span: decl.span,
+        });
+    }
+    if super::yul::is_yul_builtin(&word) {
+        return Some(Hover {
+            contents: super::yul::yul_builtin_detail(&word),
+            span,
+        });
+    }
     let scope = collect_symbols(file);
     let symbol = scope.resolve(&word, offset)?;
     Some(Hover {
-        contents: symbol.detail.clone(),
+        contents: with_docs(text, &symbol.detail, symbol.kind, symbol.span.start),
         span: symbol.span,
     })
 }

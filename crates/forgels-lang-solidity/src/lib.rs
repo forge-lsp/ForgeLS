@@ -10,15 +10,18 @@ pub mod parser;
 
 pub use analysis::{
     CompletionItem, CompletionKind, Hover, Scope, SolidityAnalyzer, Symbol, SymbolKind,
-    collect_symbols, complete_at, complete_import_paths, completion_item_kind, exports_of,
-    goto_definition, hover_at, import_path_at, imports_in, resolve_in_dep,
+    collect_symbols, complete_at, complete_import_paths, completion_item_kind, document_symbols_in,
+    exports_of, find_references, find_rename, goto_definition, hover_at, import_path_at,
+    imports_in, is_valid_rename, resolve_in_dep, signature_at,
 };
 
 pub use ast::{
-    BlockNode, CallStmt, ContractDef, EnumDef, FunctionDef, ImportDirective, LocalVar, MemberExpr,
-    Param, PragmaDirective, Returns, SolidityFile, SolidityNode, StateVar, StructDef, TypeNode,
+    BlockNode, CallStmt, ContractDef, DataLocation, EmitStmt, EnumDef, ErrorDef, EventDef,
+    FunctionDef, ImportDirective, LocalVar, MAX_CHAIN_TAILS, MemberExpr, ModifierDef, Mutability,
+    NewStmt, Param, PragmaDirective, Returns, RevertStmt, SolidityFile, SolidityNode, StateVar,
+    StructDef, TypeNode, UserTypeDef, UsingDirective, Visibility,
 };
-pub use lexer::{KEYWORDS, SolidityKind, SolidityLexer, keyword_kind, symbol_kind};
+pub use lexer::{KEYWORDS, SolidityKind, SolidityLexer, builtin_types, keyword_kind, symbol_kind};
 pub use parser::SolidityParser;
 
 pub const LANGUAGE_ID: &str = "solidity";

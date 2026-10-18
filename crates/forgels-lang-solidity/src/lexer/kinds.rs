@@ -237,8 +237,8 @@ impl SolidityKind {
 }
 
 /// Every fixed keyword spelling, for completion lists.
-/// Sized types (`uint8`, `bytes32`) and grouped words are intentionally
-/// absent: they complete from type context, not from this table.
+/// Sized `uint`/`int`/`bytes` types live in `builtin_types`, not here.
+/// Fixed `MxN` forms stay out: 5184 combos would flood completion.
 pub const KEYWORDS: &[&str] = &[
     "pragma",
     "import",
@@ -309,6 +309,24 @@ pub const KEYWORDS: &[&str] = &[
     "unicode",
     "using",
 ];
+
+/// All builtin sized types in deterministic order: `uint8` to `uint256`,
+/// `int8` to `int256`, then `bytes1` to `bytes32`. Total is 96 entries.
+/// Fixed `MxN` forms stay out by design: 5184 combos would flood
+/// completion. Bare `fixed` and `ufixed` already live in `KEYWORDS`.
+pub fn builtin_types() -> Vec<String> {
+    let mut out = Vec::with_capacity(96);
+    for size in (8..=256).step_by(8) {
+        out.push(format!("uint{size}"));
+    }
+    for size in (8..=256).step_by(8) {
+        out.push(format!("int{size}"));
+    }
+    for size in 1..=32 {
+        out.push(format!("bytes{size}"));
+    }
+    out
+}
 
 /// Map a word to its keyword kind. Returns `None` for identifiers,
 /// including sized types outside their valid ranges.

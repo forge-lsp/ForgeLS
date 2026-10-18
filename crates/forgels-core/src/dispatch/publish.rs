@@ -5,6 +5,7 @@ use forgels_common::paths::resolve_import_full;
 
 use super::sync::{resolve_root_for, uri_to_path};
 use super::{Session, Workspace};
+use crate::analyzer::ProjectContext;
 use crate::diagnostics::{span_to_range, unresolved_import_to_diagnostic};
 use forgels_protocol::{Diagnostic, DiagnosticSeverity};
 use forgels_syntax::Span;
@@ -81,9 +82,13 @@ fn publish_for_uri(
     version: Option<u64>,
 ) -> Option<String> {
     let path = uri_to_path(uri);
+    let analyzer = session.analyzers.get(&workspace.get(&path)?.language)?;
+    let found = {
+        let doc = workspace.get(&path)?;
+        let ctx = ProjectContext::new(&path, &doc.text, 0, workspace);
+        analyzer.diagnostics_ctx(&ctx)
+    };
     let doc = workspace.get(&path)?;
-    let analyzer = session.analyzers.get(&doc.language)?;
-    let found = analyzer.diagnostics(&doc.text);
     let mut ordered: Vec<(Span, Diagnostic)> = found
         .iter()
         .map(|item| {

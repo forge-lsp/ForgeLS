@@ -16,6 +16,7 @@ pub struct CompletionItem {
 pub enum CompletionKind {
     Symbol(SymbolKind),
     Keyword,
+    BuiltinType,
     Path,
     Package,
 }
@@ -23,33 +24,59 @@ pub enum CompletionKind {
 /// Map a completion origin to its LSP number.
 ///
 /// State vars stay Variable (6), same as locals and params.
-/// Enum members map to 20 once the symbol exists (follow-up).
+/// Builtin types reuse Keyword (14) so they render as keywords.
 pub fn completion_item_kind(kind: CompletionKind) -> CompletionItemKind {
     match kind {
-        CompletionKind::Keyword => CompletionItemKind::KEYWORD,
+        CompletionKind::Keyword | CompletionKind::BuiltinType => CompletionItemKind::KEYWORD,
         CompletionKind::Path => CompletionItemKind::FILE,
         CompletionKind::Package => CompletionItemKind::FOLDER,
         CompletionKind::Symbol(symbol) => match symbol {
             SymbolKind::Contract => CompletionItemKind::CLASS,
-            SymbolKind::Function => CompletionItemKind::FUNCTION,
+            SymbolKind::Function | SymbolKind::Modifier => CompletionItemKind::FUNCTION,
             SymbolKind::StateVar | SymbolKind::LocalVar | SymbolKind::Param => {
                 CompletionItemKind::VARIABLE
             }
             SymbolKind::Field => CompletionItemKind::FIELD,
             SymbolKind::Struct => CompletionItemKind::STRUCT,
             SymbolKind::Enum => CompletionItemKind::ENUM,
+            SymbolKind::EnumMember => CompletionItemKind::ENUM_MEMBER,
+            SymbolKind::Error | SymbolKind::Event => CompletionItemKind::EVENT,
+            SymbolKind::UserType => CompletionItemKind::TYPE_PARAMETER,
         },
     }
 }
 
 /// Suggest symbols visible at `offset`, filtered by the typed prefix.
 ///
-/// Shadowed names appear once with the innermost detail. Keywords whose
-/// spelling matches the prefix follow the symbols. Positions after a dot
-/// suggest members of the receiver type instead of scope symbols.
+/// Shadowed names appear once with the innermost detail. Keywords and
+/// builtin sized types whose spelling matches the prefix follow the
+/// symbols in one sorted tail. Positions after a dot suggest members
+/// of the receiver type instead of scope symbols.
+/// `type(Inner).` positions suggest the inner dispatch set. Assembly
+/// bodies suggest flat Yul decls plus Yul builtins plus outer scope.
 pub fn complete_at(file: &SolidityFile, text: &str, offset: u32) -> Vec<CompletionItem> {
+    if let Some(items) = complete_yul_at(file, text, offset) {
+        return items;
+    }
+    if let Some(type_ctx) = super::meta::type_context_at(text, offset) {
+        let kind = super::members::TypeKind::Meta(type_ctx.inner.clone());
+        let mut items: Vec<CompletionItem> = super::members::members_of(file, &kind)
+            .into_iter()
+            .filter(|member| member.name.starts_with(type_ctx.member.as_str()))
+            .map(|member| CompletionItem {
+                label: member.name,
+                detail: member.detail,
+                kind: CompletionKind::Symbol(member.kind),
+            })
+            .collect();
+        items.sort_by(|left, right| left.label.cmp(&right.label));
+        return items;
+    }
     if let Some(ctx) = super::members::member_context_at(text, offset) {
-        return complete_members(file, offset, &ctx);
+        return complete_members(file, text, offset, &ctx);
+    }
+    if super::emits::is_emit_name_context(text, offset) {
+        return complete_emit_events(file, text, offset);
     }
     let prefix = prefix_at(text, offset);
     let scope = collect_symbols(file);
@@ -68,40 +95,185 @@ pub fn complete_at(file: &SolidityFile, text: &str, offset: u32) -> Vec<Completi
             });
         }
     }
-    let mut keywords: Vec<&str> = crate::lexer::KEYWORDS
+    for builtin in super::forge::plain_builtin_list(file, &prefix, &scope, offset) {
+        let label = builtin.name.to_string();
+        if seen.contains(&label) {
+            continue;
+        }
+        seen.push(label.clone());
+        items.push(CompletionItem {
+            label,
+            detail: super::forge::builtin_detail(builtin),
+            kind: CompletionKind::Symbol(SymbolKind::Function),
+        });
+    }
+    let mut tail: Vec<CompletionItem> = crate::lexer::KEYWORDS
         .iter()
         .copied()
         .filter(|word| word.starts_with(prefix.as_str()))
-        .collect();
-    keywords.sort_unstable();
-    for word in keywords {
-        items.push(CompletionItem {
+        .map(|word| CompletionItem {
             label: word.to_string(),
             detail: "keyword".to_string(),
             kind: CompletionKind::Keyword,
+        })
+        .collect();
+    for name in crate::lexer::builtin_types() {
+        if !name.starts_with(prefix.as_str()) {
+            continue;
+        }
+        if seen.contains(&name) {
+            continue;
+        }
+        tail.push(CompletionItem {
+            label: name,
+            detail: "builtin type".to_string(),
+            kind: CompletionKind::BuiltinType,
         });
     }
+    tail.sort_by(|left, right| left.label.cmp(&right.label));
+    items.extend(tail);
     items
 }
 
 fn complete_members(
     file: &SolidityFile,
+    text: &str,
     offset: u32,
     ctx: &super::members::MemberContext,
 ) -> Vec<CompletionItem> {
     let scope = collect_symbols(file);
-    let kind = super::members::receiver_type(file, &scope, offset, &ctx.receiver);
-    let mut items: Vec<CompletionItem> = super::members::members_of(file, &kind)
-        .into_iter()
-        .filter(|member| member.name.starts_with(ctx.member.as_str()))
-        .map(|member| CompletionItem {
+    let chained = super::members::chain_before(text, ctx.dot_pos).len() >= 2;
+    let kind = super::members::parent_kind_for_member(file, &scope, text, offset, ctx, &[]);
+    let mut items: Vec<CompletionItem> = if chained {
+        Vec::new()
+    } else {
+        super::forge::member_builtin_list(&ctx.receiver, &ctx.member, &scope, offset)
+            .into_iter()
+            .map(|builtin| CompletionItem {
+                label: builtin.name.to_string(),
+                detail: super::forge::builtin_detail(builtin),
+                kind: CompletionKind::Symbol(SymbolKind::Function),
+            })
+            .collect()
+    };
+    let mut seen: Vec<String> = items.iter().map(|item| item.label.clone()).collect();
+    for member in super::members::members_of(file, &kind) {
+        if !member.name.starts_with(ctx.member.as_str()) {
+            continue;
+        }
+        if seen.contains(&member.name) {
+            continue;
+        }
+        seen.push(member.name.clone());
+        items.push(CompletionItem {
             label: member.name,
             detail: member.detail,
             kind: CompletionKind::Symbol(member.kind),
+        });
+    }
+    if chained {
+        items.sort_by(|left, right| left.label.cmp(&right.label));
+        return items;
+    }
+    for (info, _) in super::using::using_members_at(file, &scope, offset, &ctx.receiver, &[]) {
+        if !info.name.starts_with(ctx.member.as_str()) {
+            continue;
+        }
+        if seen.contains(&info.name) {
+            continue;
+        }
+        seen.push(info.name.clone());
+        items.push(CompletionItem {
+            label: info.name,
+            detail: info.detail,
+            kind: CompletionKind::Symbol(info.kind),
+        });
+    }
+    items.sort_by(|left, right| left.label.cmp(&right.label));
+    items
+}
+
+/// Event names for the emit slot, filtered by the typed prefix.
+///
+/// No keywords here: after `emit` only events complete. Local order is
+/// own contract, same file bases, then file level.
+fn complete_emit_events(file: &SolidityFile, text: &str, offset: u32) -> Vec<CompletionItem> {
+    let prefix = prefix_at(text, offset);
+    let mut items: Vec<CompletionItem> = super::emits::emit_candidates(file, offset)
+        .into_iter()
+        .filter(|symbol| symbol.name.starts_with(prefix.as_str()))
+        .map(|symbol| CompletionItem {
+            label: symbol.name,
+            detail: symbol.detail,
+            kind: CompletionKind::Symbol(symbol.kind),
         })
         .collect();
     items.sort_by(|left, right| left.label.cmp(&right.label));
     items
+}
+
+/// Yul completions inside assembly, or `None` outside.
+///
+/// Flat decls before `offset` plus Yul builtins plus outer scope, all
+/// filtered by prefix. Yul decls win over outer names. Order checked,
+/// so forward decls never suggest.
+fn complete_yul_at(file: &SolidityFile, text: &str, offset: u32) -> Option<Vec<CompletionItem>> {
+    let tokens = SolidityLexer.tokenize(text);
+    let assemblies = super::unknown::assembly_ranges(&tokens);
+    if !super::yul::is_in_assembly(&assemblies, offset) {
+        return None;
+    }
+    let prefix = prefix_at(text, offset);
+    let decls = super::yul::collect_yul_decls(&tokens, &assemblies);
+    let scope = collect_symbols(file);
+    let mut seen: Vec<String> = Vec::new();
+    let mut items: Vec<CompletionItem> = Vec::new();
+    for decl in &decls {
+        if decl.span.start > offset {
+            continue;
+        }
+        if decl.name.is_empty() || !decl.name.starts_with(prefix.as_str()) {
+            continue;
+        }
+        if seen.contains(&decl.name) {
+            continue;
+        }
+        seen.push(decl.name.clone());
+        items.push(CompletionItem {
+            label: decl.name.clone(),
+            detail: super::yul::yul_decl_detail(decl),
+            kind: CompletionKind::Symbol(super::SymbolKind::LocalVar),
+        });
+    }
+    for builtin in super::yul::YUL_BUILTINS {
+        if !builtin.starts_with(prefix.as_str()) {
+            continue;
+        }
+        if seen.contains(&(*builtin).to_string()) {
+            continue;
+        }
+        seen.push((*builtin).to_string());
+        items.push(CompletionItem {
+            label: (*builtin).to_string(),
+            detail: super::yul::yul_builtin_detail(builtin),
+            kind: CompletionKind::Symbol(super::SymbolKind::Function),
+        });
+    }
+    for symbol in scope.visible_at(offset) {
+        if symbol.name.is_empty() || !symbol.name.starts_with(prefix.as_str()) {
+            continue;
+        }
+        if seen.contains(&symbol.name) {
+            continue;
+        }
+        seen.push(symbol.name.clone());
+        items.push(CompletionItem {
+            label: symbol.name.clone(),
+            detail: symbol.detail.clone(),
+            kind: CompletionKind::Symbol(symbol.kind),
+        });
+    }
+    Some(items)
 }
 
 /// Typed fragment ending at `offset`: word chars directly before it.
@@ -526,7 +698,7 @@ fn split_bare_prefix(prefix: &str) -> BarePrefix<'_> {
     BarePrefix::Packages
 }
 
-/// Contract level exports of `text`: contracts, functions, structs, and enums.
+/// Contract level exports of `text`: contracts, functions, structs, enums, errors, events, modifiers, and user types.
 ///
 /// Parses with recovery so broken deps still contribute. Locals, params,
 /// and state vars stay local and never cross files. Caller filters by

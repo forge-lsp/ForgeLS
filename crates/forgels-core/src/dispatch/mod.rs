@@ -13,7 +13,15 @@ mod sync;
 mod tests;
 
 pub use publish::{drain_due, flush_all, immediate_notifications};
-pub(crate) use requests::{completion_response, definition_response, hover_response};
+pub(crate) use requests::{
+    call_hierarchy_incoming_response, call_hierarchy_outgoing_response,
+    call_hierarchy_prepare_response, code_action_response, completion_response,
+    definition_response, document_symbol_response, folding_range_response, hover_response,
+    inlay_hint_response, references_response, rename_response, selection_range_response,
+    semantic_tokens_response, signature_response, type_hierarchy_prepare_response,
+    type_hierarchy_subtypes_response, type_hierarchy_supertypes_response,
+    workspace_symbol_response,
+};
 pub(crate) use sync::{
     apply_did_change, apply_did_close, apply_did_open, apply_folder_change, apply_initialize_roots,
 };
@@ -25,8 +33,26 @@ pub fn server_capabilities() -> Value {
     serde_json::json!({
         "textDocumentSync": 1,
         "hoverProvider": true,
-        "completionProvider": { "triggerCharacters": ["\"", "'", "/"] },
-        "definitionProvider": true
+        "completionProvider": { "triggerCharacters": ["\"", "'", "/", "."] },
+        "signatureHelpProvider": { "triggerCharacters": ["(", ","] },
+        "definitionProvider": true,
+        "referencesProvider": true,
+        "documentSymbolProvider": true,
+        "workspaceSymbolProvider": true,
+        "renameProvider": true,
+        "inlayHintProvider": true,
+        "codeActionProvider": true,
+        "foldingRangeProvider": true,
+        "selectionRangeProvider": true,
+        "typeHierarchyProvider": true,
+        "semanticTokensProvider": {
+            "legend": {
+                "tokenTypes": forgels_protocol::SEMANTIC_TOKEN_TYPES,
+                "tokenModifiers": forgels_protocol::SEMANTIC_TOKEN_MODIFIERS,
+            },
+            "full": true,
+        },
+        "callHierarchyProvider": true
     })
 }
 
@@ -170,6 +196,59 @@ pub fn handle_message(
         }
         "textDocument/definition" => {
             return definition_response(session, workspace, &params, value.get("id"));
+        }
+        "textDocument/references" => {
+            return references_response(session, workspace, &params, value.get("id"));
+        }
+        "textDocument/rename" => {
+            return rename_response(session, workspace, &params, value.get("id"));
+        }
+        "textDocument/signatureHelp" => {
+            return signature_response(session, workspace, &params, value.get("id"));
+        }
+        "textDocument/documentSymbol" => {
+            return document_symbol_response(session, workspace, &params, value.get("id"));
+        }
+        "workspace/symbol" => {
+            return workspace_symbol_response(session, workspace, &params, value.get("id"));
+        }
+        "textDocument/inlayHint" => {
+            return inlay_hint_response(session, workspace, &params, value.get("id"));
+        }
+        "textDocument/semanticTokens/full" => {
+            return semantic_tokens_response(session, workspace, &params, value.get("id"));
+        }
+        "textDocument/prepareCallHierarchy" => {
+            return call_hierarchy_prepare_response(session, workspace, &params, value.get("id"));
+        }
+        "textDocument/codeAction" => {
+            return code_action_response(session, workspace, &params, value.get("id"));
+        }
+        "textDocument/foldingRange" => {
+            return folding_range_response(session, workspace, &params, value.get("id"));
+        }
+        "textDocument/selectionRange" => {
+            return selection_range_response(session, workspace, &params, value.get("id"));
+        }
+        "textDocument/prepareTypeHierarchy" => {
+            return type_hierarchy_prepare_response(session, workspace, &params, value.get("id"));
+        }
+        "typeHierarchy/supertypes" => {
+            return type_hierarchy_supertypes_response(
+                session,
+                workspace,
+                &params,
+                value.get("id"),
+            );
+        }
+        "typeHierarchy/subtypes" => {
+            return type_hierarchy_subtypes_response(session, workspace, &params, value.get("id"));
+        }
+        "callHierarchy/incomingCalls" => {
+            return call_hierarchy_incoming_response(session, workspace, &params, value.get("id"));
+        }
+        "callHierarchy/outgoingCalls" => {
+            return call_hierarchy_outgoing_response(session, workspace, &params, value.get("id"));
         }
         "workspace/didChangeWorkspaceFolders" => {
             apply_folder_change(workspace, &params);

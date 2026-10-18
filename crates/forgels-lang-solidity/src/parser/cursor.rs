@@ -21,6 +21,10 @@ impl<'a> Cursor<'a> {
         self.pos
     }
 
+    pub(crate) fn set_pos(&mut self, pos: usize) {
+        self.pos = pos.min(self.tokens.len());
+    }
+
     pub(crate) fn at_end(&mut self) -> bool {
         self.peek().is_none()
     }
@@ -82,8 +86,13 @@ impl<'a> Cursor<'a> {
                     || k == SolidityKind::Import.as_u16()
                     || k == SolidityKind::Contract.as_u16()
                     || k == SolidityKind::Abstract.as_u16()
+                    || k == SolidityKind::Interface.as_u16()
+                    || k == SolidityKind::Library.as_u16()
                     || k == SolidityKind::Struct.as_u16()
                     || k == SolidityKind::Enum.as_u16()
+                    || k == SolidityKind::ErrorKw.as_u16()
+                    || k == SolidityKind::Event.as_u16()
+                    || k == SolidityKind::Type.as_u16()
                     || k == SolidityKind::RBrace.as_u16()
             ) {
                 return;
