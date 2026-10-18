@@ -38,7 +38,7 @@ pub fn goto_definition(file: &SolidityFile, text: &str, offset: u32) -> Option<S
         if matches!(
             kind,
             super::members::TypeKind::Array { .. }
-                | super::members::TypeKind::Address
+                | super::members::TypeKind::Address { .. }
                 | super::members::TypeKind::Bytes
                 | super::members::TypeKind::String
                 | super::members::TypeKind::Function

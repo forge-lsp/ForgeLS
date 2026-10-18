@@ -417,7 +417,7 @@ pub fn inlay_hints_in(
             let Some(body) = function.body() else {
                 continue;
             };
-            for call in body.calls() {
+            for call in body.all_calls() {
                 if out.len() >= CAP {
                     break;
                 }
@@ -449,7 +449,7 @@ pub fn inlay_hints_in(
                 }
                 push_hints(text, range, &names, &args, &mut out);
             }
-            for member in body.members() {
+            for member in body.all_members() {
                 if out.len() >= CAP {
                     break;
                 }
@@ -565,5 +565,23 @@ mod tests {
         let found = hints(text);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].label, "b:");
+    }
+
+    #[test]
+    fn nested_plain_call_shows_param_names_once() {
+        let text = "contract C {\nfunction greet(uint a, uint b) public {}\nfunction f() public {\nif (true) {\ngreet(1, 2);\n}\n}\n}";
+        let found = hints(text);
+        assert_eq!(found.len(), 2);
+        assert_eq!(found[0].label, "a:");
+        assert_eq!(found[1].label, "b:");
+    }
+
+    #[test]
+    fn nested_member_call_shows_param_names_once() {
+        let text = "contract H {\nfunction greet(uint to, uint amount) public {}\n}\ncontract C {\nfunction f() public {\nH h;\nwhile (true) {\nh.greet(1, 2);\n}\n}\n}";
+        let found = hints(text);
+        assert_eq!(found.len(), 2);
+        assert_eq!(found[0].label, "to:");
+        assert_eq!(found[1].label, "amount:");
     }
 }

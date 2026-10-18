@@ -146,29 +146,32 @@ Status: beta lexer, parser, and analysis implemented.
 
 - Scope: `analysis::address` plus thin wiring in `members`, `hover`,
   `goto`, `calls`, `mod`. No new `SymbolKind`, no new completion kind.
-- Shape: `TypeKind::Address` via `is_address_type` for `address` and
-  `address payable`. V1 does not distinguish payable: the parser strips
-  `payable` from the stored type, so both spellings share one set.
-  Array check runs first, so `address[]` stays an array.
-- Members: `balance` (Field, `uint256`), `code` (Field, `bytes`),
-  `codehash` (Field, `bytes32`), `transfer` (Function, 1 arg), `send`
-  (Function, 1 arg), `call` (Function, 1 arg), `delegatecall`
+- Shape: `TypeKind::Address { payable }` via `is_address_type` plus
+  `is_payable_address` for `address` (false) and `address payable`
+  (true). Array check runs first, so `address[]` stays an array.
+- Members: payable has eight, plain has six. Payable adds `transfer`
+  (Function, 1 arg) and `send` (Function, 1 arg). Both share `balance`
+  (Field, `uint256`), `code` (Field, `bytes`), `codehash`
+  (Field, `bytes32`), `call` (Function, 1 arg), `delegatecall`
   (Function, 1 arg), `staticcall` (Function, 1 arg). Details add
   ` - from solidity`, kinds reuse Field (5) and Function (3).
-- Completion: `members_of` returns address members, cross file stays empty.
+- Completion: `members_of` returns address members by payable flag,
+  cross file stays empty.
 - Hover: address member shows detail with origin and uses the cursor
-  member span. Synthetic `0,0` spans never leak.
+  member span. Plain `transfer` and `send` stay silent (no member).
+  Synthetic `0,0` spans never leak.
 - Goto: returns `None` by design with a dep guard, so address names never
   jump to coincidental same-name declarations.
-- Arity: `transfer`, `send`, `call`, `delegatecall`, and `staticcall`
-  take 1, same message as plain calls. `balance`, `code`, and `codehash`
-  calls stay silent. Unknown names stay silent.
+- Arity: payable `transfer`, `send`, `call`, `delegatecall`, and
+  `staticcall` take 1; plain `call`, `delegatecall`, and `staticcall`
+  take 1. Plain `transfer` and `send` stay silent with `balance`,
+  `code`, and `codehash` calls. Unknown names stay silent.
+  Same message as plain calls.
 - Context: `delegatecall` runs target code in caller storage with
   caller `msg.sender` and `msg.value`. V1 checks arity only (1 arg);
   sender, storage, and reentrancy checks are deferred, documented
   here only.
-- Limits: payable not distinguished, no signature help, chained `a.b.c`
-  resolves final only.
+- Limits: no signature help, chained `a.b.c` resolves final only.
 
 ## Bytes and string members
 
@@ -347,8 +350,10 @@ Status: beta lexer, parser, and analysis implemented.
   plus one child scope per nested block, so the deepest decl wins for
   hover, completion, goto, references, and rename.
 - Diagnostics: `unknown` decl, emit, revert, new, member, and option
-  spans plus plain, member, emit, revert, and deploy arity all use
-  `all_*`, so nested rows lint the same as top-level rows.
+  spans plus plain, member, emit, revert, deploy, builtin, visibility,
+  mutability, data location, type mismatch, payable, forge assert,
+  inlay, and outgoing call hierarchy all use `all_*`, so nested rows
+  lint the same as top-level rows.
 - Outline: `function_children` stays params only by design. Locals
   never outline; the comment on the function states why.
 - Try: `parse_try` wraps the whole `try` statement in one child `Block`
@@ -359,8 +364,7 @@ Status: beta lexer, parser, and analysis implemented.
   reuses the same constructor check. `Error` and `Panic` catch names stay
   silent via the allowlist.
 - Limits: `do` bodies fall back to statement skips, single-statement
-  bodies hold no decls. Type mismatch, inlay, payable, visibility, and
-  call hierarchy still read direct children only.
+  bodies hold no decls.
 
 ## Document symbols
 
@@ -480,8 +484,9 @@ Status: beta lexer, parser, and analysis implemented.
   receiver contract plus same file and dep bases. Derived wins.
 - Options: unknown keys and `salt` misuse are owned by call options
   below. This check only reads `value` against payable targets.
-- Limits: no `msg.value` checks, no payable address split, no fallback
-  or receive rules.
+- Nested: plain and member scans use `all_calls` and `all_members`,
+  so `if`, `for`, `while`, and `try` bodies lint once each.
+- Limits: no `msg.value` checks, no fallback or receive rules.
 
 ## Call options
 
@@ -518,9 +523,11 @@ Status: beta lexer, parser, and analysis implemented.
 - Silent: `1 ether` (two tokens), hex numbers for `address`, idents,
   casts (`Type(...)` always converts), chains, binops, and other calls
   (no stored literal, no builtin shape).
+- Nested: state vars plus `all_locals`, so `if`, `for`, `while`, and
+  `try` bodies lint once each.
 - Limits: five builtin shapes only. Literal chains, binops, plain calls,
   and call returns stay silent. No range checks, no implicit conversion
-  tables. Direct locals only, nested blocks stay silent.
+  tables.
 
 ## Using-for
 
@@ -607,7 +614,8 @@ Status: beta lexer, parser, and analysis implemented.
   receiver contract lineage. Builtins and unknown callees stay silent.
   Slots are lexical: first non-ws byte after `(` or `,` at depth zero.
   Unnamed params and already named args stay silent. Range filters by
-  offset.
+  offset. Nested bodies use `all_calls` and `all_members`, so nested
+  rows hint once each.
 - Noir: trait default returns `[]`, no noir grammar change.
 
 ## Semantic tokens
@@ -637,9 +645,10 @@ Status: beta lexer, parser, and analysis implemented.
   `MAX_CALL_HIERARCHY = 50`.
 - Resolve: prepare only for functions, member then plain with builtin
   guards. Incoming reuses `find_references` identity and groups usages
-  by enclosing function. Outgoing scans the target body for plain and
-  member calls and resolves through scope and lineage. Cross file
-  prepare answers, outgoing lists empty for dep targets in V1.
+  by enclosing function. Outgoing scans the target body with `all_calls`
+  and `all_members` for plain and member calls and resolves through
+  scope and lineage. Cross file prepare answers, outgoing lists empty
+  for dep targets in V1.
 - Noir: trait defaults return `None`, no noir grammar change.
 
 ## Error arity

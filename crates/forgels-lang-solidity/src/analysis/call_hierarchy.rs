@@ -335,7 +335,7 @@ pub fn outgoing_in(
     let scope = collect_symbols(file);
     let mut grouped: HashMap<(PathBuf, u32, u32), (CallHierarchyItemData, Vec<Span>)> =
         HashMap::new();
-    for call in body.calls() {
+    for call in body.all_calls() {
         if grouped.len() >= CAP {
             break;
         }
@@ -364,7 +364,7 @@ pub fn outgoing_in(
             .1
             .push(call.syntax().span);
     }
-    for member in body.members() {
+    for member in body.all_members() {
         if grouped.len() >= CAP {
             break;
         }
@@ -511,6 +511,18 @@ mod tests {
     #[test]
     fn outgoing_lists_callees() {
         let text = "contract C {\nfunction greet(uint a) public {}\nfunction settle(uint a) public {}\nfunction f() public {\ngreet(1);\nsettle(2);\n}\n}";
+        let workspace = workspace_with(&[("/A.sol", text)]);
+        let _ = workspace;
+        let buf = PathBuf::from("/A.sol");
+        let at = text.find("function f").expect("decl") as u32 + 9;
+        let file = parse(text);
+        let found = outgoing_in(&file, text, at, buf.as_path(), &[]).expect("outgoing");
+        assert_eq!(found.len(), 2);
+    }
+
+    #[test]
+    fn outgoing_lists_nested_callees_once() {
+        let text = "contract C {\nfunction greet(uint a) public {}\nfunction settle(uint a) public {}\nfunction f() public {\nif (true) {\ngreet(1);\n}\nwhile (true) {\nsettle(2);\n}\n}\n}";
         let workspace = workspace_with(&[("/A.sol", text)]);
         let _ = workspace;
         let buf = PathBuf::from("/A.sol");

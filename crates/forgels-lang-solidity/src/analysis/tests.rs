@@ -267,8 +267,6 @@ fn member_completion_resolves_receiver_at_scope_end() {
         "balance",
         "code",
         "codehash",
-        "transfer",
-        "send",
         "call",
         "delegatecall",
         "staticcall",
@@ -3020,7 +3018,7 @@ fn array_cross_file_members_stay_empty() {
 }
 
 #[test]
-fn address_completion_lists_all_members() {
+fn address_completion_lists_plain_six_members() {
     let text = "contract C {\nfunction f() public {\naddress wallet;\nwallet.\n}\n}";
     let at = text.rfind("wallet.").expect("dot") as u32 + 7;
     let labels = complete_labels(text, at);
@@ -3028,14 +3026,17 @@ fn address_completion_lists_all_members() {
         "balance",
         "code",
         "codehash",
-        "transfer",
-        "send",
         "call",
         "delegatecall",
         "staticcall",
     ] {
         assert!(labels.contains(&want.to_string()), "labels: {labels:?}");
     }
+    assert!(
+        !labels.contains(&"transfer".to_string()),
+        "labels: {labels:?}"
+    );
+    assert!(!labels.contains(&"send".to_string()), "labels: {labels:?}");
     let tokens = SolidityLexer.tokenize(text);
     let (file, _) = SolidityParser.parse_with_errors(&tokens);
     let items = complete_at(&file, text, at);
@@ -3049,15 +3050,12 @@ fn address_completion_lists_all_members() {
         "detail: {}",
         balance.detail
     );
-    let transfer = items
-        .iter()
-        .find(|item| item.label == "transfer")
-        .expect("hit");
-    assert_eq!(completion_item_kind(transfer.kind).value(), 3);
+    let call = items.iter().find(|item| item.label == "call").expect("hit");
+    assert_eq!(completion_item_kind(call.kind).value(), 3);
 }
 
 #[test]
-fn address_payable_matches_plain_address() {
+fn address_payable_lists_eight_members() {
     let text = "contract C {\nfunction f() public {\naddress payable wallet;\nwallet.\n}\n}";
     let at = text.rfind("wallet.").expect("dot") as u32 + 7;
     let labels = complete_labels(text, at);
@@ -3124,7 +3122,7 @@ fn address_goto_returns_none_and_skips_coincidental_dep() {
 
 #[test]
 fn address_methods_wrong_arity_reports_exact_message() {
-    for name in ["transfer", "send", "call", "delegatecall", "staticcall"] {
+    for name in ["call", "delegatecall", "staticcall"] {
         let text = format!(
             "contract C {{\nfunction f() public {{\naddress wallet;\nwallet.{name}();\n}}\n}}"
         );
@@ -3144,6 +3142,87 @@ fn address_methods_wrong_arity_reports_exact_message() {
         );
         assert!(diagnostics_of(&ok).is_empty(), "{name}: ok");
     }
+}
+
+#[test]
+fn address_payable_methods_wrong_arity_reports_exact_message() {
+    for name in ["transfer", "send", "call", "delegatecall", "staticcall"] {
+        let text = format!(
+            "contract C {{\nfunction f() public {{\naddress payable wallet;\nwallet.{name}();\n}}\n}}"
+        );
+        let found = diagnostics_of(&text);
+        assert_eq!(found.len(), 1, "{name}: {found:?}");
+        assert_eq!(
+            found[0].message,
+            format!("this function '{name}' takes 1 arguments but 0 supplied")
+        );
+        let ok = format!(
+            "contract C {{\nfunction f() public {{\naddress payable wallet;\nwallet.{name}(1);\n}}\n}}"
+        );
+        assert!(diagnostics_of(&ok).is_empty(), "{name}: ok");
+    }
+}
+
+#[test]
+fn address_plain_transfer_and_send_stay_silent() {
+    let text = "contract C {\nfunction f() public {\naddress wallet;\nwallet.transfer(1);\nwallet.send(1);\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let at_transfer = text.rfind("transfer").expect("use") as u32;
+    assert!(hover_at(&file, text, at_transfer).is_none());
+    let at_send = text.rfind("send").expect("use") as u32;
+    assert!(hover_at(&file, text, at_send).is_none());
+}
+
+#[test]
+fn address_payable_table_splits_eight_vs_six() {
+    let payable = super::address::address_members(true);
+    let plain = super::address::address_members(false);
+    assert_eq!(payable.len(), 8);
+    assert_eq!(plain.len(), 6);
+    let payable_names: Vec<&str> = payable.iter().map(|item| item.name.as_str()).collect();
+    let plain_names: Vec<&str> = plain.iter().map(|item| item.name.as_str()).collect();
+    for want in [
+        "balance",
+        "code",
+        "codehash",
+        "transfer",
+        "send",
+        "call",
+        "delegatecall",
+        "staticcall",
+    ] {
+        assert!(payable_names.contains(&want), "payable: {payable_names:?}");
+    }
+    for want in [
+        "balance",
+        "code",
+        "codehash",
+        "call",
+        "delegatecall",
+        "staticcall",
+    ] {
+        assert!(plain_names.contains(&want), "plain: {plain_names:?}");
+    }
+    assert!(!plain_names.contains(&"transfer"));
+    assert!(!plain_names.contains(&"send"));
+}
+
+#[test]
+fn address_payable_transfer_hover_shows_detail() {
+    let text =
+        "contract C {\nfunction f() public {\naddress payable wallet;\nwallet.transfer;\n}\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let at = text.rfind("transfer").expect("use") as u32;
+    let found = hover_at(&file, text, at).expect("hover");
+    assert_eq!(
+        found.contents,
+        "function transfer(uint256 amount) - from solidity"
+    );
 }
 
 #[test]
@@ -4752,6 +4831,62 @@ fn nested_emit_arity_reports() {
     assert_eq!(
         found[0].message,
         "this event 'Transfer' takes 2 arguments but 1 supplied"
+    );
+}
+
+#[test]
+fn nested_type_mismatch_reports_once() {
+    let text = "contract C {\nfunction f() public {\nif (true) {\nuint x = \"hi\";\nx;\n}\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "type mismatch: cannot assign string literal to 'uint'"
+    );
+}
+
+#[test]
+fn nested_type_mismatch_builtin_reports_once() {
+    let text =
+        "contract C {\nfunction f() public {\nif (true) {\nuint x = msg.sender;\nx;\n}\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "type mismatch: cannot assign address to 'uint'"
+    );
+}
+
+#[test]
+fn nested_payable_plain_reports_once() {
+    let text = "contract C {\nfunction f() public {}\nfunction g() public {\nif (true) {\nf{value: 1}();\n}\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "non-payable function 'f' cannot receive 'value'"
+    );
+}
+
+#[test]
+fn nested_payable_member_reports_once() {
+    let text = "contract H {\nfunction f() public {}\n}\ncontract C {\nfunction g() public {\nH h;\nwhile (true) {\nh.f{value: 1}();\n}\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "non-payable function 'f' cannot receive 'value'"
+    );
+}
+
+#[test]
+fn nested_forge_assert_reports_once() {
+    let text = "contract T is Test {\nfunction f() public {\nif (true) {\nassertEq(1);\n}\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "this function 'assertEq' takes 2 arguments but 1 supplied"
     );
 }
 

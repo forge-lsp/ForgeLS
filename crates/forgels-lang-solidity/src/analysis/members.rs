@@ -15,7 +15,7 @@ pub enum TypeKind {
     UserType(String),
     Super { enclosing: String },
     Array { dynamic: bool },
-    Address,
+    Address { payable: bool },
     Bytes,
     String,
     Function,
@@ -191,7 +191,7 @@ fn var_type_of_detail(detail: &str) -> Option<String> {
 /// `uint[][2]` is fixed. Data location (`memory`, `storage`, `calldata`)
 /// is already stripped from the stored type, so V1 ignores it. Address
 /// check runs after the array check so `address[]` stays an array.
-/// `address payable` matches `address`: V1 does not distinguish payable.
+/// `address payable` sets `payable` true, plain `address` sets false.
 /// `bytes` and `bytes32` share one set with `length` only, `string` has
 /// no members by design. External `function` types yield `Function`,
 /// internal ones stay unknown. Named functions resolve as `Function` so
@@ -252,7 +252,9 @@ pub fn receiver_type(file: &SolidityFile, scope: &Scope, offset: u32, receiver: 
         return TypeKind::Array { dynamic };
     }
     if address::is_address_type(&type_text) {
-        return TypeKind::Address;
+        return TypeKind::Address {
+            payable: address::is_payable_address(&type_text),
+        };
     }
     if bytes::is_bytes_type(&type_text) {
         return TypeKind::Bytes;
@@ -412,7 +414,9 @@ fn kind_of_type_text(
         return TypeKind::Array { dynamic };
     }
     if address::is_address_type(type_text) {
-        return TypeKind::Address;
+        return TypeKind::Address {
+            payable: address::is_payable_address(type_text),
+        };
     }
     if bytes::is_bytes_type(type_text) {
         return TypeKind::Bytes;
@@ -566,7 +570,7 @@ fn is_builtin_kind(kind: &TypeKind) -> bool {
     matches!(
         kind,
         TypeKind::Array { .. }
-            | TypeKind::Address
+            | TypeKind::Address { .. }
             | TypeKind::Bytes
             | TypeKind::String
             | TypeKind::Function
@@ -716,8 +720,8 @@ fn user_type_members(item: &crate::UserTypeDef) -> Vec<MemberInfo> {
 /// Members of a contract (state vars plus functions), struct (fields),
 /// enum (variants), user type (`wrap` and `unwrap`), super (base vars
 /// plus base functions, derived bypassed), array (`length` always,
-/// `push` and `pop` for dynamic only), address (three fields plus five
-/// methods), bytes (`length` only, string has none), function
+/// `push` and `pop` for dynamic only), address (payable eight, plain
+/// six), bytes (`length` only, string has none), function
 /// (`selector`, `gas`, `value`), globals (`msg`, `block`, `tx`, `abi`
 /// tables), or `type()` metadata by inner. Unknown types yield no
 /// members. Contract members include same file inheritance with
@@ -726,7 +730,7 @@ pub fn members_of(file: &SolidityFile, kind: &TypeKind) -> Vec<MemberInfo> {
     match kind {
         TypeKind::Unknown => Vec::new(),
         TypeKind::Array { dynamic } => array::array_members(*dynamic),
-        TypeKind::Address => address::address_members(),
+        TypeKind::Address { payable } => address::address_members(*payable),
         TypeKind::Bytes => bytes::bytes_members(),
         TypeKind::String => bytes::string_members(),
         TypeKind::Function => function::function_members(),
@@ -914,7 +918,7 @@ pub(crate) fn collect_cross_file_members(
         // Builtin value types have no dep members: arrays, addresses,
         // bytes, strings, functions, globals, and type() metadata.
         TypeKind::Array { .. } => Vec::new(),
-        TypeKind::Address => Vec::new(),
+        TypeKind::Address { .. } => Vec::new(),
         TypeKind::Bytes => Vec::new(),
         TypeKind::String => Vec::new(),
         TypeKind::Function => Vec::new(),
