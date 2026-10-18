@@ -1884,3 +1884,357 @@ fn incoming_default_returns_empty() {
             .is_empty()
     );
 }
+
+fn code_action_body(id: u32, uri: &str) -> String {
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": "textDocument/codeAction",
+        "params": {
+            "textDocument": { "uri": uri },
+            "range": {
+                "start": { "line": 0, "character": 0 },
+                "end": { "line": 0, "character": 1 },
+            },
+            "context": { "diagnostics": [] },
+        }
+    })
+    .to_string()
+}
+
+#[test]
+fn code_action_returns_quickfix_with_edit() {
+    let mut session = super::stub::session_with_stub(true);
+    let mut workspace = Workspace::new();
+    super::stub::open_sol(&mut session, &mut workspace);
+    let reply = handle_message(
+        &mut session,
+        &mut workspace,
+        &code_action_body(60, "file:///repo/A.sol"),
+    )
+    .expect("must reply");
+    let value: Value = serde_json::from_str(&reply).expect("reply is json");
+    let items = value
+        .pointer("/result")
+        .expect("has result")
+        .as_array()
+        .expect("array");
+    assert_eq!(items.len(), 1);
+    assert_eq!(
+        items[0].pointer("/title").expect("has title"),
+        &serde_json::json!("stub fix")
+    );
+    assert_eq!(
+        items[0].pointer("/kind").expect("has kind"),
+        &serde_json::json!("quickfix")
+    );
+    let changes = items[0].pointer("/edit/changes").expect("has changes");
+    let edits = changes
+        .get("file:///repo/A.sol")
+        .expect("has file edits")
+        .as_array()
+        .expect("array");
+    assert_eq!(edits.len(), 1);
+    assert_eq!(
+        edits[0].pointer("/newText").expect("has edit"),
+        &serde_json::json!("fixed")
+    );
+    assert!(items[0].get("command").is_none());
+}
+
+#[test]
+fn code_action_default_returns_empty() {
+    let mut session = super::stub::session_with_stub(false);
+    let mut workspace = Workspace::new();
+    super::stub::open_sol(&mut session, &mut workspace);
+    let reply = handle_message(
+        &mut session,
+        &mut workspace,
+        &code_action_body(61, "file:///repo/A.sol"),
+    )
+    .expect("must reply");
+    let value: Value = serde_json::from_str(&reply).expect("reply is json");
+    assert!(
+        value
+            .pointer("/result")
+            .expect("has result")
+            .as_array()
+            .expect("array")
+            .is_empty()
+    );
+}
+
+fn folding_body(id: u32, uri: &str) -> String {
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": "textDocument/foldingRange",
+        "params": { "textDocument": { "uri": uri } },
+    })
+    .to_string()
+}
+
+#[test]
+fn folding_returns_start_and_end_line() {
+    let mut session = super::stub::session_with_stub(true);
+    let mut workspace = Workspace::new();
+    super::stub::init(&mut session, &mut workspace);
+    open_text(
+        &mut session,
+        &mut workspace,
+        "file:///repo/A.sol",
+        "contract A {\nuint x;\n}",
+    );
+    let reply = handle_message(
+        &mut session,
+        &mut workspace,
+        &folding_body(62, "file:///repo/A.sol"),
+    )
+    .expect("must reply");
+    let value: Value = serde_json::from_str(&reply).expect("reply is json");
+    let items = value
+        .pointer("/result")
+        .expect("has result")
+        .as_array()
+        .expect("array");
+    assert_eq!(items.len(), 1);
+    assert_eq!(
+        items[0].pointer("/startLine").expect("has start"),
+        &serde_json::json!(0)
+    );
+    assert_eq!(
+        items[0].pointer("/endLine").expect("has end"),
+        &serde_json::json!(1)
+    );
+}
+
+#[test]
+fn folding_default_returns_empty() {
+    let mut session = super::stub::session_with_stub(false);
+    let mut workspace = Workspace::new();
+    super::stub::open_sol(&mut session, &mut workspace);
+    let reply = handle_message(
+        &mut session,
+        &mut workspace,
+        &folding_body(63, "file:///repo/A.sol"),
+    )
+    .expect("must reply");
+    let value: Value = serde_json::from_str(&reply).expect("reply is json");
+    assert!(
+        value
+            .pointer("/result")
+            .expect("has result")
+            .as_array()
+            .expect("array")
+            .is_empty()
+    );
+}
+
+fn selection_body(id: u32, uri: &str) -> String {
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": "textDocument/selectionRange",
+        "params": {
+            "textDocument": { "uri": uri },
+            "positions": [{ "line": 0, "character": 0 }],
+        }
+    })
+    .to_string()
+}
+
+#[test]
+fn selection_returns_nested_parent() {
+    let mut session = super::stub::session_with_stub(true);
+    let mut workspace = Workspace::new();
+    super::stub::open_sol(&mut session, &mut workspace);
+    let reply = handle_message(
+        &mut session,
+        &mut workspace,
+        &selection_body(64, "file:///repo/A.sol"),
+    )
+    .expect("must reply");
+    let value: Value = serde_json::from_str(&reply).expect("reply is json");
+    let items = value
+        .pointer("/result")
+        .expect("has result")
+        .as_array()
+        .expect("array");
+    assert_eq!(items.len(), 1);
+    assert!(items[0].pointer("/range/start").is_some());
+    assert!(items[0].pointer("/parent/range/start").is_some());
+}
+
+#[test]
+fn selection_default_falls_back_to_cursor() {
+    let mut session = super::stub::session_with_stub(false);
+    let mut workspace = Workspace::new();
+    super::stub::open_sol(&mut session, &mut workspace);
+    let reply = handle_message(
+        &mut session,
+        &mut workspace,
+        &selection_body(65, "file:///repo/A.sol"),
+    )
+    .expect("must reply");
+    let value: Value = serde_json::from_str(&reply).expect("reply is json");
+    let items = value
+        .pointer("/result")
+        .expect("has result")
+        .as_array()
+        .expect("array");
+    assert_eq!(items.len(), 1);
+    assert!(items[0].get("parent").is_none());
+}
+
+fn type_prepare_body(id: u32, uri: &str) -> String {
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": "textDocument/prepareTypeHierarchy",
+        "params": {
+            "textDocument": { "uri": uri },
+            "position": { "line": 0, "character": 10 },
+        }
+    })
+    .to_string()
+}
+
+fn type_item_param() -> Value {
+    serde_json::json!({
+        "name": "Stub",
+        "kind": 5,
+        "detail": "contract Stub",
+        "uri": "file:///repo/A.sol",
+        "range": {
+            "start": { "line": 0, "character": 0 },
+            "end": { "line": 0, "character": 12 },
+        },
+        "selectionRange": {
+            "start": { "line": 0, "character": 9 },
+            "end": { "line": 0, "character": 10 },
+        },
+    })
+}
+
+fn type_body(id: u32, method: &str) -> String {
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": method,
+        "params": { "item": type_item_param() },
+    })
+    .to_string()
+}
+
+#[test]
+fn type_prepare_returns_one_item() {
+    let mut session = super::stub::session_with_stub(true);
+    let mut workspace = Workspace::new();
+    super::stub::open_sol(&mut session, &mut workspace);
+    let reply = handle_message(
+        &mut session,
+        &mut workspace,
+        &type_prepare_body(66, "file:///repo/A.sol"),
+    )
+    .expect("must reply");
+    let value: Value = serde_json::from_str(&reply).expect("reply is json");
+    let items = value
+        .pointer("/result")
+        .expect("has result")
+        .as_array()
+        .expect("array");
+    assert_eq!(items.len(), 1);
+    assert_eq!(
+        items[0].pointer("/name").expect("has name"),
+        &serde_json::json!("Stub")
+    );
+    assert_eq!(
+        items[0].pointer("/uri").expect("has uri"),
+        &serde_json::json!("file:///repo/A.sol")
+    );
+}
+
+#[test]
+fn type_prepare_default_returns_null() {
+    let mut session = super::stub::session_with_stub(false);
+    let mut workspace = Workspace::new();
+    super::stub::open_sol(&mut session, &mut workspace);
+    let reply = handle_message(
+        &mut session,
+        &mut workspace,
+        &type_prepare_body(67, "file:///repo/A.sol"),
+    )
+    .expect("must reply");
+    let value: Value = serde_json::from_str(&reply).expect("reply is json");
+    assert!(value.get("result").expect("has result").is_null());
+}
+
+#[test]
+fn type_supertypes_returns_bases() {
+    let mut session = super::stub::session_with_stub(true);
+    let mut workspace = Workspace::new();
+    super::stub::open_sol(&mut session, &mut workspace);
+    let reply = handle_message(
+        &mut session,
+        &mut workspace,
+        &type_body(68, "typeHierarchy/supertypes"),
+    )
+    .expect("must reply");
+    let value: Value = serde_json::from_str(&reply).expect("reply is json");
+    let items = value
+        .pointer("/result")
+        .expect("has result")
+        .as_array()
+        .expect("array");
+    assert_eq!(items.len(), 1);
+    assert_eq!(
+        items[0].pointer("/name").expect("has name"),
+        &serde_json::json!("Base")
+    );
+}
+
+#[test]
+fn type_subtypes_returns_derived() {
+    let mut session = super::stub::session_with_stub(true);
+    let mut workspace = Workspace::new();
+    super::stub::open_sol(&mut session, &mut workspace);
+    let reply = handle_message(
+        &mut session,
+        &mut workspace,
+        &type_body(69, "typeHierarchy/subtypes"),
+    )
+    .expect("must reply");
+    let value: Value = serde_json::from_str(&reply).expect("reply is json");
+    let items = value
+        .pointer("/result")
+        .expect("has result")
+        .as_array()
+        .expect("array");
+    assert_eq!(items.len(), 1);
+    assert_eq!(
+        items[0].pointer("/name").expect("has name"),
+        &serde_json::json!("Derived")
+    );
+}
+
+#[test]
+fn type_hierarchy_default_returns_empty() {
+    let mut session = super::stub::session_with_stub(false);
+    let mut workspace = Workspace::new();
+    super::stub::open_sol(&mut session, &mut workspace);
+    let reply = handle_message(
+        &mut session,
+        &mut workspace,
+        &type_body(70, "typeHierarchy/supertypes"),
+    )
+    .expect("must reply");
+    let value: Value = serde_json::from_str(&reply).expect("reply is json");
+    assert!(
+        value
+            .pointer("/result")
+            .expect("has result")
+            .as_array()
+            .expect("array")
+            .is_empty()
+    );
+}

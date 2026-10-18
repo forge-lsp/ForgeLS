@@ -126,6 +126,85 @@ pub const MAX_SEMANTIC_TOKENS: usize = 5000;
 /// Cap for call hierarchy items and edges. Bounds fan-out across files.
 pub const MAX_CALL_HIERARCHY: usize = 50;
 
+/// Cap for `textDocument/codeAction` results. Bounds fix list per range.
+pub const MAX_CODE_ACTIONS: usize = 10;
+
+/// Cap for `textDocument/foldingRange` results. Bounds full file scan.
+pub const MAX_FOLDING_RANGES: usize = 200;
+
+/// Cap for `textDocument/selectionRange` chain depth. Bounds nesting.
+pub const MAX_SELECTION_DEPTH: usize = 20;
+
+/// Cap for type hierarchy items. Bounds fan-out across files.
+pub const MAX_TYPE_HIERARCHY: usize = 50;
+
+/// One quickfix: title plus a single file edit.
+///
+/// `kind` is always `quickfix` in V1. `edit` covers the range to
+/// replace. Dispatch maps it to `WorkspaceEdit` without `command` and
+/// without `resolve`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CodeActionData {
+    pub title: String,
+    pub kind: String,
+    pub edit: TextEdit,
+}
+
+impl CodeActionData {
+    pub fn new(title: String, kind: String, edit: TextEdit) -> Self {
+        Self { title, kind, edit }
+    }
+}
+
+/// One folding range: the span to fold.
+///
+/// Dispatch maps `span` to `startLine` and `endLine`. Single line
+/// spans never surface; languages filter them before return.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FoldingRangeData {
+    pub span: Span,
+}
+
+impl FoldingRangeData {
+    pub fn new(span: Span) -> Self {
+        Self { span }
+    }
+}
+
+/// One type hierarchy item: the contract at the cursor or in the index.
+///
+/// `span` is the full declaration range, `selection` is the name span.
+/// Dispatch maps both to LSP ranges from the owning file text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TypeHierarchyItemData {
+    pub name: String,
+    pub kind: SymbolKind,
+    pub detail: String,
+    pub path: PathBuf,
+    pub span: Span,
+    pub selection: Span,
+}
+
+impl TypeHierarchyItemData {
+    pub fn new(
+        name: String,
+        kind: SymbolKind,
+        detail: String,
+        path: PathBuf,
+        span: Span,
+        selection: Span,
+    ) -> Self {
+        Self {
+            name,
+            kind,
+            detail,
+            path,
+            span,
+            selection,
+        }
+    }
+}
+
 /// One inlay hint: parameter name at an argument slot.
 ///
 /// `offset` is the byte offset where the label renders. Dispatch maps
@@ -639,6 +718,36 @@ pub trait Analyzer: std::fmt::Debug {
     }
     /// Callees of the symbol at the cursor. Default is none.
     fn outgoing_calls(&self, _ctx: &ProjectContext) -> Option<Vec<CallHierarchyCallData>> {
+        None
+    }
+    /// Quickfixes inside `range`. Default is empty so languages
+    /// without support keep working. Takes the full context plus the
+    /// requested range so dep lookup works the same as completion.
+    fn code_actions(&self, _ctx: &ProjectContext, _range: Span) -> Vec<CodeActionData> {
+        Vec::new()
+    }
+    /// Folding ranges for the whole file. Default is empty so
+    /// languages without support keep working.
+    fn folding_ranges(&self, _text: &str) -> Vec<FoldingRangeData> {
+        Vec::new()
+    }
+    /// Selection chain at the cursor, innermost first. Default is
+    /// empty so languages without support keep working. Dispatch
+    /// falls back to a zero length range at the cursor.
+    fn selection_range(&self, _ctx: &ProjectContext) -> Vec<Span> {
+        Vec::new()
+    }
+    /// Type hierarchy item at the cursor. Default is none so
+    /// languages without support keep working.
+    fn prepare_type_hierarchy(&self, _ctx: &ProjectContext) -> Option<TypeHierarchyItemData> {
+        None
+    }
+    /// Base contracts of the item at the cursor. Default is none.
+    fn supertypes(&self, _ctx: &ProjectContext) -> Option<Vec<TypeHierarchyItemData>> {
+        None
+    }
+    /// Derived contracts of the item at the cursor. Default is none.
+    fn subtypes(&self, _ctx: &ProjectContext) -> Option<Vec<TypeHierarchyItemData>> {
         None
     }
 }

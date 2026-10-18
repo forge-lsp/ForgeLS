@@ -130,6 +130,91 @@ impl crate::analyzer::Analyzer for StubAnalyzer {
         ))
     }
 
+    fn code_actions(
+        &self,
+        _ctx: &crate::analyzer::ProjectContext,
+        _range: forgels_syntax::Span,
+    ) -> Vec<crate::analyzer::CodeActionData> {
+        if !self.found {
+            return Vec::new();
+        }
+        vec![crate::analyzer::CodeActionData::new(
+            "stub fix".to_string(),
+            "quickfix".to_string(),
+            crate::analyzer::TextEdit::new(forgels_syntax::Span::new(0, 1), "fixed".to_string()),
+        )]
+    }
+
+    fn folding_ranges(&self, _text: &str) -> Vec<crate::analyzer::FoldingRangeData> {
+        if !self.found {
+            return Vec::new();
+        }
+        vec![crate::analyzer::FoldingRangeData::new(
+            forgels_syntax::Span::new(0, 14),
+        )]
+    }
+
+    fn selection_range(&self, ctx: &crate::analyzer::ProjectContext) -> Vec<forgels_syntax::Span> {
+        if !self.found {
+            return Vec::new();
+        }
+        vec![
+            forgels_syntax::Span::new(ctx.offset, ctx.offset + 1),
+            forgels_syntax::Span::new(0, 12),
+        ]
+    }
+
+    fn prepare_type_hierarchy(
+        &self,
+        ctx: &crate::analyzer::ProjectContext,
+    ) -> Option<crate::analyzer::TypeHierarchyItemData> {
+        if !self.found {
+            return None;
+        }
+        Some(crate::analyzer::TypeHierarchyItemData::new(
+            "Stub".to_string(),
+            forgels_protocol::SymbolKind::CLASS,
+            "contract Stub".to_string(),
+            ctx.path.to_path_buf(),
+            forgels_syntax::Span::new(0, 12),
+            forgels_syntax::Span::new(9, 10),
+        ))
+    }
+
+    fn supertypes(
+        &self,
+        ctx: &crate::analyzer::ProjectContext,
+    ) -> Option<Vec<crate::analyzer::TypeHierarchyItemData>> {
+        if !self.found {
+            return None;
+        }
+        Some(vec![crate::analyzer::TypeHierarchyItemData::new(
+            "Base".to_string(),
+            forgels_protocol::SymbolKind::CLASS,
+            "contract Base".to_string(),
+            ctx.path.to_path_buf(),
+            forgels_syntax::Span::new(0, 12),
+            forgels_syntax::Span::new(9, 10),
+        )])
+    }
+
+    fn subtypes(
+        &self,
+        ctx: &crate::analyzer::ProjectContext,
+    ) -> Option<Vec<crate::analyzer::TypeHierarchyItemData>> {
+        if !self.found {
+            return None;
+        }
+        Some(vec![crate::analyzer::TypeHierarchyItemData::new(
+            "Derived".to_string(),
+            forgels_protocol::SymbolKind::CLASS,
+            "contract Derived".to_string(),
+            ctx.path.to_path_buf(),
+            forgels_syntax::Span::new(0, 12),
+            forgels_syntax::Span::new(9, 10),
+        )])
+    }
+
     fn incoming_calls(
         &self,
         ctx: &crate::analyzer::ProjectContext,
