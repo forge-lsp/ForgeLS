@@ -1901,11 +1901,20 @@ fn bare_scaffold_kind_is_folder_file_kind_is_file() {
     );
     let files = complete_bare_imports(&importer, std::slice::from_ref(&root), "beta/");
     assert!(!files.is_empty());
-    assert!(files.iter().all(|item| item.detail == "file"));
+    // Files mode now mixes subdirectory hints (`beta/sub/`, package)
+    // with file labels. Partition before asserting kinds.
+    let (dirs, sols): (Vec<_>, Vec<_>) = files.iter().partition(|item| item.detail == "package");
+    let labels: Vec<&str> = files.iter().map(|item| item.label.as_str()).collect();
+    assert!(!sols.is_empty(), "labels: {labels:?}");
+    assert!(sols.iter().all(|item| item.detail == "file"));
     assert!(
-        files
-            .iter()
+        sols.iter()
             .all(|item| completion_item_kind(item.kind).value() == 17)
+    );
+    assert!(dirs.iter().all(|item| item.label.ends_with('/')));
+    assert!(
+        dirs.iter()
+            .all(|item| completion_item_kind(item.kind).value() == 19)
     );
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -1937,10 +1946,43 @@ fn bare_subpath_lists_package_files() {
         labels.contains(&"@scope/pkg/nested/Deep.sol"),
         "labels: {labels:?}"
     );
-    assert!(scoped.iter().all(|item| item.detail == "file"));
+    // Subdirectory hints (`contracts/`, `nested/`) share the listing.
+    let sols: Vec<_> = scoped.iter().filter(|item| item.detail == "file").collect();
+    assert!(!sols.is_empty(), "labels: {labels:?}");
+    assert!(
+        sols.iter()
+            .all(|item| completion_item_kind(item.kind).value() == 17)
+    );
     let nested = complete_bare_imports(&importer, std::slice::from_ref(&root), "beta/sub/");
     let nested_labels: Vec<&str> = nested.iter().map(|item| item.label.as_str()).collect();
     assert_eq!(nested_labels, vec!["beta/sub/Deep.sol"]);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn bare_subdir_hint_leads_into_token() {
+    // `tok` discovers the `token/` style subdirectory, not just files.
+    let root = fresh_node_root("forgels-sol-bare-subdir");
+    let importer = root.join("contracts/A.sol");
+    let found = complete_bare_imports(&importer, std::slice::from_ref(&root), "beta/s");
+    let labels: Vec<&str> = found.iter().map(|item| item.label.as_str()).collect();
+    assert!(labels.contains(&"beta/sub/"), "labels: {labels:?}");
+    assert!(labels.contains(&"beta/sub/Deep.sol"), "labels: {labels:?}");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn bare_basename_match_finds_deep_file() {
+    // `@scope/pkg/De` does not prefix-match `nested/Deep.sol`, but the
+    // basename `Deep` starts with `De`, so the deep file still shows.
+    let root = fresh_node_root("forgels-sol-bare-basename");
+    let importer = root.join("contracts/A.sol");
+    let found = complete_bare_imports(&importer, std::slice::from_ref(&root), "@scope/pkg/De");
+    let labels: Vec<&str> = found.iter().map(|item| item.label.as_str()).collect();
+    assert!(
+        labels.contains(&"@scope/pkg/nested/Deep.sol"),
+        "labels: {labels:?}"
+    );
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -2348,6 +2390,45 @@ fn emit_completion_filters_by_prefix() {
         !labels.contains(&"Approval".to_string()),
         "labels: {labels:?}"
     );
+}
+
+#[test]
+fn emit_bare_keyword_stays_keyword_context() {
+    // Typing `emit` itself (no trailing space) is still the keyword:
+    // completion offers `emit`, not events filtered by "emit".
+    let text = "contract C {\nevent Transfer(address a);\nfunction f() public {\nemit\n}\n}";
+    let at = text.rfind("emit").expect("keyword") as u32 + 4;
+    assert!(!super::emits::is_emit_name_context(text, at));
+    let labels = complete_labels(text, at);
+    assert!(labels.contains(&"emit".to_string()), "labels: {labels:?}");
+    assert!(
+        !labels.contains(&"Transfer".to_string()),
+        "labels: {labels:?}"
+    );
+}
+
+#[test]
+fn emit_space_opens_event_slot() {
+    // `emit ` with trailing space lists every event on empty prefix.
+    let text = "contract C {\nevent Transfer(address a);\nevent Approval(address b);\nfunction f() public {\nemit \n}\n}";
+    let at = text.rfind("emit ").expect("emit") as u32 + 5;
+    assert!(super::emits::is_emit_name_context(text, at));
+    let labels = complete_labels(text, at);
+    assert!(
+        labels.contains(&"Transfer".to_string()),
+        "labels: {labels:?}"
+    );
+    assert!(
+        labels.contains(&"Approval".to_string()),
+        "labels: {labels:?}"
+    );
+}
+
+#[test]
+fn revert_bare_keyword_stays_keyword_context() {
+    let text = "contract C {\nerror Insufficient(uint a);\nfunction f() public {\nrevert\n}\n}";
+    let at = text.rfind("revert").expect("keyword") as u32 + 6;
+    assert!(!super::errors::is_revert_name_context(text, at));
 }
 
 #[test]
