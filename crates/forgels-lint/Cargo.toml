@@ -9,3 +9,7 @@ description = "Shared lint severity taxonomy reused by all crates"
 forgels-protocol.workspace = true
 forgels-syntax.workspace = true
 forgels-common.workspace = true
+toml.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
