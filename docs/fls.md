@@ -14,6 +14,7 @@ fls check [PATH...] [--write] [--json]
 - Explicit check paths accept files or dirs. Output is sorted and deduped.
 - `--write` applies safe fixes in place.
 - `--json` emits the engine JSON report as-is.
+- Only files with warn/err findings appear; clean files stay silent.
 
 ## Flags
 

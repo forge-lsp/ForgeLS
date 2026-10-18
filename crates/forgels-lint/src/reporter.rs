@@ -126,13 +126,19 @@ pub fn report(files: &[FileReport]) -> String {
 
 // Machine report: per-file diagnostics with rule, severity, 0-based
 // range, optional fix, and fixed flags, plus a summary with file,
-// error, warning, and fixed counts.
+// error, warning, and fixed counts. Files without diagnostics stay
+// silent: only warn/err hits appear, so summary files counts the
+// listed files only.
 pub fn report_json(files: &[FileReport]) -> String {
+    let listed: Vec<&FileReport> = files
+        .iter()
+        .filter(|file| !file.diagnostics.is_empty())
+        .collect();
     let mut errors = 0u32;
     let mut warnings = 0u32;
     let mut fixed_total = 0u32;
     let mut out = String::from("{\"files\":[");
-    for (file_index, file) in files.iter().enumerate() {
+    for (file_index, file) in listed.iter().enumerate() {
         if file_index > 0 {
             out.push(',');
         }
@@ -175,7 +181,7 @@ pub fn report_json(files: &[FileReport]) -> String {
         out.push_str("]}");
     }
     out.push_str("],\"summary\":{\"files\":");
-    out.push_str(&files.len().to_string());
+    out.push_str(&listed.len().to_string());
     out.push_str(",\"errors\":");
     out.push_str(&errors.to_string());
     out.push_str(",\"warnings\":");
@@ -276,6 +282,31 @@ mod tests {
         assert_eq!(
             report_json(&[]),
             "{\"files\":[],\"summary\":{\"files\":0,\"errors\":0,\"warnings\":0,\"fixed\":0}}"
+        );
+    }
+
+    #[test]
+    fn json_report_skips_clean_files() {
+        let clean = FileReport::new(
+            "clean.sol".to_string(),
+            "contract A {}\n".to_string(),
+            vec![],
+        );
+        let value: serde_json::Value =
+            serde_json::from_str(&report_json(&[clean, file()])).expect("valid json");
+        let files = value
+            .pointer("/files")
+            .expect("has files")
+            .as_array()
+            .expect("array");
+        assert_eq!(files.len(), 1);
+        assert_eq!(
+            files[0].pointer("/path").expect("has path"),
+            &serde_json::json!("a.sol")
+        );
+        assert_eq!(
+            value.pointer("/summary/files").expect("has count"),
+            &serde_json::json!(1)
         );
     }
 }
