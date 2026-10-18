@@ -717,10 +717,7 @@ impl SolidityAnalyzer {
     ) -> Vec<DiagnosticData> {
         let mut out: Vec<DiagnosticData> = errors
             .iter()
-            .map(|error| DiagnosticData {
-                span: error.span,
-                message: error.message.clone(),
-            })
+            .map(|error| DiagnosticData::error(error.span, error.message.clone()))
             .collect();
         out.extend(calls::arity_diagnostics(file, scope));
         out.extend(calls::member_arity_diagnostics(file, scope, deps));

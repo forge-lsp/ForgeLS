@@ -221,10 +221,10 @@ pub fn unknown_error_diagnostics(
                 if found {
                     continue;
                 }
-                out.push(DiagnosticData {
-                    span: name_span,
-                    message: format!("unresolved error '{name}'"),
-                });
+                out.push(DiagnosticData::error(
+                    name_span,
+                    format!("unresolved error '{name}'"),
+                ));
             }
         }
     }
@@ -337,12 +337,12 @@ pub fn revert_arity_diagnostics(
                 };
                 let actual = revert.arg_count();
                 if *expected != actual {
-                    out.push(DiagnosticData {
-                        span: revert.syntax().span,
-                        message: format!(
+                    out.push(DiagnosticData::error(
+                        revert.syntax().span,
+                        format!(
                             "this error '{name}' takes {expected} arguments but {actual} supplied"
                         ),
-                    });
+                    ));
                 }
             }
         }

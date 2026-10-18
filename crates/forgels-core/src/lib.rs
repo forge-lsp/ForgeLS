@@ -23,6 +23,7 @@ pub use analyzer::{
     read_tracked_or_disk, workspace_symbols,
 };
 pub use config::Config;
+pub use forgels_lint::Severity;
 pub use index::{FileEntry, ProjectIndex};
 pub use server::Server;
 pub use workspace::Workspace;

@@ -95,12 +95,12 @@ pub fn arity_diagnostics(file: &SolidityFile, scope: &Scope) -> Vec<DiagnosticDa
                     };
                     let actual = call.arg_count();
                     if *expected != actual {
-                        out.push(DiagnosticData {
+                        out.push(DiagnosticData::error(
                             span,
-                            message: format!(
+                            format!(
                                 "this struct '{callee}' takes {expected} arguments but {actual} supplied"
                             ),
-                        });
+                        ));
                     }
                     continue;
                 }
@@ -116,12 +116,12 @@ pub fn arity_diagnostics(file: &SolidityFile, scope: &Scope) -> Vec<DiagnosticDa
                 };
                 let actual = call.arg_count();
                 if *expected != actual {
-                    out.push(DiagnosticData {
+                    out.push(DiagnosticData::error(
                         span,
-                        message: format!(
+                        format!(
                             "this function '{callee}' takes {expected} arguments but {actual} supplied"
                         ),
-                    });
+                    ));
                 }
             }
         }
@@ -163,12 +163,12 @@ pub fn deploy_arity_diagnostics(
                     .unwrap_or(0);
                 let actual = deploy.arg_count();
                 if expected != actual {
-                    out.push(DiagnosticData {
-                        span: deploy.syntax().span,
-                        message: format!(
+                    out.push(DiagnosticData::error(
+                        deploy.syntax().span,
+                        format!(
                             "this constructor for '{target}' takes {expected} arguments but {actual} supplied"
                         ),
-                    });
+                    ));
                 }
             }
         }
@@ -279,12 +279,12 @@ pub fn member_arity_diagnostics(
                     };
                     let actual = member.arg_count();
                     if expected != actual {
-                        out.push(DiagnosticData {
-                            span: member.syntax().span,
-                            message: format!(
+                        out.push(DiagnosticData::error(
+                            member.syntax().span,
+                            format!(
                                 "this function '{name}' takes {expected} arguments but {actual} supplied"
                             ),
-                        });
+                        ));
                     }
                     continue;
                 }
@@ -294,12 +294,12 @@ pub fn member_arity_diagnostics(
                     };
                     let actual = member.arg_count();
                     if expected != actual {
-                        out.push(DiagnosticData {
-                            span: member.syntax().span,
-                            message: format!(
+                        out.push(DiagnosticData::error(
+                            member.syntax().span,
+                            format!(
                                 "this function '{name}' takes {expected} arguments but {actual} supplied"
                             ),
-                        });
+                        ));
                     }
                     continue;
                 }
@@ -309,12 +309,12 @@ pub fn member_arity_diagnostics(
                     };
                     let actual = member.arg_count();
                     if expected != actual {
-                        out.push(DiagnosticData {
-                            span: member.syntax().span,
-                            message: format!(
+                        out.push(DiagnosticData::error(
+                            member.syntax().span,
+                            format!(
                                 "this function '{name}' takes {expected} arguments but {actual} supplied"
                             ),
-                        });
+                        ));
                     }
                     continue;
                 }
@@ -322,22 +322,22 @@ pub fn member_arity_diagnostics(
                     let actual = member.arg_count();
                     if let Some(expected) = globals::global_expected_arity(receiver_name, &name) {
                         if expected != actual {
-                            out.push(DiagnosticData {
-                                span: member.syntax().span,
-                                message: format!(
+                            out.push(DiagnosticData::error(
+                                member.syntax().span,
+                                format!(
                                     "this function '{name}' takes {expected} arguments but {actual} supplied"
                                 ),
-                            });
+                            ));
                         }
                     } else if let Some(min) = globals::global_min_arity(receiver_name, &name)
                         && actual < min
                     {
-                        out.push(DiagnosticData {
-                            span: member.syntax().span,
-                            message: format!(
+                        out.push(DiagnosticData::error(
+                            member.syntax().span,
+                            format!(
                                 "this function '{name}' takes at least {min} arguments but {actual} supplied"
                             ),
-                        });
+                        ));
                     }
                     continue;
                 }
@@ -359,12 +359,12 @@ pub fn member_arity_diagnostics(
                     };
                     let actual = member.arg_count();
                     if expected != actual {
-                        out.push(DiagnosticData {
-                            span: member.syntax().span,
-                            message: format!(
+                        out.push(DiagnosticData::error(
+                            member.syntax().span,
+                            format!(
                                 "this function '{name}' takes {expected} arguments but {actual} supplied"
                             ),
-                        });
+                        ));
                     }
                     continue;
                 }
@@ -375,12 +375,12 @@ pub fn member_arity_diagnostics(
                     let expected = 1;
                     let actual = member.arg_count();
                     if expected != actual {
-                        out.push(DiagnosticData {
-                            span: member.syntax().span,
-                            message: format!(
+                        out.push(DiagnosticData::error(
+                            member.syntax().span,
+                            format!(
                                 "this function '{name}' takes {expected} arguments but {actual} supplied"
                             ),
-                        });
+                        ));
                     }
                     continue;
                 }
@@ -392,12 +392,12 @@ pub fn member_arity_diagnostics(
                     {
                         let actual = member.arg_count();
                         if expected != actual {
-                            out.push(DiagnosticData {
-                                span: member.syntax().span,
-                                message: format!(
+                            out.push(DiagnosticData::error(
+                                member.syntax().span,
+                                format!(
                                     "this function '{name}' takes {expected} arguments but {actual} supplied"
                                 ),
-                            });
+                            ));
                         }
                     }
                     continue;
@@ -465,12 +465,12 @@ pub fn member_arity_diagnostics(
                 };
                 let actual = member.arg_count();
                 if expected != actual {
-                    out.push(DiagnosticData {
-                        span: member.syntax().span,
-                        message: format!(
+                    out.push(DiagnosticData::error(
+                        member.syntax().span,
+                        format!(
                             "this function '{name}' takes {expected} arguments but {actual} supplied"
                         ),
-                    });
+                    ));
                 }
             }
         }

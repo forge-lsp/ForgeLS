@@ -8,6 +8,7 @@ use forgels_syntax::Span;
 
 use forgels_common::fs::is_trackable_file;
 use forgels_common::paths::resolve_import;
+use forgels_lint::Severity;
 
 use crate::index::ProjectIndex;
 use crate::routing::Language;
@@ -426,6 +427,33 @@ fn pick_symbol_span(text: &str, item: &DocumentSymbolData) -> Option<Span> {
 pub struct DiagnosticData {
     pub span: Span,
     pub message: String,
+    pub severity: Severity,
+}
+
+impl DiagnosticData {
+    pub fn new(span: Span, message: String) -> Self {
+        Self {
+            span,
+            message,
+            severity: Severity::Error,
+        }
+    }
+
+    pub fn error(span: Span, message: String) -> Self {
+        Self {
+            span,
+            message,
+            severity: Severity::Error,
+        }
+    }
+
+    pub fn warning(span: Span, message: String) -> Self {
+        Self {
+            span,
+            message,
+            severity: Severity::Warning,
+        }
+    }
 }
 
 /// One import reference found in a file. `raw` keeps the literal

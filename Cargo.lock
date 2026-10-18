@@ -38,6 +38,7 @@ name = "forgels-core"
 version = "0.2.0-beta"
 dependencies = [
  "forgels-common",
+ "forgels-lint",
  "forgels-protocol",
  "forgels-syntax",
  "serde_json",
@@ -64,6 +65,15 @@ dependencies = [
  "forgels-syntax",
  "serde_json",
  "tracing",
+]
+
+[[package]]
+name = "forgels-lint"
+version = "0.2.0-beta"
+dependencies = [
+ "forgels-common",
+ "forgels-protocol",
+ "forgels-syntax",
 ]
 
 [[package]]

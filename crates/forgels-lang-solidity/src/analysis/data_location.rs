@@ -117,13 +117,13 @@ pub fn data_location_diagnostics(file: &SolidityFile) -> Vec<DiagnosticData> {
             let span = var
                 .data_location_span()
                 .unwrap_or_else(|| var.syntax().span);
-            out.push(DiagnosticData {
+            out.push(DiagnosticData::error(
                 span,
-                message: format!(
+                format!(
                     "data location '{}' not allowed for state variable",
                     location.as_str()
                 ),
-            });
+            ));
         }
         for function in contract.functions() {
             for param in function.params() {
@@ -159,17 +159,17 @@ fn check_param(out: &mut Vec<DiagnosticData>, param: &crate::Param) {
                 let span = param
                     .data_location_span()
                     .unwrap_or_else(|| param.syntax().span);
-                out.push(DiagnosticData {
+                out.push(DiagnosticData::error(
                     span,
-                    message: format!("mapping can only be 'storage', found '{}'", other.as_str()),
-                });
+                    format!("mapping can only be 'storage', found '{}'", other.as_str()),
+                ));
             }
             None => {
                 let span = span_or_full(param.name_span(), param.syntax().span);
-                out.push(DiagnosticData {
+                out.push(DiagnosticData::error(
                     span,
-                    message: format!("mapping '{type_text}' needs 'storage' data location"),
-                });
+                    format!("mapping '{type_text}' needs 'storage' data location"),
+                ));
             }
         }
         return;
@@ -179,22 +179,22 @@ fn check_param(out: &mut Vec<DiagnosticData>, param: &crate::Param) {
             let span = param
                 .data_location_span()
                 .unwrap_or_else(|| param.syntax().span);
-            out.push(DiagnosticData {
+            out.push(DiagnosticData::error(
                 span,
-                message: format!(
+                format!(
                     "data location '{}' not allowed for '{type_text}'",
                     other.as_str()
                 ),
-            });
+            ));
         }
         return;
     }
     if is_reference_text(&type_text) && location.is_none() {
         let span = span_or_full(param.name_span(), param.syntax().span);
-        out.push(DiagnosticData {
+        out.push(DiagnosticData::error(
             span,
-            message: format!("data location must be specified for '{type_text}'"),
-        });
+            format!("data location must be specified for '{type_text}'"),
+        ));
     }
 }
 
@@ -217,17 +217,17 @@ fn check_local(out: &mut Vec<DiagnosticData>, local: &crate::LocalVar) {
                 let span = local
                     .data_location_span()
                     .unwrap_or_else(|| local.syntax().span);
-                out.push(DiagnosticData {
+                out.push(DiagnosticData::error(
                     span,
-                    message: format!("mapping can only be 'storage', found '{}'", other.as_str()),
-                });
+                    format!("mapping can only be 'storage', found '{}'", other.as_str()),
+                ));
             }
             None => {
                 let span = span_or_full(local.name_span(), local.syntax().span);
-                out.push(DiagnosticData {
+                out.push(DiagnosticData::error(
                     span,
-                    message: format!("mapping '{type_text}' needs 'storage' data location"),
-                });
+                    format!("mapping '{type_text}' needs 'storage' data location"),
+                ));
             }
         }
         return;
@@ -237,13 +237,13 @@ fn check_local(out: &mut Vec<DiagnosticData>, local: &crate::LocalVar) {
             let span = local
                 .data_location_span()
                 .unwrap_or_else(|| local.syntax().span);
-            out.push(DiagnosticData {
+            out.push(DiagnosticData::error(
                 span,
-                message: format!(
+                format!(
                     "data location '{}' not allowed for '{type_text}'",
                     other.as_str()
                 ),
-            });
+            ));
         }
         return;
     }
@@ -251,17 +251,17 @@ fn check_local(out: &mut Vec<DiagnosticData>, local: &crate::LocalVar) {
         let span = local
             .data_location_span()
             .unwrap_or_else(|| local.syntax().span);
-        out.push(DiagnosticData {
+        out.push(DiagnosticData::error(
             span,
-            message: String::from("data location 'calldata' not allowed for local variable"),
-        });
+            String::from("data location 'calldata' not allowed for local variable"),
+        ));
         return;
     }
     if is_reference_text(&type_text) && location.is_none() {
         let span = span_or_full(local.name_span(), local.syntax().span);
-        out.push(DiagnosticData {
+        out.push(DiagnosticData::error(
             span,
-            message: format!("data location must be specified for '{type_text}'"),
-        });
+            format!("data location must be specified for '{type_text}'"),
+        ));
     }
 }

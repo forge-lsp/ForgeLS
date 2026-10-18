@@ -31,10 +31,10 @@ impl Analyzer for StubAnalyzer {
 
     fn diagnostics(&self, text: &str) -> Vec<DiagnosticData> {
         if text.contains("broken") {
-            vec![DiagnosticData {
-                span: Span::new(0, 6),
-                message: "stub broken".to_string(),
-            }]
+            vec![DiagnosticData::error(
+                Span::new(0, 6),
+                "stub broken".to_string(),
+            )]
         } else {
             Vec::new()
         }

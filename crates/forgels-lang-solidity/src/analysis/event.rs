@@ -43,10 +43,10 @@ pub fn event_diagnostics(file: &SolidityFile) -> Vec<DiagnosticData> {
         if name.is_empty() {
             continue;
         }
-        out.push(DiagnosticData {
-            span: name_span_or_full(event.name_span(), event.syntax().span),
-            message: format!("event '{name}' has {indexed} indexed params but max is 3"),
-        });
+        out.push(DiagnosticData::error(
+            name_span_or_full(event.name_span(), event.syntax().span),
+            format!("event '{name}' has {indexed} indexed params but max is 3"),
+        ));
     }
     out
 }

@@ -106,15 +106,15 @@ fn check_keys(text: &str, span: Span, is_new: bool, out: &mut Vec<DiagnosticData
             continue;
         }
         if key == "salt" {
-            out.push(DiagnosticData {
-                span: key_span,
-                message: String::from("call option 'salt' only allowed for 'new'"),
-            });
+            out.push(DiagnosticData::error(
+                key_span,
+                String::from("call option 'salt' only allowed for 'new'"),
+            ));
         } else {
-            out.push(DiagnosticData {
-                span: key_span,
-                message: format!("unknown call option '{key}'"),
-            });
+            out.push(DiagnosticData::error(
+                key_span,
+                format!("unknown call option '{key}'"),
+            ));
         }
     }
 }

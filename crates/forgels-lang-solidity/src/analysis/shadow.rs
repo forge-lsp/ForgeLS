@@ -31,10 +31,10 @@ fn push_shadow(
         return;
     }
     let kind = if is_param { "parameter" } else { "variable" };
-    out.push(DiagnosticData {
+    out.push(DiagnosticData::error(
         span,
-        message: format!("{kind} '{name}' shadows outer declaration"),
-    });
+        format!("{kind} '{name}' shadows outer declaration"),
+    ));
 }
 
 fn walk_block(out: &mut Vec<DiagnosticData>, block: &crate::BlockNode, outer: &HashSet<String>) {

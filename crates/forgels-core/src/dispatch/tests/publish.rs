@@ -203,3 +203,67 @@ fn truly_missing_reports_unresolved() {
     );
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[derive(Debug)]
+struct MixedStub;
+
+impl crate::analyzer::Analyzer for MixedStub {
+    fn hover(&self, _ctx: &crate::analyzer::ProjectContext) -> Option<crate::analyzer::HoverData> {
+        None
+    }
+
+    fn complete(
+        &self,
+        _ctx: &crate::analyzer::ProjectContext,
+    ) -> Vec<crate::analyzer::CompletionData> {
+        Vec::new()
+    }
+
+    fn goto(&self, _ctx: &crate::analyzer::ProjectContext) -> Option<forgels_syntax::Span> {
+        None
+    }
+
+    fn diagnostics(&self, _text: &str) -> Vec<crate::analyzer::DiagnosticData> {
+        vec![
+            crate::analyzer::DiagnosticData::error(
+                forgels_syntax::Span::new(0, 1),
+                "mixed error".to_string(),
+            ),
+            crate::analyzer::DiagnosticData::warning(
+                forgels_syntax::Span::new(2, 3),
+                "mixed warning".to_string(),
+            ),
+        ]
+    }
+}
+
+#[test]
+fn publish_maps_error_and_warning_numbers() {
+    let mut session = Session::new();
+    session
+        .analyzers
+        .insert(crate::routing::Language::Solidity, Box::new(MixedStub));
+    let mut workspace = Workspace::new();
+    super::stub::init(&mut session, &mut workspace);
+    let open = r#"{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///repo/M.sol","languageId":"solidity","version":1,"text":"ab"}}}"#;
+    assert!(handle_message(&mut session, &mut workspace, open).is_none());
+    let notes = immediate_notifications(&session, &mut workspace, open);
+    assert_eq!(notes.len(), 1);
+    let value: Value = serde_json::from_str(&notes[0]).expect("frame is json");
+    let diagnostics = value
+        .pointer("/params/diagnostics")
+        .expect("has diagnostics")
+        .as_array()
+        .expect("array");
+    assert_eq!(diagnostics.len(), 2);
+    let severities: Vec<u64> = diagnostics
+        .iter()
+        .map(|item| {
+            item.pointer("/severity")
+                .expect("has severity")
+                .as_u64()
+                .expect("number")
+        })
+        .collect();
+    assert_eq!(severities, vec![1, 2]);
+}

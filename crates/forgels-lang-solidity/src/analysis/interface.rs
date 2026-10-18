@@ -32,18 +32,16 @@ pub fn interface_diagnostics(file: &SolidityFile) -> Vec<DiagnosticData> {
             if var_name.is_empty() {
                 continue;
             }
-            out.push(DiagnosticData {
-                span: name_span_or_full(var.name_span(), var.syntax().span),
-                message: format!(
-                    "interface '{contract_name}' cannot have state variable '{var_name}'"
-                ),
-            });
+            out.push(DiagnosticData::error(
+                name_span_or_full(var.name_span(), var.syntax().span),
+                format!("interface '{contract_name}' cannot have state variable '{var_name}'"),
+            ));
         }
         for constructor in contract.constructors() {
-            out.push(DiagnosticData {
-                span: name_span_or_full(constructor.name_span(), constructor.syntax().span),
-                message: format!("interface '{contract_name}' cannot have constructor"),
-            });
+            out.push(DiagnosticData::error(
+                name_span_or_full(constructor.name_span(), constructor.syntax().span),
+                format!("interface '{contract_name}' cannot have constructor"),
+            ));
         }
     }
     out

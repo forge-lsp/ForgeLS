@@ -203,10 +203,10 @@ pub fn payable_diagnostics(
                 if target.mutability() == Some(crate::Mutability::Payable) {
                     continue;
                 }
-                out.push(DiagnosticData {
-                    span: call.syntax().span,
-                    message: format!("non-payable function '{callee}' cannot receive 'value'"),
-                });
+                out.push(DiagnosticData::error(
+                    call.syntax().span,
+                    format!("non-payable function '{callee}' cannot receive 'value'"),
+                ));
             }
             for member in body.all_members() {
                 if !member.has_call_options() {
@@ -257,10 +257,10 @@ pub fn payable_diagnostics(
                 if found.mutability() == Some(crate::Mutability::Payable) {
                     continue;
                 }
-                out.push(DiagnosticData {
-                    span: member.syntax().span,
-                    message: format!("non-payable function '{name}' cannot receive 'value'"),
-                });
+                out.push(DiagnosticData::error(
+                    member.syntax().span,
+                    format!("non-payable function '{name}' cannot receive 'value'"),
+                ));
             }
         }
     }

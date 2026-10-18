@@ -232,21 +232,21 @@ pub fn visibility_diagnostics(
                     continue;
                 };
                 if vis == Visibility::External {
-                    out.push(DiagnosticData {
-                        span: call.syntax().span,
-                        message: format!(
+                    out.push(DiagnosticData::error(
+                        call.syntax().span,
+                        format!(
                             "external function '{callee}' must be called via 'this.{callee}()' or '{contract_name}.{callee}()'"
                         ),
-                    });
+                    ));
                     continue;
                 }
                 if vis == Visibility::Private && !is_own {
-                    out.push(DiagnosticData {
-                        span: call.syntax().span,
-                        message: format!(
+                    out.push(DiagnosticData::error(
+                        call.syntax().span,
+                        format!(
                             "private function '{callee}' cannot be called from derived contract '{contract_name}'"
                         ),
-                    });
+                    ));
                 }
             }
             for member in body.all_members() {
@@ -279,21 +279,19 @@ pub fn visibility_diagnostics(
                     continue;
                 };
                 if vis == Visibility::Internal {
-                    out.push(DiagnosticData {
-                        span: member.syntax().span,
-                        message: format!(
+                    out.push(DiagnosticData::error(
+                        member.syntax().span,
+                        format!(
                             "internal function '{name}' cannot be called via instance '{root}'"
                         ),
-                    });
+                    ));
                     continue;
                 }
                 if vis == Visibility::Private {
-                    out.push(DiagnosticData {
-                        span: member.syntax().span,
-                        message: format!(
-                            "private function '{name}' cannot be called via instance '{root}'"
-                        ),
-                    });
+                    out.push(DiagnosticData::error(
+                        member.syntax().span,
+                        format!("private function '{name}' cannot be called via instance '{root}'"),
+                    ));
                 }
             }
         }

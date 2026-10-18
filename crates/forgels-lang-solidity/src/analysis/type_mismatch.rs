@@ -295,13 +295,13 @@ fn check_var(
     if matches(elementary, literal.kind) {
         return;
     }
-    out.push(DiagnosticData {
-        span: literal.span,
-        message: format!(
+    out.push(DiagnosticData::error(
+        literal.span,
+        format!(
             "type mismatch: cannot assign {} to '{type_text}'",
             literal_label(literal.kind)
         ),
-    });
+    ));
 }
 
 fn check_builtin(
@@ -325,8 +325,8 @@ fn check_builtin(
     if inferred == declared {
         return;
     }
-    out.push(DiagnosticData {
+    out.push(DiagnosticData::error(
         span,
-        message: format!("type mismatch: cannot assign {label} to '{type_text}'"),
-    });
+        format!("type mismatch: cannot assign {label} to '{type_text}'"),
+    ));
 }
