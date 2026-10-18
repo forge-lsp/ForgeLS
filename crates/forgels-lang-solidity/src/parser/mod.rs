@@ -19,7 +19,7 @@ mod tests;
 use contract::parse_contract;
 use cursor::Cursor;
 use items::{parse_import, parse_pragma};
-use members::skip_using;
+use members::parse_using;
 use user_types::{parse_enum, parse_error, parse_event, parse_struct, parse_user_type};
 
 #[derive(Debug, Default)]
@@ -117,8 +117,12 @@ impl SolidityParser {
                     }
                 }
                 Some(kind) if kind == SolidityKind::Using.as_u16() => {
-                    // File-level `using ... global;`: same skip as members.
-                    skip_using(&mut cursor);
+                    // File-level `using ... global;`: keep the node so
+                    // unknown skips it and analysis sees file usings.
+                    match parse_using(&mut cursor, &mut errors) {
+                        Some(node) => items.push(SyntaxElement::Node(node)),
+                        None => cursor.recover(),
+                    }
                 }
                 Some(kind) if kind == SolidityKind::Error.as_u16() => {
                     if let Some(token) = cursor.bump() {

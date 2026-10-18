@@ -1,5 +1,6 @@
 use super::members::{FunctionDef, StateVar};
 use super::user_types::{EnumDef, ErrorDef, EventDef, ModifierDef, StructDef, UserTypeDef};
+use super::using::UsingDirective;
 use super::{SolidityNode, cast_node};
 use crate::lexer::SolidityKind;
 use forgels_syntax::{AstNode, Span, SyntaxElement, SyntaxNode};
@@ -142,6 +143,13 @@ impl ContractDef {
         self.members_of(SolidityNode::Modifier)
             .into_iter()
             .filter_map(ModifierDef::cast)
+            .collect()
+    }
+
+    pub fn usings(&self) -> Vec<UsingDirective> {
+        self.members_of(SolidityNode::Using)
+            .into_iter()
+            .filter_map(UsingDirective::cast)
             .collect()
     }
 }

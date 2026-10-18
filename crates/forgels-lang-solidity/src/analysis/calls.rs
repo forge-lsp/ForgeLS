@@ -40,6 +40,12 @@ pub fn arity_diagnostics(file: &SolidityFile, scope: &Scope) -> Vec<DiagnosticDa
                     .or_insert_with(|| function.params().len());
             }
         }
+        let mut getter_of: HashMap<String, usize> = HashMap::new();
+        for getter in super::getter::contract_getters(&contract) {
+            getter_of
+                .entry(getter.name.clone())
+                .or_insert(getter.params.len());
+        }
         for function in contract.functions() {
             let Some(body) = function.body() else {
                 continue;
@@ -52,10 +58,14 @@ pub fn arity_diagnostics(file: &SolidityFile, scope: &Scope) -> Vec<DiagnosticDa
                 let Some(symbol) = scope.resolve(&callee, span.start) else {
                     continue;
                 };
-                if symbol.kind != SymbolKind::Function {
+                let expected = if symbol.kind == SymbolKind::Function {
+                    params_of.get(&callee).or_else(|| getter_of.get(&callee))
+                } else if symbol.kind == SymbolKind::StateVar {
+                    getter_of.get(&callee)
+                } else {
                     continue;
-                }
-                let Some(expected) = params_of.get(&callee) else {
+                };
+                let Some(expected) = expected else {
                     continue;
                 };
                 let actual = call.arg_count();
@@ -187,6 +197,19 @@ pub fn member_arity_diagnostics(
                     continue;
                 }
                 let members::TypeKind::Contract(target) = kind else {
+                    if let Some(expected) = super::using::using_expected_arity(
+                        file, scope, offset, &receiver, &name, deps,
+                    ) {
+                        let actual = member.arg_count();
+                        if expected != actual {
+                            out.push(DiagnosticData {
+                                span: member.syntax().span,
+                                message: format!(
+                                    "this function '{name}' takes {expected} arguments but {actual} supplied"
+                                ),
+                            });
+                        }
+                    }
                     continue;
                 };
                 if target.is_empty() {
@@ -234,11 +257,18 @@ pub fn member_arity_diagnostics(
                             .or_insert_with(|| item.params().len());
                     }
                 }
-                let Some(expected) = params_of.get(&name) else {
+                for getter in super::getter::contract_getters(&target_def) {
+                    params_of
+                        .entry(getter.name.clone())
+                        .or_insert(getter.params.len());
+                }
+                let Some(expected) = params_of.get(&name).copied().or_else(|| {
+                    super::using::using_expected_arity(file, scope, offset, &receiver, &name, deps)
+                }) else {
                     continue;
                 };
                 let actual = member.arg_count();
-                if *expected != actual {
+                if expected != actual {
                     out.push(DiagnosticData {
                         span: member.syntax().span,
                         message: format!(

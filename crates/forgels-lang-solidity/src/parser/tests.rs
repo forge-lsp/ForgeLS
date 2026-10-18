@@ -518,6 +518,69 @@ fn file_level_using_skips_without_error() {
 }
 
 #[test]
+fn using_directive_parses_library_and_target() {
+    let text = "contract C {\nusing SafeMath for uint;\n}";
+    let file = parse_ok(text);
+    let usings = file.contracts()[0].usings();
+    assert_eq!(usings.len(), 1);
+    assert_eq!(usings[0].library().as_deref(), Some("SafeMath"));
+    assert_eq!(usings[0].target_text().as_deref(), Some("uint"));
+    assert!(!usings[0].is_wildcard());
+    assert!(!usings[0].is_global());
+}
+
+#[test]
+fn using_wildcard_and_global_flags() {
+    let text = "contract C {\nusing SafeMath for *;\n}";
+    let file = parse_ok(text);
+    let usings = file.contracts()[0].usings();
+    assert_eq!(usings.len(), 1);
+    assert!(usings[0].is_wildcard());
+    assert_eq!(usings[0].target_text().as_deref(), Some("*"));
+    let global = "using SafeMath for uint global;\ncontract C {}";
+    let global_file = parse_ok(global);
+    assert_eq!(global_file.usings().len(), 1);
+    assert!(global_file.usings()[0].is_global());
+}
+
+#[test]
+fn using_operator_form_keeps_span_without_library() {
+    let text = "contract C {\nusing {add as +} for MyNumber global;\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let usings = file.contracts()[0].usings();
+    assert_eq!(usings.len(), 1);
+    assert!(usings[0].library().is_none());
+}
+
+#[test]
+fn function_virtual_override_and_bases_are_stored() {
+    let text = "contract C {\nfunction f() public virtual {}\nfunction g() public override {}\nfunction h() public override(A, B) {}\n}";
+    let file = parse_ok(text);
+    let functions = file.contracts()[0].functions();
+    assert_eq!(functions.len(), 3);
+    assert!(functions[0].is_virtual());
+    assert!(!functions[0].is_override());
+    assert!(!functions[1].is_virtual());
+    assert!(functions[1].is_override());
+    assert!(functions[1].override_bases().is_empty());
+    assert!(functions[2].is_override());
+    assert_eq!(functions[2].override_bases(), vec!["A", "B"]);
+}
+
+#[test]
+fn state_var_public_is_stored_and_name_survives() {
+    let text = "contract C {\nuint public total;\nuint private hidden;\n}";
+    let file = parse_ok(text);
+    let vars = file.contracts()[0].state_vars();
+    assert_eq!(vars.len(), 2);
+    assert_eq!(vars[0].name().as_deref(), Some("total"));
+    assert!(vars[0].is_public());
+    assert!(!vars[1].is_public());
+}
+
+#[test]
 fn emit_parses_with_name_and_args() {
     let text = "contract C {\nfunction f() public {\nemit Transfer(a, b);\n}\n}";
     let file = parse_ok(text);

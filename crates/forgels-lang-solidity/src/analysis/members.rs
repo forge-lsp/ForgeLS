@@ -350,6 +350,15 @@ pub fn members_of(file: &SolidityFile, kind: &TypeKind) -> Vec<MemberInfo> {
                 }
                 out.push(inherited);
             }
+            for getter in super::getter::getter_members(&contract) {
+                if out
+                    .iter()
+                    .any(|own| own.name == getter.name && own.kind == SymbolKind::Function)
+                {
+                    continue;
+                }
+                out.push(getter);
+            }
             out
         }
         TypeKind::Struct(name) => {

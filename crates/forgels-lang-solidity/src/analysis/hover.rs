@@ -84,6 +84,22 @@ pub fn hover_at(file: &SolidityFile, text: &str, offset: u32) -> Option<Hover> {
                 span: found.span,
             });
         }
+        {
+            let scope = collect_symbols(file);
+            if let Some((found, _)) = super::using::resolve_using_member(
+                file,
+                &scope,
+                offset,
+                &ctx.receiver,
+                &ctx.member,
+                &[],
+            ) {
+                return Some(Hover {
+                    contents: found.detail,
+                    span: found.span,
+                });
+            }
+        }
         if let Some(builtin) =
             super::forge::member_builtin(&ctx.receiver, &ctx.member, &scope, offset)
         {
