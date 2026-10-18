@@ -27,13 +27,29 @@ impl RuleId {
     pub const INTERFACE_RULES: Self = Self("correctness/interface-rules");
     pub const INDEXED_LIMIT: Self = Self("correctness/indexed-limit");
     pub const INCONSISTENT_INHERITANCE: Self = Self("correctness/inconsistent-inheritance");
+    pub const NAMING: Self = Self("style/naming");
+    pub const MODIFIER_ORDER: Self = Self("style/modifier-order");
+    pub const FUNCTION_ORDER: Self = Self("style/function-order");
+    pub const LAYOUT_ORDER: Self = Self("style/layout-order");
+    pub const IMPORT_POSITION: Self = Self("style/import-position");
+    pub const MAPPING_GLUE: Self = Self("style/mapping-glue");
+    pub const ARRAY_GLUE: Self = Self("style/array-glue");
 
     pub const fn as_str(self) -> &'static str {
         self.0
     }
 
     pub fn default_severity(self) -> Severity {
-        Severity::Error
+        match self.0 {
+            "style/naming"
+            | "style/modifier-order"
+            | "style/function-order"
+            | "style/layout-order"
+            | "style/import-position"
+            | "style/mapping-glue"
+            | "style/array-glue" => Severity::Warning,
+            _ => Severity::Error,
+        }
     }
 
     pub fn all() -> &'static [Self] {
@@ -41,7 +57,7 @@ impl RuleId {
     }
 }
 
-const ALL: [RuleId; 22] = [
+const ALL: [RuleId; 29] = [
     RuleId::PARSE_ERROR,
     RuleId::CALL_ARITY,
     RuleId::STRUCT_ARITY,
@@ -64,4 +80,11 @@ const ALL: [RuleId; 22] = [
     RuleId::INTERFACE_RULES,
     RuleId::INDEXED_LIMIT,
     RuleId::INCONSISTENT_INHERITANCE,
+    RuleId::NAMING,
+    RuleId::MODIFIER_ORDER,
+    RuleId::FUNCTION_ORDER,
+    RuleId::LAYOUT_ORDER,
+    RuleId::IMPORT_POSITION,
+    RuleId::MAPPING_GLUE,
+    RuleId::ARRAY_GLUE,
 ];

@@ -6260,7 +6260,7 @@ fn type_mismatch_length_to_address_errors() {
 
 #[test]
 fn type_mismatch_binop_and_call_stay_silent() {
-    let text = "contract C {\nfunction foo() internal returns (uint) {}\nuint a = 1 + 2;\nuint b = foo();\n}";
+    let text = "contract C {\nuint a = 1 + 2;\nuint b = foo();\nfunction foo() internal returns (uint) {}\n}";
     assert!(diagnostics_of(text).is_empty());
 }
 
@@ -6356,7 +6356,7 @@ fn visibility_private_in_derived_errors() {
 
 #[test]
 fn visibility_private_own_call_stays_silent() {
-    let text = "contract C {\nfunction foo() private {}\nfunction f() public {\nfoo();\n}\n}";
+    let text = "contract C {\nfunction f() public {\nfoo();\n}\nfunction foo() private {}\n}";
     assert!(diagnostics_of(text).is_empty());
 }
 
@@ -6374,7 +6374,7 @@ fn visibility_overload_mixed_stays_silent() {
 
 #[test]
 fn visibility_this_internal_stays_silent() {
-    let text = "contract C {\nfunction foo() internal {}\nfunction f() public {\nthis.foo();\n}\n}";
+    let text = "contract C {\nfunction f() public {\nthis.foo();\n}\nfunction foo() internal {}\n}";
     assert!(diagnostics_of(text).is_empty());
 }
 
