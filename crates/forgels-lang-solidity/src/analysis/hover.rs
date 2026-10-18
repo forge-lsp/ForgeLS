@@ -56,8 +56,8 @@ pub fn hover_at(file: &SolidityFile, text: &str, offset: u32) -> Option<Hover> {
                 span: ctx.member_span,
             });
         }
-        if matches!(kind, super::members::TypeKind::Address)
-            && let Some(found) = super::address::address_member(&ctx.member)
+        if let super::members::TypeKind::Address { payable } = kind
+            && let Some(found) = super::address::address_member(&ctx.member, payable)
         {
             return Some(Hover {
                 contents: found.detail,

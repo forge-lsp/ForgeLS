@@ -283,7 +283,7 @@ pub(crate) fn assert_arity_diagnostics(file: &SolidityFile, scope: &Scope) -> Ve
             let Some(body) = function.body() else {
                 continue;
             };
-            for call in body.calls() {
+            for call in body.all_calls() {
                 let Some(callee) = call.callee() else {
                     continue;
                 };

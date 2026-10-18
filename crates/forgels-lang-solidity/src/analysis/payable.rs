@@ -175,7 +175,7 @@ pub fn payable_diagnostics(
             let Some(body) = function.body() else {
                 continue;
             };
-            for call in body.calls() {
+            for call in body.all_calls() {
                 if !call.has_call_options() {
                     continue;
                 }
@@ -208,7 +208,7 @@ pub fn payable_diagnostics(
                     message: format!("non-payable function '{callee}' cannot receive 'value'"),
                 });
             }
-            for member in body.members() {
+            for member in body.all_members() {
                 if !member.has_call_options() {
                     continue;
                 }

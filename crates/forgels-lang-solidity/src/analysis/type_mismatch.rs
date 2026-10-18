@@ -257,7 +257,7 @@ pub fn type_mismatch_diagnostics(file: &SolidityFile, text: &str) -> Vec<Diagnos
             let Some(body) = function.body() else {
                 continue;
             };
-            for local in body.locals() {
+            for local in body.all_locals() {
                 check_var(
                     &mut out,
                     local.type_node().map(|node| node.text()),

@@ -221,9 +221,10 @@ fn super_params_of(
 /// stay silent. Receiver resolves with deps, structs and enums stay
 /// silent, unknown types stay silent. Arrays check `push` (1) and `pop`
 /// (0) on dynamic only: `length` calls and fixed array calls stay silent,
-/// unknown names stay silent. Addresses check `transfer`, `send`, `call`,
-/// `delegatecall`, and `staticcall` (1 each): `balance`, `code`, and
-/// `codehash` calls stay silent, unknown names stay silent. Functions
+/// unknown names stay silent. Payable addresses check `transfer`, `send`,
+/// `call`, `delegatecall`, and `staticcall` (1 each); plain addresses
+/// check `call`, `delegatecall`, and `staticcall` only: `balance`, `code`,
+/// and `codehash` calls stay silent, unknown names stay silent. Functions
 /// check `gas` and `value` (1 each): `selector` calls stay silent.
 /// Globals check `block.blobhash` (1), `abi.decode` (2), and
 /// `abi.encodeCall` (2): fields and variadic `abi.encode*` stay silent.
@@ -287,8 +288,8 @@ pub fn member_arity_diagnostics(
                     }
                     continue;
                 }
-                if matches!(kind, members::TypeKind::Address) {
-                    let Some(expected) = address::address_expected_arity(&name) else {
+                if let members::TypeKind::Address { payable } = &kind {
+                    let Some(expected) = address::address_expected_arity(&name, *payable) else {
                         continue;
                     };
                     let actual = member.arg_count();
