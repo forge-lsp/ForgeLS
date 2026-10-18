@@ -490,7 +490,8 @@ fn function_scope(function: &FunctionDef) -> Scope {
 /// child `Block` nodes, so shadowing resolves innermost first. For-init
 /// decls live in the `for` wrapper block and stay visible only inside
 /// it, so uses after the loop miss. Tuple decls expand to one `LocalVar`
-/// per name.
+/// per name. `try` wrappers hold `returns` plus `catch` params as
+/// `Param` nodes so bodies resolve them.
 fn block_scope(block: &crate::BlockNode) -> Scope {
     let mut scope = Scope::new(block.syntax().span);
     for local in block.locals() {
@@ -509,6 +510,25 @@ fn block_scope(block: &crate::BlockNode) -> Scope {
                 name,
                 SymbolKind::LocalVar,
                 local.syntax().span,
+                detail,
+            ));
+        }
+    }
+    for param in block.params() {
+        if let Some(name) = param.name() {
+            if name.is_empty() {
+                continue;
+            }
+            let mut detail = param
+                .type_node()
+                .map(|node| node.text())
+                .unwrap_or_default();
+            detail.push(' ');
+            detail.push_str(&name);
+            scope.symbols.push(Symbol::new(
+                name,
+                SymbolKind::Param,
+                param.syntax().span,
                 detail,
             ));
         }
@@ -553,28 +573,34 @@ impl SolidityAnalyzer {
 
     fn member_completion(
         file: &SolidityFile,
+        text: &str,
         offset: u32,
         member: &members::MemberContext,
         deps: &[(std::path::PathBuf, SolidityFile)],
     ) -> Vec<CompletionData> {
         let scope = collect_symbols(file);
-        let kind = members::receiver_type_with_deps(file, &scope, offset, &member.receiver, deps);
+        let chain = members::chain_before(text, member.dot_pos);
+        let chained = chain.len() >= 2;
+        let kind = members::parent_kind_for_member(file, &scope, text, offset, member, deps);
         let mut seen: Vec<String> = Vec::new();
         let mut out: Vec<CompletionData> = Vec::new();
-        for builtin in forge::member_builtin_list(&member.receiver, &member.member, &scope, offset)
-        {
-            if seen.contains(&builtin.name.to_string()) {
-                continue;
+        if !chained {
+            for builtin in
+                forge::member_builtin_list(&member.receiver, &member.member, &scope, offset)
+            {
+                if seen.contains(&builtin.name.to_string()) {
+                    continue;
+                }
+                seen.push(builtin.name.to_string());
+                out.push(CompletionData {
+                    label: builtin.name.to_string(),
+                    detail: forge::builtin_detail(builtin),
+                    kind: completion::completion_item_kind(completion::CompletionKind::Symbol(
+                        SymbolKind::Function,
+                    )),
+                    text_edit: None,
+                });
             }
-            seen.push(builtin.name.to_string());
-            out.push(CompletionData {
-                label: builtin.name.to_string(),
-                detail: forge::builtin_detail(builtin),
-                kind: completion::completion_item_kind(completion::CompletionKind::Symbol(
-                    SymbolKind::Function,
-                )),
-                text_edit: None,
-            });
         }
         for item in members::members_of(file, &kind) {
             if !item.name.starts_with(member.member.as_str()) {
@@ -610,22 +636,24 @@ impl SolidityAnalyzer {
                 text_edit: None,
             });
         }
-        for (info, _) in using::using_members_at(file, &scope, offset, &member.receiver, deps) {
-            if !info.name.starts_with(member.member.as_str()) {
-                continue;
+        if !chained {
+            for (info, _) in using::using_members_at(file, &scope, offset, &member.receiver, deps) {
+                if !info.name.starts_with(member.member.as_str()) {
+                    continue;
+                }
+                if seen.contains(&info.name) {
+                    continue;
+                }
+                seen.push(info.name.clone());
+                out.push(CompletionData {
+                    label: info.name.clone(),
+                    detail: info.detail.clone(),
+                    kind: completion::completion_item_kind(completion::CompletionKind::Symbol(
+                        info.kind,
+                    )),
+                    text_edit: None,
+                });
             }
-            if seen.contains(&info.name) {
-                continue;
-            }
-            seen.push(info.name.clone());
-            out.push(CompletionData {
-                label: info.name.clone(),
-                detail: info.detail.clone(),
-                kind: completion::completion_item_kind(completion::CompletionKind::Symbol(
-                    info.kind,
-                )),
-                text_edit: None,
-            });
         }
         out.sort_by(|left, right| left.label.cmp(&right.label));
         out
@@ -697,6 +725,7 @@ impl SolidityAnalyzer {
         out.extend(errors::revert_arity_diagnostics(file, deps));
         out.extend(emits::unknown_emit_diagnostics(file, deps));
         out.extend(errors::unknown_error_diagnostics(file, deps));
+        out.extend(inheritance::linearization_diagnostics(file, deps));
         out.extend(visibility::visibility_diagnostics(file, scope));
         out.extend(mutability::mutability_diagnostics(file, text, scope));
         out.extend(payable::payable_diagnostics(file, text, scope, deps));
@@ -802,12 +831,9 @@ impl Analyzer for SolidityAnalyzer {
         {
             let deps = Self::dep_files(ctx);
             let scope = collect_symbols(&file);
-            let kind = members::receiver_type_with_deps(
-                &file,
-                &scope,
-                ctx.offset,
-                &member.receiver,
-                &deps,
+            let chained = members::chain_before(ctx.text, member.dot_pos).len() >= 2;
+            let kind = members::parent_kind_for_member(
+                &file, &scope, ctx.text, ctx.offset, &member, &deps,
             );
             // User type entries are synthetic: dep matches still show
             // the cursor member span, never the 0,0 detail span.
@@ -842,14 +868,16 @@ impl Analyzer for SolidityAnalyzer {
                     span: member.member_span,
                 });
             }
-            if let Some((info, dep_path)) = using::resolve_using_member(
-                &file,
-                &scope,
-                ctx.offset,
-                &member.receiver,
-                &member.member,
-                &deps,
-            ) {
+            if !chained
+                && let Some((info, dep_path)) = using::resolve_using_member(
+                    &file,
+                    &scope,
+                    ctx.offset,
+                    &member.receiver,
+                    &member.member,
+                    &deps,
+                )
+            {
                 let contents = match dep_path {
                     Some(path) => {
                         let texts = forgels_core::dep_texts(ctx, 16);
@@ -942,7 +970,7 @@ impl Analyzer for SolidityAnalyzer {
         let file = Self::parse_file(ctx.text);
         if let Some(member) = members::member_context_at(ctx.text, ctx.offset) {
             let deps = Self::dep_files(ctx);
-            return Self::member_completion(&file, ctx.offset, &member, &deps);
+            return Self::member_completion(&file, ctx.text, ctx.offset, &member, &deps);
         }
         if let Some(type_ctx) = meta::type_context_at(ctx.text, ctx.offset) {
             let kind = members::TypeKind::Meta(type_ctx.inner.clone());
@@ -1068,12 +1096,9 @@ impl Analyzer for SolidityAnalyzer {
         {
             let deps = Self::dep_files(ctx);
             let scope = collect_symbols(&file);
-            let kind = members::receiver_type_with_deps(
-                &file,
-                &scope,
-                ctx.offset,
-                &member.receiver,
-                &deps,
+            let chained = members::chain_before(ctx.text, member.dot_pos).len() >= 2;
+            let kind = members::parent_kind_for_member(
+                &file, &scope, ctx.text, ctx.offset, &member, &deps,
             );
             // User type entries are synthetic with no declaration:
             // never leak a 0,0 span and never fall through to word lookup.
@@ -1085,14 +1110,16 @@ impl Analyzer for SolidityAnalyzer {
             {
                 return Some(GotoTarget::new(path, info.span));
             }
-            if let Some((info, path)) = using::resolve_using_member(
-                &file,
-                &scope,
-                ctx.offset,
-                &member.receiver,
-                &member.member,
-                &deps,
-            ) {
+            if !chained
+                && let Some((info, path)) = using::resolve_using_member(
+                    &file,
+                    &scope,
+                    ctx.offset,
+                    &member.receiver,
+                    &member.member,
+                    &deps,
+                )
+            {
                 let target = path.unwrap_or_else(|| ctx.path.to_path_buf());
                 return Some(GotoTarget::new(target, info.span));
             }

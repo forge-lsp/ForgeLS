@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 
+use forgels_core::DiagnosticData;
 use forgels_syntax::AstNode;
 
 use crate::{ContractDef, EnumDef, SolidityFile, StructDef, UserTypeDef};
@@ -66,17 +67,99 @@ pub(crate) fn find_user_type(file: &SolidityFile, name: &str) -> Option<UserType
     None
 }
 
-/// Linearize same file bases in heritage order with DFS.
+/// Linearize same file bases with C3.
 ///
-/// Heritage order wins, transitive bases come before direct ones, and
-/// `visited` dedupes diamonds and breaks cycles. This is not C3: V1 keeps
-/// declaration order only.
+/// Heritage order drives the merge, direct bases come before transitive
+/// ones, diamonds dedupe, and cycles terminate. Falls back to heritage
+/// order DFS when the hierarchy is inconsistent; callers report the
+/// inconsistency via `linearization_diagnostics`.
 pub(crate) fn linearize(file: &SolidityFile, name: &str) -> Vec<ContractDef> {
+    if let Some(chain) = c3_same(file, name, &mut Vec::new()) {
+        return chain;
+    }
     let mut visited: HashSet<String> = HashSet::new();
     visited.insert(name.to_string());
     let mut out: Vec<ContractDef> = Vec::new();
     walk_same(file, name, &mut visited, &mut out);
     out
+}
+
+/// True when C3 merge fails for `name` in one file.
+pub(crate) fn is_inconsistent(file: &SolidityFile, name: &str) -> bool {
+    c3_same(file, name, &mut Vec::new()).is_none() && find_contract(file, name).is_some()
+}
+
+fn c3_same(
+    file: &SolidityFile,
+    name: &str,
+    visiting: &mut Vec<String>,
+) -> Option<Vec<ContractDef>> {
+    if visiting.contains(&name.to_string()) {
+        return Some(Vec::new());
+    }
+    let contract = find_contract(file, name)?;
+    visiting.push(name.to_string());
+    let mut seqs: Vec<Vec<String>> = Vec::new();
+    let mut direct: Vec<String> = Vec::new();
+    for base in contract.heritage() {
+        if base.is_empty() {
+            continue;
+        }
+        let Some(_) = find_contract(file, &base) else {
+            continue;
+        };
+        direct.push(base.clone());
+        let Some(lin) = c3_same(file, &base, visiting) else {
+            visiting.pop();
+            return None;
+        };
+        let mut names: Vec<String> = lin.into_iter().filter_map(|def| def.name()).collect();
+        let mut with_self = vec![base.clone()];
+        with_self.append(&mut names);
+        seqs.push(with_self);
+    }
+    seqs.push(direct.clone());
+    let merged = c3_merge(seqs)?;
+    visiting.pop();
+    let mut out = Vec::new();
+    for base_name in merged {
+        if base_name == name {
+            continue;
+        }
+        if let Some(def) = find_contract(file, &base_name) {
+            out.push(def);
+        }
+    }
+    Some(out)
+}
+
+fn c3_merge(mut seqs: Vec<Vec<String>>) -> Option<Vec<String>> {
+    seqs.retain(|seq| !seq.is_empty());
+    let mut out = Vec::new();
+    loop {
+        seqs.retain(|seq| !seq.is_empty());
+        if seqs.is_empty() {
+            return Some(out);
+        }
+        let mut candidate: Option<String> = None;
+        for seq in &seqs {
+            let head = seq[0].clone();
+            let in_tail = seqs
+                .iter()
+                .any(|other| other.len() > 1 && other[1..].contains(&head));
+            if !in_tail {
+                candidate = Some(head);
+                break;
+            }
+        }
+        let next = candidate?;
+        out.push(next.clone());
+        for seq in seqs.iter_mut() {
+            if seq.first().is_some_and(|head| head == &next) {
+                seq.remove(0);
+            }
+        }
+    }
 }
 
 fn walk_same(
@@ -446,20 +529,78 @@ pub(crate) fn find_user_type_across(
 
 /// Linearize bases across the primary file plus deps.
 ///
-/// Uses the same heritage order DFS as same file linearization, but each
-/// base lookup spans primary then deps. `visited` is by contract name, so
-/// diamonds collapse and cycles terminate. Returns each base with its
-/// owning path (`None` for primary).
+/// Uses C3 with heritage order, direct bases before transitive ones.
+/// Each base lookup spans primary then deps. Falls back to heritage
+/// order DFS when inconsistent. Returns each base with its owning path
+/// (`None` for primary).
 pub(crate) fn linearize_across(
     primary: &SolidityFile,
     name: &str,
     deps: &[(PathBuf, SolidityFile)],
 ) -> Vec<(ContractDef, Option<PathBuf>)> {
+    if let Some(chain) = c3_across(primary, name, deps, &mut Vec::new()) {
+        return chain;
+    }
     let mut visited: HashSet<String> = HashSet::new();
     visited.insert(name.to_string());
     let mut out: Vec<(ContractDef, Option<PathBuf>)> = Vec::new();
     walk_across(primary, name, deps, &mut visited, &mut out);
     out
+}
+
+/// True when C3 merge fails for `name` across primary plus deps.
+pub(crate) fn is_inconsistent_across(
+    primary: &SolidityFile,
+    name: &str,
+    deps: &[(PathBuf, SolidityFile)],
+) -> bool {
+    c3_across(primary, name, deps, &mut Vec::new()).is_none()
+        && find_contract_across(name, primary, deps).is_some()
+}
+
+fn c3_across(
+    primary: &SolidityFile,
+    name: &str,
+    deps: &[(PathBuf, SolidityFile)],
+    visiting: &mut Vec<String>,
+) -> Option<Vec<(ContractDef, Option<PathBuf>)>> {
+    if visiting.contains(&name.to_string()) {
+        return Some(Vec::new());
+    }
+    let (contract, _) = find_contract_across(name, primary, deps)?;
+    visiting.push(name.to_string());
+    let mut seqs: Vec<Vec<String>> = Vec::new();
+    let mut direct: Vec<String> = Vec::new();
+    for base in contract.heritage() {
+        if base.is_empty() {
+            continue;
+        }
+        if find_contract_across(&base, primary, deps).is_none() {
+            continue;
+        }
+        direct.push(base.clone());
+        let Some(lin) = c3_across(primary, &base, deps, visiting) else {
+            visiting.pop();
+            return None;
+        };
+        let mut names: Vec<String> = lin.iter().filter_map(|(def, _)| def.name()).collect();
+        let mut with_self = vec![base.clone()];
+        with_self.append(&mut names);
+        seqs.push(with_self);
+    }
+    seqs.push(direct.clone());
+    let merged = c3_merge(seqs)?;
+    visiting.pop();
+    let mut out = Vec::new();
+    for base_name in merged {
+        if base_name == name {
+            continue;
+        }
+        if let Some((def, path)) = find_contract_across(&base_name, primary, deps) {
+            out.push((def, path));
+        }
+    }
+    Some(out)
 }
 
 fn walk_across(
@@ -481,4 +622,43 @@ fn walk_across(
             out.push((def, path));
         }
     }
+}
+
+/// Inconsistent linearization errors: C3 merge failed.
+///
+/// Checks each contract with same-file plus cross-file C3; on failure
+/// resolution already fell back to heritage DFS, so this diagnostic is
+/// the only signal. Span is the contract name, message names the
+/// contract.
+pub(crate) fn linearization_diagnostics(
+    file: &SolidityFile,
+    deps: &[(PathBuf, SolidityFile)],
+) -> Vec<DiagnosticData> {
+    let mut out = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    for contract in file.contracts() {
+        let Some(name) = contract.name() else {
+            continue;
+        };
+        if name.is_empty() || !seen.insert(name.clone()) {
+            continue;
+        }
+        let bad_same = is_inconsistent(file, &name);
+        let bad_across = if deps.is_empty() {
+            false
+        } else {
+            is_inconsistent_across(file, &name, deps)
+        };
+        if !bad_same && !bad_across {
+            continue;
+        }
+        let span = contract
+            .name_span()
+            .unwrap_or_else(|| contract.syntax().span);
+        out.push(DiagnosticData {
+            span,
+            message: format!("inconsistent linearization for '{name}'"),
+        });
+    }
+    out
 }

@@ -103,16 +103,16 @@ fn member_param_names(
     scope: &Scope,
     deps: &[(PathBuf, SolidityFile)],
     anchor: u32,
-    receiver: &str,
+    chain: &[String],
     name: &str,
 ) -> Option<Vec<String>> {
-    if receiver.is_empty() || name.is_empty() {
+    if chain.is_empty() || name.is_empty() {
         return None;
     }
-    if super::forge::member_builtin(receiver, name, scope, anchor).is_some() {
+    if chain.len() == 2 && super::forge::member_builtin(&chain[0], name, scope, anchor).is_some() {
         return None;
     }
-    let kind = super::members::receiver_type_with_deps(file, scope, anchor, receiver, deps);
+    let kind = super::members::resolve_chained_kind(file, scope, anchor, chain, deps);
     if let super::members::TypeKind::Super { enclosing } = kind {
         if enclosing.is_empty() {
             return None;
@@ -456,13 +456,14 @@ pub fn inlay_hints_in(
                 if !member.is_call() {
                     continue;
                 }
-                let Some(receiver) = member.receiver() else {
+                let chain = member.chain();
+                if chain.len() < 2 {
+                    continue;
+                }
+                let Some(name) = member.final_member() else {
                     continue;
                 };
-                let Some(name) = member.member() else {
-                    continue;
-                };
-                if receiver.is_empty() || name.is_empty() {
+                if name.is_empty() {
                     continue;
                 }
                 let span = member.syntax().span;
@@ -470,7 +471,7 @@ pub fn inlay_hints_in(
                     continue;
                 }
                 let anchor = span.start;
-                let Some(names) = member_param_names(file, &scope, deps, anchor, &receiver, &name)
+                let Some(names) = member_param_names(file, &scope, deps, anchor, &chain, &name)
                 else {
                     continue;
                 };

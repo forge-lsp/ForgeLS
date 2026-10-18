@@ -166,7 +166,7 @@ fn resolve_target_function(
             return None;
         }
         let kind =
-            super::members::receiver_type_with_deps(file, &scope, offset, &member.receiver, deps);
+            super::members::parent_kind_for_member(file, &scope, text, offset, &member, deps);
         if !matches!(
             kind,
             super::members::TypeKind::Contract(_) | super::members::TypeKind::Struct(_)
@@ -371,20 +371,21 @@ pub fn outgoing_in(
         if !member.is_call() {
             continue;
         }
-        let Some(receiver) = member.receiver() else {
+        let chain = member.chain();
+        if chain.len() < 2 {
+            continue;
+        }
+        let Some(name) = member.final_member() else {
             continue;
         };
-        let Some(name) = member.member() else {
-            continue;
-        };
-        if receiver.is_empty() || name.is_empty() {
+        if name.is_empty() {
             continue;
         }
         let anchor = member.syntax().span.start;
         if is_guarded_builtin(file, text, anchor, &scope) {
             continue;
         }
-        let kind = super::members::receiver_type_with_deps(file, &scope, anchor, &receiver, deps);
+        let kind = super::members::resolve_chained_kind(file, &scope, anchor, &chain, deps);
         let super::members::TypeKind::Contract(target_name) = kind else {
             continue;
         };

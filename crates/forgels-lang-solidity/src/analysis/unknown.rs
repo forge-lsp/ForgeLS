@@ -19,9 +19,9 @@ pub(crate) const GLOBAL_RECEIVERS: &[&str] = &[
 
 /// Plain globals that never error.
 ///
-/// Covers builtin calls, hash helpers, and the `Test` base from
-/// forge-std which lives outside the workspace. User declarations
-/// still win via the scope check first.
+/// Covers builtin calls, hash helpers, `Error` and `Panic` catch names,
+/// and the `Test` base from forge-std which lives outside the
+/// workspace. User declarations still win via the scope check first.
 pub(crate) const ALWAYS_OK: &[&str] = &[
     "require",
     "assert",
@@ -37,6 +37,8 @@ pub(crate) const ALWAYS_OK: &[&str] = &[
     "blockhash",
     "now",
     "Test",
+    "Error",
+    "Panic",
 ];
 
 /// Unknown identifier errors: every `Ident` token must resolve.
@@ -264,6 +266,11 @@ pub(crate) fn decl_spans(file: &SolidityFile) -> Vec<Span> {
                         out.push(span);
                     }
                 }
+                for param in body.all_params() {
+                    if let Some(span) = param.name_span() {
+                        out.push(span);
+                    }
+                }
             }
         }
     }
@@ -337,6 +344,9 @@ pub(crate) fn new_spans(file: &SolidityFile) -> Vec<Span> {
 }
 
 /// Member name spans after the dot: arity and hover own them.
+///
+/// Covers every tail in a chain: `a.b.c` yields both `b` and `c` so
+/// intermediates stay silent and only the final segment resolves.
 pub(crate) fn member_spans(file: &SolidityFile) -> Vec<Span> {
     let mut out = Vec::new();
     for contract in file.contracts() {
@@ -345,9 +355,7 @@ pub(crate) fn member_spans(file: &SolidityFile) -> Vec<Span> {
                 continue;
             };
             for member in body.all_members() {
-                if let Some(span) = member.member_span() {
-                    out.push(span);
-                }
+                out.extend(member.all_member_spans());
             }
         }
     }

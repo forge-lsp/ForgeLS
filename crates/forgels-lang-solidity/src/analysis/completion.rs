@@ -66,7 +66,7 @@ pub fn complete_at(file: &SolidityFile, text: &str, offset: u32) -> Vec<Completi
         return items;
     }
     if let Some(ctx) = super::members::member_context_at(text, offset) {
-        return complete_members(file, offset, &ctx);
+        return complete_members(file, text, offset, &ctx);
     }
     if super::emits::is_emit_name_context(text, offset) {
         return complete_emit_events(file, text, offset);
@@ -118,12 +118,16 @@ pub fn complete_at(file: &SolidityFile, text: &str, offset: u32) -> Vec<Completi
 
 fn complete_members(
     file: &SolidityFile,
+    text: &str,
     offset: u32,
     ctx: &super::members::MemberContext,
 ) -> Vec<CompletionItem> {
     let scope = collect_symbols(file);
-    let kind = super::members::receiver_type(file, &scope, offset, &ctx.receiver);
-    let mut items: Vec<CompletionItem> =
+    let chained = super::members::chain_before(text, ctx.dot_pos).len() >= 2;
+    let kind = super::members::parent_kind_for_member(file, &scope, text, offset, ctx, &[]);
+    let mut items: Vec<CompletionItem> = if chained {
+        Vec::new()
+    } else {
         super::forge::member_builtin_list(&ctx.receiver, &ctx.member, &scope, offset)
             .into_iter()
             .map(|builtin| CompletionItem {
@@ -131,7 +135,8 @@ fn complete_members(
                 detail: super::forge::builtin_detail(builtin),
                 kind: CompletionKind::Symbol(SymbolKind::Function),
             })
-            .collect();
+            .collect()
+    };
     let mut seen: Vec<String> = items.iter().map(|item| item.label.clone()).collect();
     for member in super::members::members_of(file, &kind) {
         if !member.name.starts_with(ctx.member.as_str()) {
@@ -146,6 +151,10 @@ fn complete_members(
             detail: member.detail,
             kind: CompletionKind::Symbol(member.kind),
         });
+    }
+    if chained {
+        items.sort_by(|left, right| left.label.cmp(&right.label));
+        return items;
     }
     for (info, _) in super::using::using_members_at(file, &scope, offset, &ctx.receiver, &[]) {
         if !info.name.starts_with(ctx.member.as_str()) {

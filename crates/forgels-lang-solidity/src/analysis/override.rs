@@ -85,8 +85,8 @@ fn has_any_same_name_base(file: &SolidityFile, contract_name: &str, name: &str) 
 /// when `override` matches only non-virtual bases. Silent when the name
 /// is a constructor, fallback, or receive, when the derived function is
 /// private, when params differ (overload), or when the base is private.
-/// State variables never report here. C3 and multi-base validation stay
-/// deferred: any virtual match silences O3.
+/// State variables never report here. Bases follow C3 `linearize`;
+/// multi-base list validation stays deferred.
 pub fn override_diagnostics(file: &SolidityFile) -> Vec<DiagnosticData> {
     let mut out = Vec::new();
     for contract in file.contracts() {

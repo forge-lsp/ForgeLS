@@ -58,7 +58,8 @@ Status: token kinds defined. Real lexer and parser are planned.
 ## Inheritance
 
 - Scope: eager merge into `contract_scope` and `members_of`, no `Symbol` schema change. Origin uses detail suffix ` - from <Base>` same file and ` - from <Base> in <file>` cross file.
-- Order: heritage order DFS with visited set, transitive bases before direct ones. Derived wins, first base wins. This is not C3.
+- Order: C3 with heritage order, direct bases before transitive ones. Derived wins, first base wins. Signature stays `linearize` plus `linearize_across`.
+- Fallback: inconsistent hierarchies fall back to heritage DFS and emit `inconsistent linearization for 'D'` at the contract name. Same file via `is_inconsistent`, deps via `is_inconsistent_across`.
 - Symbols: inherited scope covers structs, enums, errors, user types, events, modifiers, state vars, and functions. Member lookup (`members_of`) stays vars plus funcs.
 - Arity: `calls::arity_diagnostics` follows the same chain, derived wins. `errors::revert_arity_diagnostics` follows the chain across deps with dep file and contract errors as fallback.
 - Exports: `exports_of` stays own members only, no flatten.
@@ -71,6 +72,14 @@ Status: token kinds defined. Real lexer and parser are planned.
 - Hover and goto: base declarations, same rules as inherited `this` members.
 - Arity, signature, inlay, payable: base signatures across files, derived excluded. Getters excluded.
 - Limits: unknown `super` names stay silent everywhere.
+
+## Chained members
+
+- Scope: `MemberExpr::chain` plus `parser::try_parse_member` tails and `analysis::members::{chain_before, kind_of_chain, resolve_chained_kind, parent_kind_for_member}` with wiring in `hover`, `goto`, `complete`, `calls`, `signature`, `inlay`, `payable`, `references`, and `call_hierarchy`.
+- Shape: `a.b.c` stores receiver plus first member plus up to `MAX_CHAIN_TAILS = 4` extra `.ident` tails. Text scan (`chain_before`) walks back through dots and skips intermediate `(...)` calls.
+- Parse: tails cap at 4; beyond the cap the rest stays for `recover_statement`. Intermediate calls (`a.b().c`) are consumed but never stored; only the final segment keeps call markers. Unclosed tails fall back to plain.
+- Resolve: final-segment-only. Root via `receiver_type_with_deps`, each intermediate via its declared type (state var, struct field, or first function return) with cross-file lookup per level. Intermediates stay silent, builtins terminate, unknown members stay silent.
+- Limits: using members stay silent for chains, `wrap` and `unwrap` stay single level, longer builtin chains stay silent.
 
 ## Enum and user type members
 
@@ -131,7 +140,7 @@ Status: token kinds defined. Real lexer and parser are planned.
   `length` calls and fixed `push`/`pop` stay silent. Unknown names stay
   silent.
 - Limits: data location (`memory`, `storage`, `calldata`) ignored,
-  element type ignored, no signature help, chained `a.b.c` untouched.
+  element type ignored, no signature help, chained `a.b.c` resolves final only.
 
 ## Address members
 
@@ -155,7 +164,7 @@ Status: token kinds defined. Real lexer and parser are planned.
   take 1, same message as plain calls. `balance`, `code`, and `codehash`
   calls stay silent. Unknown names stay silent.
 - Limits: payable not distinguished, no signature help, chained `a.b.c`
-  untouched.
+  resolves final only.
 
 ## Bytes and string members
 
@@ -178,7 +187,7 @@ Status: token kinds defined. Real lexer and parser are planned.
 - Arity: all silent. `length` is a field so calls stay silent.
   Unknown names stay silent.
 - Limits: fixed versus dynamic not split, no signature help, chained
-  `a.b.c` untouched.
+  `a.b.c` resolves final only.
 
 ## Function type members
 
@@ -199,7 +208,7 @@ Status: token kinds defined. Real lexer and parser are planned.
 - Arity: `gas` and `value` take 1, same message as plain calls.
   `selector` calls stay silent. Unknown names stay silent.
 - Limits: no `address` member in V1, no visibility split for named
-  functions, no signature help, chained `a.b.c` untouched.
+  functions, no signature help, chained `a.b.c` resolves final only.
 
 ## Type metadata
 
@@ -252,7 +261,7 @@ Status: token kinds defined. Real lexer and parser are planned.
 - Arity: `block.blobhash` takes 1, `abi.decode` and `abi.encodeCall`
   take 2, same message as plain calls. Fields stay silent and variadic
   `abi.encode*` stays silent by design. Unknown names stay silent.
-- Limits: no signature help, chained `a.b.c` untouched.
+- Limits: no signature help, chained `a.b.c` resolves final only.
 
 ## Unknown identifiers
 
@@ -290,18 +299,24 @@ Status: token kinds defined. Real lexer and parser are planned.
   Rows must close with `)` then `=` and end with `;`; anything else
   rewinds so the caller recovers one statement.
 - Scopes: `function_scope` holds params, then one `block_scope` child
-  per body. `block_scope` holds direct locals plus one child scope per
-  nested block, so the deepest decl wins for hover, completion, goto,
-  references, and rename.
+  per body. `block_scope` holds direct locals plus direct `try` params
+  plus one child scope per nested block, so the deepest decl wins for
+  hover, completion, goto, references, and rename.
 - Diagnostics: `unknown` decl, emit, revert, new, member, and option
   spans plus plain, member, emit, revert, and deploy arity all use
   `all_*`, so nested rows lint the same as top-level rows.
 - Outline: `function_children` stays params only by design. Locals
   never outline; the comment on the function states why.
-- Limits: `catch` params are skipped with no symbols, `do` bodies
-  fall back to statement skips, single-statement bodies hold no decls.
-  Type mismatch, inlay, payable, visibility, and call hierarchy still
-  read direct children only.
+- Try: `parse_try` wraps the whole `try` statement in one child `Block`
+  from `try` to body end. Try `returns` params and `catch` params become
+  `Param` nodes inside the wrapper so bodies resolve them. Bodies recurse
+  via `parse_control_body`, so nested `try` works. `try new C(args)`
+  parses the deploy as a `New` node inside the wrapper so deploy arity
+  reuses the same constructor check. `Error` and `Panic` catch names stay
+  silent via the allowlist.
+- Limits: `do` bodies fall back to statement skips, single-statement
+  bodies hold no decls. Type mismatch, inlay, payable, visibility, and
+  call hierarchy still read direct children only.
 
 ## Document symbols
 
@@ -432,7 +447,7 @@ Status: token kinds defined. Real lexer and parser are planned.
   using rows so missing libs never lint.
 - Limits: exact spelling only (`uint` never matches `uint256`),
   operator forms (`using {f as +}`) and multi-library lists keep span
-  only, no `super` receivers, no chained `a.b.c`.
+  only, no `super` receivers, chained `a.b.c` stays silent for using.
 
 ## Override checks
 
@@ -450,7 +465,7 @@ Status: token kinds defined. Real lexer and parser are planned.
 - Silent: overloads (different param types), private derived, private
   bases, `constructor`, `fallback`, `receive`, and state vars. Any
   same-name base silences O2 so overloads never report as missing.
-- Limits: same file `linearize` only, no C3, no `override(A, B)` list
+- Limits: same file C3 `linearize` only, no `override(A, B)` list
   validation, no state-var override rules.
 
 ## Public getters
@@ -719,8 +734,9 @@ Status: token kinds defined. Real lexer and parser are planned.
 ## V1 limits
 
 - Tracked only: `dep_texts` skips untracked and missing files.
-- Caps: dep read cap is 16, republish fan-out cap is 32, references cap is 100, inlay cap is 100, semantic cap is 5000, call hierarchy cap is 50, code action cap is 10, folding cap is 200, selection depth cap is 20, type hierarchy cap is 50.
+- Caps: dep read cap is 16, republish fan-out cap is 32, references cap is 100, inlay cap is 100, semantic cap is 5000, call hierarchy cap is 50, code action cap is 10, folding cap is 200, selection depth cap is 20, type hierarchy cap is 50, chain tails cap is 4.
 - Symbols: `Contract` and `Function` cross files. `StateVar`, `Param`, and `LocalVar` stay local.
 - Imports: union without alias precision. `{B as C}` records both `B` and `C`, no alias mapping.
 - Parse: parse on each call, no incremental cache.
-- Inheritance: no C3, no `super`, no chained `a.b.c`, unknown bases ignored, cycles end via visited set, `exports_of` stays own members.
+- Inheritance: C3 with DFS fallback plus `inconsistent linearization` diagnostic, unknown bases ignored, cycles end via visited set, `exports_of` stays own members.
+- Chained: `a.b.c` resolves final only with cross-file lookup per level, intermediate calls skipped, builtins terminate, intermediates stay silent.
