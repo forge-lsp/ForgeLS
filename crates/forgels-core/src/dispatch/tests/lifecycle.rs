@@ -28,12 +28,15 @@ fn advertises_exact_beta_capabilities() {
     assert_eq!(
         keys,
         vec![
+            "callHierarchyProvider",
             "completionProvider",
             "definitionProvider",
             "documentSymbolProvider",
             "hoverProvider",
+            "inlayHintProvider",
             "referencesProvider",
             "renameProvider",
+            "semanticTokensProvider",
             "signatureHelpProvider",
             "textDocumentSync",
             "workspaceSymbolProvider"

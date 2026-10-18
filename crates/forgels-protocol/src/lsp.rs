@@ -102,7 +102,6 @@ impl SymbolKind {
 /// Core and language crates forward the value only. No mapping here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CompletionItemKind(pub u8);
-
 impl CompletionItemKind {
     pub const TEXT: Self = Self(1);
     pub const METHOD: Self = Self(2);
@@ -134,3 +133,46 @@ impl CompletionItemKind {
         self.0
     }
 }
+
+/// LSP inlay hint kind, passed through as a plain number.
+///
+/// Core and language crates forward the value only. Numbers follow
+/// LSP 3.17: Type is 1, Parameter is 2.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InlayHintKind(pub u8);
+
+impl InlayHintKind {
+    pub const TYPE: Self = Self(1);
+    pub const PARAMETER: Self = Self(2);
+
+    pub fn value(self) -> u8 {
+        self.0
+    }
+}
+
+/// Frozen semantic token legend for `semanticTokens/full`.
+///
+/// FREEZE: do not reorder, only append at the end. Clients cache
+/// indices, so a reorder breaks highlighting. Languages map their
+/// declarations to these indices.
+pub const SEMANTIC_TOKEN_TYPES: &[&str] = &[
+    "namespace",
+    "type",
+    "class",
+    "enum",
+    "interface",
+    "struct",
+    "typeParameter",
+    "parameter",
+    "variable",
+    "property",
+    "enumMember",
+    "event",
+    "function",
+    "method",
+    "keyword",
+    "modifier",
+];
+
+/// Frozen modifier legend, same freeze rule as the types above.
+pub const SEMANTIC_TOKEN_MODIFIERS: &[&str] = &["declaration", "definition"];

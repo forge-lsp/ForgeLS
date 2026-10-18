@@ -14,8 +14,10 @@ mod tests;
 
 pub use publish::{drain_due, flush_all, immediate_notifications};
 pub(crate) use requests::{
-    completion_response, definition_response, document_symbol_response, hover_response,
-    references_response, rename_response, signature_response, workspace_symbol_response,
+    call_hierarchy_incoming_response, call_hierarchy_outgoing_response,
+    call_hierarchy_prepare_response, completion_response, definition_response,
+    document_symbol_response, hover_response, inlay_hint_response, references_response,
+    rename_response, semantic_tokens_response, signature_response, workspace_symbol_response,
 };
 pub(crate) use sync::{
     apply_did_change, apply_did_close, apply_did_open, apply_folder_change, apply_initialize_roots,
@@ -34,7 +36,16 @@ pub fn server_capabilities() -> Value {
         "referencesProvider": true,
         "documentSymbolProvider": true,
         "workspaceSymbolProvider": true,
-        "renameProvider": true
+        "renameProvider": true,
+        "inlayHintProvider": true,
+        "semanticTokensProvider": {
+            "legend": {
+                "tokenTypes": forgels_protocol::SEMANTIC_TOKEN_TYPES,
+                "tokenModifiers": forgels_protocol::SEMANTIC_TOKEN_MODIFIERS,
+            },
+            "full": true,
+        },
+        "callHierarchyProvider": true
     })
 }
 
@@ -193,6 +204,21 @@ pub fn handle_message(
         }
         "workspace/symbol" => {
             return workspace_symbol_response(session, workspace, &params, value.get("id"));
+        }
+        "textDocument/inlayHint" => {
+            return inlay_hint_response(session, workspace, &params, value.get("id"));
+        }
+        "textDocument/semanticTokens/full" => {
+            return semantic_tokens_response(session, workspace, &params, value.get("id"));
+        }
+        "textDocument/prepareCallHierarchy" => {
+            return call_hierarchy_prepare_response(session, workspace, &params, value.get("id"));
+        }
+        "callHierarchy/incomingCalls" => {
+            return call_hierarchy_incoming_response(session, workspace, &params, value.get("id"));
+        }
+        "callHierarchy/outgoingCalls" => {
+            return call_hierarchy_outgoing_response(session, workspace, &params, value.get("id"));
         }
         "workspace/didChangeWorkspaceFolders" => {
             apply_folder_change(workspace, &params);

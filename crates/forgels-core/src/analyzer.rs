@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use forgels_protocol::CompletionItemKind;
+use forgels_protocol::InlayHintKind;
 use forgels_protocol::SymbolKind;
 use forgels_syntax::Span;
 
@@ -115,6 +116,109 @@ impl DocumentSymbolData {
 
 /// Cap for `workspace/symbol` results. Bounds fan-out across files.
 pub const MAX_WORKSPACE_SYMBOLS: usize = 50;
+
+/// Cap for `textDocument/inlayHint` results. Bounds per range scan.
+pub const MAX_INLAY_HINTS: usize = 100;
+
+/// Cap for `textDocument/semanticTokens/full` results. Bounds full file scan.
+pub const MAX_SEMANTIC_TOKENS: usize = 5000;
+
+/// Cap for call hierarchy items and edges. Bounds fan-out across files.
+pub const MAX_CALL_HIERARCHY: usize = 50;
+
+/// One inlay hint: parameter name at an argument slot.
+///
+/// `offset` is the byte offset where the label renders. Dispatch maps
+/// it to a position. `label` carries the trailing colon, for example
+/// `to:`. Kind is always Parameter in V1.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InlayHintData {
+    pub offset: u32,
+    pub label: String,
+    pub kind: InlayHintKind,
+}
+
+impl InlayHintData {
+    pub fn new(offset: u32, label: String, kind: InlayHintKind) -> Self {
+        Self {
+            offset,
+            label,
+            kind,
+        }
+    }
+}
+
+/// One semantic token: classified span for highlighting.
+///
+/// `token_type` is an index into `SEMANTIC_TOKEN_TYPES`, `modifiers`
+/// is a bitset over `SEMANTIC_TOKEN_MODIFIERS`. Dispatch delta-encodes
+/// the sorted list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SemanticTokenData {
+    pub span: Span,
+    pub token_type: u32,
+    pub modifiers: u32,
+}
+
+impl SemanticTokenData {
+    pub fn new(span: Span, token_type: u32, modifiers: u32) -> Self {
+        Self {
+            span,
+            token_type,
+            modifiers,
+        }
+    }
+}
+
+/// One call hierarchy item: the callable at the cursor or in the index.
+///
+/// `span` is the full declaration range, `selection` is the name span.
+/// Dispatch maps both to LSP ranges from the owning file text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CallHierarchyItemData {
+    pub name: String,
+    pub kind: SymbolKind,
+    pub detail: String,
+    pub path: PathBuf,
+    pub span: Span,
+    pub selection: Span,
+}
+
+impl CallHierarchyItemData {
+    pub fn new(
+        name: String,
+        kind: SymbolKind,
+        detail: String,
+        path: PathBuf,
+        span: Span,
+        selection: Span,
+    ) -> Self {
+        Self {
+            name,
+            kind,
+            detail,
+            path,
+            span,
+            selection,
+        }
+    }
+}
+
+/// One call hierarchy edge: caller or callee plus call sites.
+///
+/// `item` is the other end of the call, `ranges` holds the usage spans
+/// inside the relevant file. Dispatch maps each span to `fromRanges`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CallHierarchyCallData {
+    pub item: CallHierarchyItemData,
+    pub ranges: Vec<Span>,
+}
+
+impl CallHierarchyCallData {
+    pub fn new(item: CallHierarchyItemData, ranges: Vec<Span>) -> Self {
+        Self { item, ranges }
+    }
+}
 
 /// One flat entry for `workspace/symbol`.
 ///
@@ -511,6 +615,30 @@ pub trait Analyzer: std::fmt::Debug {
     /// `new_name` (ident shape plus keyword guard) and reuse their
     /// reference search for the edit list.
     fn rename(&self, _ctx: &ProjectContext, _new_name: &str) -> Option<Vec<ReferenceData>> {
+        None
+    }
+    /// Inlay hints inside `range`. Default is empty so languages
+    /// without support keep working. Takes the full context plus the
+    /// requested range so dep lookup works the same as completion.
+    fn inlay_hints(&self, _ctx: &ProjectContext, _range: Span) -> Vec<InlayHintData> {
+        Vec::new()
+    }
+    /// Semantic tokens for the whole file. Default is empty so
+    /// languages without support keep working. Full only in V1.
+    fn semantic_tokens(&self, _text: &str) -> Vec<SemanticTokenData> {
+        Vec::new()
+    }
+    /// Call hierarchy item at the cursor. Default is none so languages
+    /// without support keep working.
+    fn prepare_call_hierarchy(&self, _ctx: &ProjectContext) -> Option<CallHierarchyItemData> {
+        None
+    }
+    /// Callers of the symbol at the cursor. Default is none.
+    fn incoming_calls(&self, _ctx: &ProjectContext) -> Option<Vec<CallHierarchyCallData>> {
+        None
+    }
+    /// Callees of the symbol at the cursor. Default is none.
+    fn outgoing_calls(&self, _ctx: &ProjectContext) -> Option<Vec<CallHierarchyCallData>> {
         None
     }
 }

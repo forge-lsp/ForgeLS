@@ -11,6 +11,7 @@ use crate::{
 pub(crate) mod address;
 pub(crate) mod array;
 pub(crate) mod bytes;
+mod call_hierarchy;
 mod calls;
 mod completion;
 mod emits;
@@ -22,6 +23,7 @@ mod goto;
 mod hover;
 mod imports;
 pub(crate) mod inheritance;
+mod inlay;
 pub(crate) mod members;
 pub(crate) mod meta;
 mod mutability;
@@ -30,6 +32,7 @@ mod override_diagnostics;
 mod payable;
 mod references;
 mod rename;
+mod semantic;
 mod signature;
 mod symbols;
 mod type_mismatch;
@@ -981,5 +984,47 @@ impl Analyzer for SolidityAnalyzer {
         let file = Self::parse_file(ctx.text);
         let deps = Self::dep_files(ctx);
         rename::find_rename(&file, ctx.text, ctx.offset, new_name, ctx.path, &deps, ctx)
+    }
+
+    fn inlay_hints(
+        &self,
+        ctx: &ProjectContext,
+        range: forgels_syntax::Span,
+    ) -> Vec<forgels_core::InlayHintData> {
+        let file = Self::parse_file(ctx.text);
+        let deps = Self::dep_files(ctx);
+        inlay::inlay_hints_in(&file, ctx.text, range, &deps)
+    }
+
+    fn semantic_tokens(&self, text: &str) -> Vec<forgels_core::SemanticTokenData> {
+        let file = Self::parse_file(text);
+        semantic::semantic_tokens_in(&file, text)
+    }
+
+    fn prepare_call_hierarchy(
+        &self,
+        ctx: &ProjectContext,
+    ) -> Option<forgels_core::CallHierarchyItemData> {
+        let file = Self::parse_file(ctx.text);
+        let deps = Self::dep_files(ctx);
+        call_hierarchy::prepare_call_in(&file, ctx.text, ctx.offset, ctx.path, &deps)
+    }
+
+    fn incoming_calls(
+        &self,
+        ctx: &ProjectContext,
+    ) -> Option<Vec<forgels_core::CallHierarchyCallData>> {
+        let file = Self::parse_file(ctx.text);
+        let deps = Self::dep_files(ctx);
+        call_hierarchy::incoming_in(&file, ctx.text, ctx.offset, ctx.path, &deps, ctx)
+    }
+
+    fn outgoing_calls(
+        &self,
+        ctx: &ProjectContext,
+    ) -> Option<Vec<forgels_core::CallHierarchyCallData>> {
+        let file = Self::parse_file(ctx.text);
+        let deps = Self::dep_files(ctx);
+        call_hierarchy::outgoing_in(&file, ctx.text, ctx.offset, ctx.path, &deps)
     }
 }
