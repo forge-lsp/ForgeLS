@@ -75,6 +75,8 @@ dependencies = [
  "forgels-common",
  "forgels-protocol",
  "forgels-syntax",
+ "serde_json",
+ "toml",
 ]
 
 [[package]]
