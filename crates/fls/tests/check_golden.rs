@@ -26,8 +26,8 @@ fn write_file(path: &Path, text: &str) {
     std::fs::write(path, text).expect("write fixture");
 }
 
-const OVERRIDE_SRC: &str = "contract B {\n/// @notice Greets.\n/// @param a Value.\nfunction greet(uint a) public virtual { a; }\n}\n\n\ncontract D is B {\n/// @notice Greets.\n/// @param a Value.\nfunction greet(uint a) public { a; }\n}\n";
-const CLEAN_SRC: &str = "contract A {}\n";
+const OVERRIDE_SRC: &str = "// SPDX-License-Identifier: MIT\ncontract B {\n/// @notice Greets.\n/// @param a Value.\nfunction greet(uint a) public virtual { a; }\n}\n\n\ncontract D is B {\n/// @notice Greets.\n/// @param a Value.\nfunction greet(uint a) public { a; }\n}\n";
+const CLEAN_SRC: &str = "// SPDX-License-Identifier: MIT\npragma solidity ^0.8.0;\n";
 
 fn run_in(dir: &Path, args: &[&str]) -> std::process::Output {
     Command::new(binary())
@@ -49,7 +49,7 @@ fn human_shape_reports_one_based_line_col() {
         stdout.contains("error[correctness/override]"),
         "human line: {stdout}"
     );
-    assert!(stdout.contains(":11:10:"), "one based position: {stdout}");
+    assert!(stdout.contains(":12:10:"), "one based position: {stdout}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -64,16 +64,24 @@ fn json_shape_has_zero_based_ranges_fixed_and_summary() {
     let value: serde_json::Value = serde_json::from_str(&stdout).expect("valid json");
     assert_eq!(
         value.pointer("/summary").expect("summary"),
-        &serde_json::json!({"files": 1, "errors": 1, "warnings": 0, "fixed": 0})
+        &serde_json::json!({"files": 1, "errors": 1, "warnings": 1, "fixed": 0})
     );
-    let diag = value.pointer("/files/0/diagnostics/0").expect("diagnostic");
+    let diags = value
+        .pointer("/files/0/diagnostics")
+        .expect("diagnostics")
+        .as_array()
+        .expect("array");
+    let diag = diags
+        .iter()
+        .find(|item| item.pointer("/rule") == Some(&serde_json::json!("correctness/override")))
+        .expect("override diagnostic");
     assert_eq!(
         diag.pointer("/rule").expect("rule"),
         &serde_json::json!("correctness/override")
     );
     assert_eq!(
         diag.pointer("/range/start").expect("start"),
-        &serde_json::json!({"line": 10, "character": 9})
+        &serde_json::json!({"line": 11, "character": 9})
     );
     assert_eq!(
         diag.pointer("/fixed").expect("fixed"),
@@ -98,15 +106,22 @@ fn write_applies_safe_fix_and_marks_flags() {
         value.pointer("/summary/fixed").expect("fixed count"),
         &serde_json::json!(1)
     );
+    let diags = value
+        .pointer("/files/0/diagnostics")
+        .expect("diagnostics")
+        .as_array()
+        .expect("array");
+    let fixed_diag = diags
+        .iter()
+        .find(|item| item.pointer("/rule") == Some(&serde_json::json!("correctness/override")))
+        .expect("override diagnostic");
     assert_eq!(
-        value
-            .pointer("/files/0/diagnostics/0/fixed")
-            .expect("diag fixed"),
+        fixed_diag.pointer("/fixed").expect("diag fixed"),
         &serde_json::json!(true)
     );
     assert_eq!(
-        value
-            .pointer("/files/0/diagnostics/0/fix/applicability")
+        fixed_diag
+            .pointer("/fix/applicability")
             .expect("applicability"),
         &serde_json::json!("safe")
     );
@@ -173,7 +188,7 @@ fn json_lists_only_files_with_findings() {
     );
     assert_eq!(
         value.pointer("/summary").expect("summary"),
-        &serde_json::json!({"files": 1, "errors": 1, "warnings": 0, "fixed": 0})
+        &serde_json::json!({"files": 1, "errors": 1, "warnings": 1, "fixed": 0})
     );
     let _ = std::fs::remove_dir_all(&dir);
 }

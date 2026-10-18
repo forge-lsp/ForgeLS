@@ -151,6 +151,21 @@ fn diagnostics_for(note: &Value) -> Vec<Value> {
         .unwrap_or_default()
 }
 
+// Style batch rules are warn-only and covered in style.rs. Session
+// tests focus on cross-file correctness, so drop `style/` codes here
+// to keep fixtures small.
+fn non_style(diags: &[Value]) -> Vec<Value> {
+    diags
+        .iter()
+        .filter(|item| {
+            item.pointer("/code")
+                .and_then(Value::as_str)
+                .is_none_or(|code| !code.starts_with("style/"))
+        })
+        .cloned()
+        .collect()
+}
+
 #[test]
 fn did_open_links_router_to_vault() {
     let (harness, _, _) = open_pair();
@@ -167,7 +182,7 @@ fn did_open_links_router_to_vault() {
     assert!(!published.is_empty(), "A publishes on open");
     let last = published.last().expect("has publish");
     assert!(
-        diagnostics_for(last).is_empty(),
+        non_style(&diagnostics_for(last)).is_empty(),
         "A resolves clean, got {last}"
     );
 }
@@ -298,7 +313,7 @@ fn change_b_republishes_dirty_dependent() {
         })
         .expect("A frame");
     assert!(
-        diagnostics_for(for_a).is_empty(),
+        non_style(&diagnostics_for(for_a)).is_empty(),
         "A stays clean, got {for_a}"
     );
 }
@@ -315,7 +330,7 @@ fn close_b_marks_import_unresolved_in_a() {
                 .is_some_and(|uri| uri == &Value::String(A_URI.to_string()))
         })
         .expect("A republished");
-    let diagnostics = diagnostics_for(for_a);
+    let diagnostics = non_style(&diagnostics_for(for_a));
     assert_eq!(
         diagnostics.len(),
         2,

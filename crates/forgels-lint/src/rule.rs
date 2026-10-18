@@ -38,6 +38,13 @@ impl RuleId {
     pub const NATSPEC_MISSING: Self = Self("style/natspec-missing");
     pub const NATSPEC_PARAM: Self = Self("style/natspec-param");
     pub const LINE_LENGTH: Self = Self("style/line-length");
+    pub const STATE_VISIBILITY: Self = Self("style/state-visibility");
+    pub const RECEIVE_GLUE: Self = Self("style/receive-glue");
+    pub const FILENAME_MATCH: Self = Self("style/filename-match");
+    pub const SPDX_PRESENT: Self = Self("style/spdx-present");
+    pub const NO_L_O_I: Self = Self("style/no-l-O-I");
+    pub const NO_CONSOLE: Self = Self("style/no-console");
+    pub const NO_SHADOW_BUILTIN: Self = Self("style/no-shadow-builtin");
 
     pub const fn as_str(self) -> &'static str {
         self.0
@@ -55,7 +62,14 @@ impl RuleId {
             | "style/blank-lines"
             | "style/natspec-missing"
             | "style/natspec-param"
-            | "style/line-length" => Severity::Warning,
+            | "style/line-length"
+            | "style/state-visibility"
+            | "style/receive-glue"
+            | "style/filename-match"
+            | "style/spdx-present"
+            | "style/no-l-O-I"
+            | "style/no-console"
+            | "style/no-shadow-builtin" => Severity::Warning,
             _ => Severity::Error,
         }
     }
@@ -65,7 +79,7 @@ impl RuleId {
     }
 }
 
-const ALL: [RuleId; 33] = [
+const ALL: [RuleId; 40] = [
     RuleId::PARSE_ERROR,
     RuleId::CALL_ARITY,
     RuleId::STRUCT_ARITY,
@@ -99,4 +113,11 @@ const ALL: [RuleId; 33] = [
     RuleId::NATSPEC_MISSING,
     RuleId::NATSPEC_PARAM,
     RuleId::LINE_LENGTH,
+    RuleId::STATE_VISIBILITY,
+    RuleId::RECEIVE_GLUE,
+    RuleId::FILENAME_MATCH,
+    RuleId::SPDX_PRESENT,
+    RuleId::NO_L_O_I,
+    RuleId::NO_CONSOLE,
+    RuleId::NO_SHADOW_BUILTIN,
 ];

@@ -11,8 +11,8 @@ pub mod parser;
 pub use analysis::{
     CompletionItem, CompletionKind, Hover, Scope, SolidityAnalyzer, Symbol, SymbolKind,
     collect_symbols, complete_at, complete_import_paths, completion_item_kind, document_symbols_in,
-    exports_of, find_references, find_rename, goto_definition, hover_at, import_path_at,
-    imports_in, is_valid_rename, resolve_in_dep, signature_at,
+    exports_of, filename_diagnostics, find_references, find_rename, goto_definition, hover_at,
+    import_path_at, imports_in, is_valid_rename, resolve_in_dep, signature_at,
 };
 
 pub use ast::{

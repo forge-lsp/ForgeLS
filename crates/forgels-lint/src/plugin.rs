@@ -41,8 +41,11 @@ pub fn builtin_correctness_plugin() -> Vec<RuleMeta> {
     CorrectnessPlugin::rules()
 }
 
-// Style batch 1: naming plus ordering plus glue. Warn by default via
-// RuleId::default_severity; config overrides through the runner.
+// Style batch 1 plus batch 2 plus batch 3: naming, ordering, glue,
+// blank lines, natspec, line length, visibility, receive glue,
+// filename, spdx, confusing names, console, shadow builtin.
+// Warn by default via RuleId::default_severity; config overrides
+// through the runner. No allowlist enforcement in V1 by design.
 pub struct StylePlugin;
 
 impl LintPlugin for StylePlugin {
@@ -63,6 +66,13 @@ impl LintPlugin for StylePlugin {
             RuleId::NATSPEC_MISSING,
             RuleId::NATSPEC_PARAM,
             RuleId::LINE_LENGTH,
+            RuleId::STATE_VISIBILITY,
+            RuleId::RECEIVE_GLUE,
+            RuleId::FILENAME_MATCH,
+            RuleId::SPDX_PRESENT,
+            RuleId::NO_L_O_I,
+            RuleId::NO_CONSOLE,
+            RuleId::NO_SHADOW_BUILTIN,
         ]
         .iter()
         .map(|id| RuleMeta {
@@ -130,7 +140,7 @@ mod tests {
     #[test]
     fn style_plugin_lists_warn_defaults() {
         let rules = builtin_style_plugin();
-        assert_eq!(rules.len(), 11);
+        assert_eq!(rules.len(), 18);
         for meta in &rules {
             assert_eq!(meta.default, Severity::Warning);
         }
@@ -150,7 +160,7 @@ mod tests {
     #[test]
     fn register_covers_every_rule_id() {
         let registry = Registry::with_builtins();
-        assert_eq!(registry.len(), 33);
+        assert_eq!(registry.len(), 40);
         for id in RuleId::all() {
             assert!(registry.get(id.as_str()).is_some());
         }

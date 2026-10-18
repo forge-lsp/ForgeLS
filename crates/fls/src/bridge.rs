@@ -4,7 +4,7 @@ use forgels_common::fs::is_trackable_file;
 use forgels_common::paths::{Remapping, resolve_import_full};
 use forgels_core::Analyzer;
 use forgels_core::diagnostics::unresolved_import_to_diagnostic;
-use forgels_lang_solidity::SolidityAnalyzer;
+use forgels_lang_solidity::{SolidityAnalyzer, filename_diagnostics};
 use forgels_lint::{LintConfig, LintDiagnostic, RuleId, Severity, resolve};
 
 /// Build lint diagnostics for one file.
@@ -27,6 +27,16 @@ pub fn diagnostics_for_file(
         .into_iter()
         .map(|item| LintDiagnostic::from_parts(item.span, item.message, item.rule, item.severity))
         .collect();
+    // Check runs on real files only, never stdin, so path is always
+    // present. Pathless inputs stay skipped by design.
+    for item in filename_diagnostics(text, path) {
+        out.push(LintDiagnostic::from_parts(
+            item.span,
+            item.message,
+            item.rule,
+            item.severity,
+        ));
+    }
     for item in analyzer.imports(text) {
         let resolved = resolve_import_full(path, &item.raw, root, remappings, is_trackable_file);
         let missing = match &resolved {
