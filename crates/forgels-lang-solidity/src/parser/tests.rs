@@ -684,3 +684,151 @@ fn fixed_ufixed_and_udvt_sized_keep_text() {
         vec!["fixed", "ufixed", "fixed128x18", "ufixed128x18"]
     );
 }
+
+#[test]
+fn function_visibility_and_mutability_are_stored() {
+    use crate::{Mutability, Visibility};
+    let text = "contract C {\nfunction a() public pure {}\nfunction b() external view {}\nfunction c() internal {}\nfunction d() private payable {}\n}";
+    let file = parse_ok(text);
+    let functions = file.contracts()[0].functions();
+    assert_eq!(functions.len(), 4);
+    assert_eq!(functions[0].visibility(), Some(Visibility::Public));
+    assert_eq!(functions[0].mutability(), Some(Mutability::Pure));
+    assert_eq!(functions[1].visibility(), Some(Visibility::External));
+    assert_eq!(functions[1].mutability(), Some(Mutability::View));
+    assert_eq!(functions[2].visibility(), Some(Visibility::Internal));
+    assert_eq!(functions[2].mutability(), None);
+    assert_eq!(functions[3].visibility(), Some(Visibility::Private));
+    assert_eq!(functions[3].mutability(), Some(Mutability::Payable));
+}
+
+#[test]
+fn function_constant_normalizes_to_view() {
+    use crate::Mutability;
+    let text = "contract C {\nfunction f() public constant {}\n}";
+    let file = parse_ok(text);
+    let functions = file.contracts()[0].functions();
+    assert_eq!(functions.len(), 1);
+    assert_eq!(functions[0].mutability(), Some(Mutability::View));
+    assert!(functions[0].mutability_span().is_some());
+}
+
+#[test]
+fn function_without_modifiers_has_no_visibility() {
+    let text = "contract C {\nfunction f(uint a) {}\n}";
+    let file = parse_ok(text);
+    let functions = file.contracts()[0].functions();
+    assert_eq!(functions.len(), 1);
+    assert_eq!(functions[0].visibility(), None);
+    assert_eq!(functions[0].mutability(), None);
+    assert!(functions[0].visibility_span().is_none());
+}
+
+#[test]
+fn state_var_single_literal_initializer_is_stored() {
+    let text = "contract C {\nuint x = 1;\nstring s = \"hi\";\nbool b = true;\n}";
+    let file = parse_ok(text);
+    let vars = file.contracts()[0].state_vars();
+    assert_eq!(vars.len(), 3);
+    assert_eq!(
+        vars[0]
+            .initializer()
+            .as_ref()
+            .map(|token| token.text.as_str()),
+        Some("1")
+    );
+    assert!(vars[0].initializer_span().is_some());
+    assert_eq!(
+        vars[1]
+            .initializer()
+            .as_ref()
+            .map(|token| token.text.as_str()),
+        Some("\"hi\"")
+    );
+    assert_eq!(
+        vars[2]
+            .initializer()
+            .as_ref()
+            .map(|token| token.text.as_str()),
+        Some("true")
+    );
+}
+
+#[test]
+fn state_var_complex_initializer_stores_nothing() {
+    let text = "contract C {\nuint a = 1 ether;\nuint b = y;\nuint c = 1 + 2;\nuint d;\n}";
+    let file = parse_ok(text);
+    let vars = file.contracts()[0].state_vars();
+    assert_eq!(vars.len(), 4);
+    assert!(vars.iter().all(|var| var.initializer().is_none()));
+}
+
+#[test]
+fn local_var_single_literal_is_stored() {
+    let text = "contract C {\nfunction f() public {\nuint x = 42;\nuint y = x;\n}\n}";
+    let file = parse_ok(text);
+    let body = file.contracts()[0].functions()[0].body().expect("body");
+    let locals = body.locals();
+    assert_eq!(locals.len(), 2);
+    assert_eq!(
+        locals[0]
+            .initializer()
+            .as_ref()
+            .map(|token| token.text.as_str()),
+        Some("42")
+    );
+    assert!(locals[1].initializer().is_none());
+}
+
+#[test]
+fn call_options_store_markers_and_span() {
+    let text = "contract C {\nfunction f() public {\ngreet{value: 1}(1, 2);\n}\n}";
+    let file = parse_ok(text);
+    let body = file.contracts()[0].functions()[0].body().expect("body");
+    let calls = body.calls();
+    assert_eq!(calls.len(), 1);
+    assert!(calls[0].has_call_options());
+    assert!(calls[0].options_span().is_some());
+    assert_eq!(calls[0].arg_count(), 2);
+    let covered = &text[calls[0].options_span().expect("span").start as usize
+        ..calls[0].options_span().expect("span").end as usize];
+    assert!(covered.starts_with('{') && covered.ends_with('}'));
+}
+
+#[test]
+fn call_without_options_has_no_span() {
+    let text = "contract C {\nfunction f() public {\ngreet(1);\n}\n}";
+    let file = parse_ok(text);
+    let body = file.contracts()[0].functions()[0].body().expect("body");
+    let calls = body.calls();
+    assert_eq!(calls.len(), 1);
+    assert!(!calls[0].has_call_options());
+    assert!(calls[0].options_span().is_none());
+    assert_eq!(calls[0].arg_count(), 1);
+}
+
+#[test]
+fn member_options_store_markers_and_span() {
+    let text = "contract C {\nfunction f() public {\nobj.greet{value: 1}(1);\n}\n}";
+    let file = parse_ok(text);
+    let body = file.contracts()[0].functions()[0].body().expect("body");
+    let members = body.members();
+    assert_eq!(members.len(), 1);
+    assert!(members[0].has_call_options());
+    assert!(members[0].options_span().is_some());
+    assert!(members[0].is_call());
+    assert_eq!(members[0].arg_count(), 1);
+}
+
+#[test]
+fn member_options_without_parens_falls_back_to_plain() {
+    let text = "contract C {\nfunction f() public {\nobj.greet{value: 1};\n}\n}";
+    let lexer = SolidityLexer;
+    let tokens = lexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let body = file.contracts()[0].functions()[0].body().expect("body");
+    assert_eq!(body.members().len(), 1);
+    assert!(!body.members()[0].has_call_options());
+    assert!(!body.members()[0].is_call());
+}

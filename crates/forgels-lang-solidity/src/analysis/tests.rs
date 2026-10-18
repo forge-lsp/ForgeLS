@@ -3849,3 +3849,284 @@ fn outline_state_var_uses_field_kind() {
     assert_eq!(symbols[0].children[0].name, "total");
     assert_eq!(symbols[0].children[0].kind.value(), 8);
 }
+
+#[test]
+fn visibility_external_plain_call_errors() {
+    let text = "contract C {\nfunction ext() external {}\nfunction f() public {\next();\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "external function 'ext' must be called via 'this.ext()' or 'C.ext()'"
+    );
+}
+
+#[test]
+fn visibility_external_via_this_stays_silent() {
+    let text = "contract C {\nfunction ext() external {}\nfunction f() public {\nthis.ext();\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn visibility_external_via_contract_stays_silent() {
+    let text = "contract C {\nfunction ext() external {}\nfunction f() public {\nC.ext();\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn visibility_public_plain_call_stays_silent() {
+    let text = "contract C {\nfunction pubf() public {}\nfunction f() public {\npubf();\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn visibility_inherited_external_errors() {
+    let text = "contract B {\nfunction ext() external {}\n}\ncontract D is B {\nfunction f() public {\next();\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "external function 'ext' must be called via 'this.ext()' or 'D.ext()'"
+    );
+}
+
+#[test]
+fn visibility_derived_override_wins() {
+    let text = "contract B {\nfunction ext() external {}\n}\ncontract D is B {\nfunction ext() public {}\nfunction f() public {\next();\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn mutability_pure_read_errors() {
+    let text = "contract C {\nuint x;\nfunction f() pure {\nx;\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "pure function 'f' cannot read state variable 'x'"
+    );
+}
+
+#[test]
+fn mutability_pure_write_errors() {
+    let text = "contract C {\nuint x;\nfunction f() pure {\nx = 1;\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "pure function 'f' cannot write to state variable 'x'"
+    );
+}
+
+#[test]
+fn mutability_view_read_stays_silent() {
+    let text = "contract C {\nuint x;\nfunction f() view {\nx;\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn mutability_view_write_errors() {
+    let text = "contract C {\nuint x;\nfunction f() view {\nx = 1;\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "view function 'f' cannot write to state variable 'x'"
+    );
+}
+
+#[test]
+fn mutability_plain_function_stays_silent() {
+    let text = "contract C {\nuint x;\nfunction f() public {\nx;\nx = 1;\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn mutability_param_shadow_stays_silent() {
+    let text = "contract C {\nuint x;\nfunction f(uint x) pure {\nx;\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn mutability_this_read_in_pure_errors() {
+    let text = "contract C {\nuint x;\nfunction f() pure {\nthis.x;\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "pure function 'f' cannot read state variable 'x'"
+    );
+}
+
+#[test]
+fn mutability_this_write_in_view_errors() {
+    let text = "contract C {\nuint x;\nfunction f() view {\nthis.x = 1;\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "view function 'f' cannot write to state variable 'x'"
+    );
+}
+
+#[test]
+fn mutability_incr_write_in_view_errors() {
+    let text = "contract C {\nuint x;\nfunction f() view {\nx++;\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "view function 'f' cannot write to state variable 'x'"
+    );
+}
+
+#[test]
+fn mutability_delete_write_in_view_errors() {
+    let text = "contract C {\nuint x;\nfunction f() view {\ndelete x;\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "view function 'f' cannot write to state variable 'x'"
+    );
+}
+
+#[test]
+fn mutability_constant_write_errors_like_view() {
+    let text = "contract C {\nuint x;\nfunction f() constant {\nx = 1;\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "view function 'f' cannot write to state variable 'x'"
+    );
+}
+
+#[test]
+fn mutability_assembly_access_stays_silent() {
+    let text = "contract C {\nuint x;\nfunction f() pure {\nassembly {\nlet y := x\n}\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn payable_non_payable_value_errors() {
+    let text = "contract C {\nfunction f() public {}\nfunction g() public {\nf{value: 1}();\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "non-payable function 'f' cannot receive 'value'"
+    );
+}
+
+#[test]
+fn payable_payable_value_stays_silent() {
+    let text = "contract C {\nfunction f() payable {}\nfunction g() public {\nf{value: 1}();\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn payable_gas_only_stays_silent() {
+    let text = "contract C {\nfunction f() public {}\nfunction g() public {\nf{gas: 5000}();\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn payable_no_options_stays_silent() {
+    let text = "contract C {\nfunction f() public {}\nfunction g() public {\nf();\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn payable_unknown_target_stays_silent_for_payable() {
+    let text = "contract C {\nfunction g() public {\nmissing{value: 1}();\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(found[0].message, "unresolved identifier 'missing'");
+}
+
+#[test]
+fn payable_member_non_payable_errors() {
+    let text = "contract H {\nfunction f() public {}\n}\ncontract C {\nfunction g() public {\nH h;\nh.f{value: 1}();\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "non-payable function 'f' cannot receive 'value'"
+    );
+}
+
+#[test]
+fn payable_member_payable_stays_silent() {
+    let text = "contract H {\nfunction f() payable {}\n}\ncontract C {\nfunction g() public {\nH h;\nh.f{value: 1}();\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn payable_builtin_with_value_stays_silent() {
+    let text = "contract T is Test {\nfunction g() public {\nvm.prank{value: 1}(1);\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn type_mismatch_uint_string_errors() {
+    let text = "contract C {\nuint x = \"hi\";\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "type mismatch: cannot assign string literal to 'uint'"
+    );
+}
+
+#[test]
+fn type_mismatch_bool_number_errors() {
+    let text = "contract C {\nbool b = 1;\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "type mismatch: cannot assign number literal to 'bool'"
+    );
+}
+
+#[test]
+fn type_mismatch_string_number_errors() {
+    let text = "contract C {\nstring s = 1;\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "type mismatch: cannot assign number literal to 'string'"
+    );
+}
+
+#[test]
+fn type_mismatch_correct_literals_stay_silent() {
+    let text =
+        "contract C {\nuint a = 1;\nbool b = true;\nstring s = \"hi\";\naddress w = 0xAbC123;\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn type_mismatch_ether_and_ident_stay_silent() {
+    let text = "contract C {\nuint y;\nuint a = 1 ether;\nuint b = y;\nuint c = 1 + 2;\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn type_mismatch_local_var_errors() {
+    let text = "contract C {\nfunction f() public {\nuint x = \"hi\";\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "type mismatch: cannot assign string literal to 'uint'"
+    );
+}
+
+#[test]
+fn type_mismatch_array_type_stays_silent() {
+    let text = "contract C {\nuint[] a = 1;\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
