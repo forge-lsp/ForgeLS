@@ -54,6 +54,7 @@ mod unknown;
 mod unused;
 pub(crate) mod using;
 mod visibility;
+pub(crate) mod yul;
 
 #[cfg(test)]
 mod tests;
@@ -1054,8 +1055,12 @@ impl Analyzer for SolidityAnalyzer {
         // names never jump to coincidental same-name declarations.
         // Array, address, bytes, string, function, global, and type()
         // members use the same guard: synthetic spans never leak.
+        // Yul opcodes use the same guard.
         {
             let scope = collect_symbols(&file);
+            if goto::is_yul_builtin_at(ctx.text, ctx.offset) {
+                return None;
+            }
             if forge::is_builtin_at(&file, ctx.text, ctx.offset, &scope) {
                 return None;
             }

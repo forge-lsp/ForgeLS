@@ -73,6 +73,9 @@ fn collect_function_types(node: &forgels_syntax::SyntaxNode, out: &mut Vec<Span>
 /// then one way prefix escape for typing state. Member names after
 /// a dot stay silent so member arity owns them. Emit, revert, and
 /// new names stay silent so their owners report without doubles.
+/// Assembly idents use Yul resolve first: Yul decl, Yul builtin, then
+/// outer scope. Remaining assembly idents stay silent: unknown opcodes
+/// are deferred, so they never error here.
 pub fn unknown_identifier_diagnostics(
     file: &SolidityFile,
     text: &str,
@@ -95,6 +98,7 @@ pub fn unknown_identifier_diagnostics(
         members.iter().map(|span| (span.start, span.end)).collect();
     let options = options_spans(file);
     let assemblies = assembly_ranges(&tokens);
+    let yul_decls = super::yul::collect_yul_decls(&tokens, &assemblies);
     let usings = super::using::using_spans(file);
     let func_types = function_type_spans(file);
     let dep_names = dep_export_names(deps);
@@ -107,6 +111,25 @@ pub fn unknown_identifier_diagnostics(
             continue;
         }
         let span = token.span;
+        let name = token.text.as_str();
+        if inside_any(&assemblies, span.start) {
+            if super::yul::is_yul_decl_token(&yul_decls, span) {
+                continue;
+            }
+            if super::yul::is_yul_builtin(name) {
+                continue;
+            }
+            if super::yul::find_yul_decl(&yul_decls, name, span.start).is_some() {
+                continue;
+            }
+            if scope.resolve(name, span.start).is_some() {
+                continue;
+            }
+            if dep_names.contains(name) {
+                continue;
+            }
+            continue;
+        }
         if decl_set.contains(&(span.start, span.end)) {
             continue;
         }
@@ -137,10 +160,6 @@ pub fn unknown_identifier_diagnostics(
         if preceded_by_dot(text, span.start) {
             continue;
         }
-        if inside_any(&assemblies, span.start) {
-            continue;
-        }
-        let name = token.text.as_str();
         if name == "_" {
             continue;
         }

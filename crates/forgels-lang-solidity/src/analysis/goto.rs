@@ -12,13 +12,18 @@ use forgels_syntax::{Lexer, Span};
 /// `None` by design: their spans are synthetic with no declaration in
 /// the workspace. Super members jump to the base declaration, enum
 /// members jump to the variant token. Emit name
-/// slots jump to the event declaration only. Positions on whitespace,
+/// slots jump to the event declaration only. Assembly bodies resolve
+/// flat Yul decls then outer scope; Yul builtins return `None` by
+/// design. Positions on whitespace,
 /// operators, or undeclared words return `None`.
 /// Forge builtins (`vm.*`, `console.*`, `Test` asserts) return `None` by
 /// design: they have no declaration in the workspace. The caller guards
 /// dep lookup the same way so builtins never jump to coincidental matches.
 /// The caller attaches the document URI; the span alone locates the jump.
 pub fn goto_definition(file: &SolidityFile, text: &str, offset: u32) -> Option<Span> {
+    if let Some(found) = goto_yul_definition(text, offset) {
+        return Some(found);
+    }
     if let Some(type_ctx) = super::meta::type_context_at(text, offset)
         && (type_ctx.member_span.contains(offset) || type_ctx.member_span.end == offset)
     {
@@ -74,6 +79,45 @@ pub fn goto_definition(file: &SolidityFile, text: &str, offset: u32) -> Option<S
     let (word, _) = word_at(text, offset)?;
     let scope = collect_symbols(file);
     scope.resolve(&word, offset).map(|symbol| symbol.span)
+}
+
+/// Yul jump target inside assembly, or `None` outside.
+///
+/// Flat decls resolve to their declaration span. Builtins return `None`
+/// by design and the caller must guard dep lookup the same way. Outer
+/// scope falls through to the normal path via `None` here: the caller
+/// below resolves it. Returns `Some` only for Yul decl hits.
+fn goto_yul_definition(text: &str, offset: u32) -> Option<Span> {
+    let tokens = SolidityLexer.tokenize(text);
+    let assemblies = super::unknown::assembly_ranges(&tokens);
+    if !super::yul::is_in_assembly(&assemblies, offset) {
+        return None;
+    }
+    let (word, _) = word_at(text, offset)?;
+    if word.is_empty() {
+        return None;
+    }
+    if super::yul::is_yul_builtin(&word) {
+        return None;
+    }
+    let decls = super::yul::collect_yul_decls(&tokens, &assemblies);
+    super::yul::find_yul_decl(&decls, &word, offset).map(|decl| decl.span)
+}
+
+/// True when the cursor sits on a Yul builtin.
+///
+/// Goto guard uses this to return `None` before dep lookup, so Yul
+/// opcodes never jump to coincidental same-name declarations.
+pub(crate) fn is_yul_builtin_at(text: &str, offset: u32) -> bool {
+    let tokens = SolidityLexer.tokenize(text);
+    let assemblies = super::unknown::assembly_ranges(&tokens);
+    if !super::yul::is_in_assembly(&assemblies, offset) {
+        return false;
+    }
+    let Some((word, _)) = word_at(text, offset) else {
+        return false;
+    };
+    super::yul::is_yul_builtin(&word)
 }
 
 /// Exported declaration span for `word` inside a dependency text.

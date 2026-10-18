@@ -6214,3 +6214,100 @@ fn event_no_indexed_stays_silent() {
     let text = "contract C {\nevent Transfer(address from, uint256 value);\n}";
     assert!(diagnostics_of(text).is_empty());
 }
+
+#[test]
+fn yul_let_use_stays_silent() {
+    let text = "contract C {\nfunction f() public {\nassembly {\nlet x := 1\nlet y := x\n}\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn yul_outer_use_stays_silent() {
+    let text = "contract C {\nuint x;\nfunction f() public {\nassembly {\nlet y := x\n}\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn yul_builtin_stays_silent() {
+    let text = "contract C {\nfunction f() public {\nassembly {\nlet y := add(1, 2)\nsstore(0, y)\n}\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn yul_unknown_opcode_stays_silent() {
+    let text = "contract C {\nfunction f() public {\nassembly {\nlet x := bogus\n}\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn yul_completion_lists_decl_and_builtin() {
+    let text = "contract C {\nfunction f() public {\nassembly {\nlet myval := 1\nmy\n}\n}\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, _) = SolidityParser.parse_with_errors(&tokens);
+    let at = text.rfind("my\n").expect("prefix") as u32 + 2;
+    let labels: Vec<String> = complete_at(&file, text, at)
+        .into_iter()
+        .map(|item| item.label)
+        .collect();
+    assert!(labels.contains(&"myval".to_string()), "labels: {labels:?}");
+}
+
+#[test]
+fn yul_hover_shows_decl_detail() {
+    let text =
+        "contract C {\nfunction f() public {\nassembly {\nlet myval := 1\nlet y := myval\n}\n}\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, _) = SolidityParser.parse_with_errors(&tokens);
+    let at = text.rfind("myval\n").expect("use") as u32 + 2;
+    let found = hover_at(&file, text, at).expect("hover");
+    assert!(
+        found.contents.contains("myval"),
+        "hover: {:?}",
+        found.contents
+    );
+    assert!(
+        found.contents.contains("yul"),
+        "hover: {:?}",
+        found.contents
+    );
+}
+
+#[test]
+fn yul_hover_builtin_shows_yul_origin() {
+    let text = "contract C {\nfunction f() public {\nassembly {\nlet y := add(1, 2)\n}\n}\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, _) = SolidityParser.parse_with_errors(&tokens);
+    let at = text.rfind("add").expect("builtin") as u32 + 1;
+    let found = hover_at(&file, text, at).expect("hover");
+    assert!(
+        found.contents.contains("add"),
+        "hover: {:?}",
+        found.contents
+    );
+    assert!(
+        found.contents.contains("yul"),
+        "hover: {:?}",
+        found.contents
+    );
+}
+
+#[test]
+fn yul_goto_decl_jumps_to_let() {
+    let text =
+        "contract C {\nfunction f() public {\nassembly {\nlet myval := 1\nlet y := myval\n}\n}\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, _) = SolidityParser.parse_with_errors(&tokens);
+    let decl_at = text.find("myval :=").expect("decl") as u32 + 2;
+    let use_at = text.rfind("myval\n").expect("use") as u32 + 2;
+    let target = goto_definition(&file, text, use_at).expect("goto");
+    assert!(target.contains(decl_at), "target: {target:?}");
+}
+
+#[test]
+fn yul_goto_builtin_returns_none() {
+    let text = "contract C {\nfunction f() public {\nassembly {\nlet y := add(1, 2)\n}\n}\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, _) = SolidityParser.parse_with_errors(&tokens);
+    let at = text.rfind("add").expect("builtin") as u32 + 1;
+    assert!(goto_definition(&file, text, at).is_none());
+}

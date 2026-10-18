@@ -252,6 +252,20 @@ fn assembly_with_dialect_string_skips() {
 }
 
 #[test]
+fn assembly_unclosed_reports_diagnostic() {
+    let text = "contract C {\nfunction f() public {\nassembly {\nlet y := 1";
+    let lexer = SolidityLexer;
+    let tokens = lexer.tokenize(text);
+    let (_, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message == "unclosed assembly"),
+        "errors: {errors:?}"
+    );
+}
+
+#[test]
 fn experimental_pragma_parses_to_semicolon() {
     let text = "pragma experimental ABIEncoderV2;\ncontract C {\n}";
     let file = parse_ok(text);
