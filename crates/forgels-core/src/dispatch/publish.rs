@@ -2,6 +2,7 @@ use serde_json::Value;
 
 use forgels_common::fs::is_trackable_file;
 use forgels_common::paths::resolve_import_full;
+use forgels_lint::{LintDiagnostic, RuleId, RuleLevel, resolve, should_lint};
 
 use super::sync::{resolve_root_for, uri_to_path};
 use super::{Session, Workspace};
@@ -73,6 +74,23 @@ pub fn flush_all(session: &Session, workspace: &mut Workspace) -> Vec<String> {
         .collect()
 }
 
+// Relative posix path for include/exclude matching. Prefers the owning
+// workspace root, then the config root, else the file name.
+fn publish_rel(workspace: &Workspace, session: &Session, path: &std::path::Path) -> String {
+    if let Some(root) = workspace
+        .root_for(path)
+        .cloned()
+        .or_else(|| session.config.root.clone())
+        && let Ok(rel) = path.strip_prefix(&root)
+        && !rel.as_os_str().is_empty()
+    {
+        return rel.to_string_lossy().replace('\\', "/");
+    }
+    path.file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.to_string_lossy().into_owned())
+}
+
 /// Build one `publishDiagnostics` frame for `uri`, storing the result.
 /// Returns `None` for untracked files and languages without analyzers.
 fn publish_for_uri(
@@ -82,15 +100,55 @@ fn publish_for_uri(
     version: Option<u64>,
 ) -> Option<String> {
     let path = uri_to_path(uri);
-    let analyzer = session.analyzers.get(&workspace.get(&path)?.language)?;
+    let doc = workspace.get(&path)?.clone();
+    let rel = publish_rel(workspace, session, &path);
+    let (keep, _) = should_lint(
+        &rel,
+        &session.config.lint.includes,
+        &session.config.lint.excludes,
+    );
+    if !keep {
+        workspace.set_diagnostics(path, Vec::new());
+        return Some(empty_frame(uri, version));
+    }
+    let analyzer = session.analyzers.get(&doc.language)?;
     let found = {
-        let doc = workspace.get(&path)?;
         let ctx = ProjectContext::new(&path, &doc.text, 0, workspace);
         analyzer.diagnostics_ctx(&ctx)
     };
-    let doc = workspace.get(&path)?;
-    let mut ordered: Vec<(Span, Diagnostic)> = found
-        .iter()
+    let mut pending: Vec<LintDiagnostic> = found
+        .into_iter()
+        .map(|item| LintDiagnostic::from_parts(item.span, item.message, item.rule, item.severity))
+        .collect();
+    // Off skips the import diagnostic entirely; warn/err override via resolve.
+    if session.config.lint.level_for(RuleId::UNRESOLVED_IMPORT) != Some(RuleLevel::Off) {
+        let root = resolve_root_for(workspace, &session.config, &path);
+        for item in analyzer.imports(&doc.text) {
+            let resolved = resolve_import_full(
+                &path,
+                &item.raw,
+                &root,
+                &session.config.remappings,
+                is_trackable_file,
+            );
+            let missing = match &resolved {
+                None => true,
+                Some(target) => workspace.get(target).is_none() && !is_trackable_file(target),
+            };
+            if missing {
+                let mapped = unresolved_import_to_diagnostic(&doc.text, item.span, &item.raw);
+                pending.push(LintDiagnostic::from_parts(
+                    item.span,
+                    mapped.message,
+                    RuleId::UNRESOLVED_IMPORT,
+                    forgels_lint::Severity::Error,
+                ));
+            }
+        }
+    }
+    let resolved = resolve(pending, &session.config.lint);
+    let mut ordered: Vec<(Span, Diagnostic)> = resolved
+        .into_iter()
         .map(|item| {
             let diagnostic = Diagnostic {
                 range: span_to_range(&doc.text, item.span),
@@ -102,24 +160,6 @@ fn publish_for_uri(
             (item.span, diagnostic)
         })
         .collect();
-    let root = resolve_root_for(workspace, &session.config, &path);
-    for item in analyzer.imports(&doc.text) {
-        let resolved = resolve_import_full(
-            &path,
-            &item.raw,
-            &root,
-            &session.config.remappings,
-            is_trackable_file,
-        );
-        let missing = match &resolved {
-            None => true,
-            Some(target) => workspace.get(target).is_none() && !is_trackable_file(target),
-        };
-        if missing {
-            let diagnostic = unresolved_import_to_diagnostic(&doc.text, item.span, &item.raw);
-            ordered.push((item.span, diagnostic));
-        }
-    }
     ordered.sort_by(|a, b| {
         a.0.start
             .cmp(&b.0.start)
@@ -156,6 +196,21 @@ fn publish_for_uri(
         "params": Value::Object(params),
     });
     Some(frame.to_string())
+}
+
+fn empty_frame(uri: &str, version: Option<u64>) -> String {
+    let mut params = serde_json::Map::new();
+    params.insert("uri".to_string(), Value::String(uri.to_string()));
+    if let Some(version) = version {
+        params.insert("version".to_string(), Value::Number(version.into()));
+    }
+    params.insert("diagnostics".to_string(), Value::Array(Vec::new()));
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "textDocument/publishDiagnostics",
+        "params": Value::Object(params),
+    })
+    .to_string()
 }
 
 /// Empty `publishDiagnostics` frame that clears one document.

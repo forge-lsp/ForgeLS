@@ -7,6 +7,7 @@ Scope: `fls` crate. LSP server plus command line check for Solidity.
 ```bash
 fls lsp [--log-level LEVEL]
 fls check [PATH...] [--write] [--json]
+fls init [--force]
 ```
 
 - `lsp` runs the LSP server on stdio with Solidity wired in.
@@ -15,6 +16,7 @@ fls check [PATH...] [--write] [--json]
 - `--write` applies safe fixes in place.
 - `--json` emits the engine JSON report as-is.
 - Only files with warn/err findings appear; clean files stay silent.
+- `init` scaffolds `./fls.json` with explicit defaults.
 
 ## Flags
 
@@ -22,6 +24,7 @@ fls check [PATH...] [--write] [--json]
 - `check [PATH...]`: files or dirs. Empty means cwd scan.
 - `--write`: write safe fixes. Only safe applicability applies.
 - `--json`: machine output with 0-based ranges, fix, fixed, summary.
+- `init [--force]`: write `./fls.json`. Without `--force`, an existing file is exit 2.
 
 ## Exit codes
 
@@ -31,10 +34,15 @@ fls check [PATH...] [--write] [--json]
 
 ## Config
 
-- Loads `forgels.toml` next to cwd, like the server.
-- Missing file means defaults.
-- Broken TOML means defaults plus a stderr warning.
-- Unknown rule IDs fail with exit 2. Bad levels fall back with warning.
+- Precedence is `./fls.json` wins, else `./forgels.toml` lint text, else defaults.
+- `init` writes grouped `lint` plus reserved `format` via `serde_json::to_string_pretty`.
+- Lint group holds `includes`, `excludes`, and `rules`. Format group is parsed and stored only.
+- Empty lint `includes` matches all files. `excludes` remove after include.
+- `check` filters scanned files by cwd-relative posix path before analysis.
+- Invalid glob patterns warn once on stderr and are ignored.
+- `lsp` enforces the same lint levels and filters on publish. Excluded files publish empty.
+- `lsp` loads config once at startup. Restart required after config edits.
+- No upward search: only cwd files are read. Hot reload is deferred.
 
 ## Limits
 
