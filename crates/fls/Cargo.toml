@@ -1,0 +1,23 @@
+[package]
+name = "fls"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "ForgeLS linter CLI for Solidity"
+
+[[bin]]
+name = "fls"
+path = "src/main.rs"
+
+[dependencies]
+forgels-core.workspace = true
+forgels-lint.workspace = true
+forgels-common.workspace = true
+forgels-syntax.workspace = true
+forgels-lang-solidity.workspace = true
+clap.workspace = true
+# V1 is Solidity only. Noir stays out to keep the binary small
+# and to avoid wiring a second analyzer before the UX settles.
+
+[dev-dependencies]
+serde_json.workspace = true
