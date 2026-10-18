@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 
 use forgels_core::DiagnosticData;
+use forgels_lint::RuleId;
 use forgels_syntax::{AstNode, Lexer, Span};
 
 use super::{Scope, collect_symbols, forge};
@@ -181,6 +182,7 @@ pub fn unknown_identifier_diagnostics(
         out.push(DiagnosticData::error(
             span,
             format!("unresolved identifier '{name}'"),
+            RuleId::UNRESOLVED_IDENTIFIER,
         ));
     }
     out

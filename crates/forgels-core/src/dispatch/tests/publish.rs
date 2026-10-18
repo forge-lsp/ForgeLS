@@ -32,6 +32,14 @@ fn open_publishes_current_diagnostics() {
         diagnostics[0].pointer("/message").expect("has message"),
         &serde_json::json!("stub broken")
     );
+    assert_eq!(
+        diagnostics[0].pointer("/code").expect("has code"),
+        &serde_json::json!("correctness/parse-error")
+    );
+    assert_eq!(
+        diagnostics[0].pointer("/source").expect("has source"),
+        &serde_json::json!("forgels")
+    );
 }
 
 #[test]
@@ -201,6 +209,14 @@ fn truly_missing_reports_unresolved() {
         found[0].pointer("/message").expect("has message"),
         &serde_json::json!("unresolved import \"pkg/B.sol\"")
     );
+    assert_eq!(
+        found[0].pointer("/code").expect("has code"),
+        &serde_json::json!("correctness/unresolved-import")
+    );
+    assert_eq!(
+        found[0].pointer("/source").expect("has source"),
+        &serde_json::json!("forgels")
+    );
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -228,10 +244,12 @@ impl crate::analyzer::Analyzer for MixedStub {
             crate::analyzer::DiagnosticData::error(
                 forgels_syntax::Span::new(0, 1),
                 "mixed error".to_string(),
+                forgels_lint::RuleId::PARSE_ERROR,
             ),
             crate::analyzer::DiagnosticData::warning(
                 forgels_syntax::Span::new(2, 3),
                 "mixed warning".to_string(),
+                forgels_lint::RuleId::UNUSED,
             ),
         ]
     }
@@ -266,4 +284,18 @@ fn publish_maps_error_and_warning_numbers() {
         })
         .collect();
     assert_eq!(severities, vec![1, 2]);
+    assert_eq!(
+        diagnostics[0].pointer("/code").expect("has code"),
+        &serde_json::json!("correctness/parse-error")
+    );
+    assert_eq!(
+        diagnostics[1].pointer("/code").expect("has code"),
+        &serde_json::json!("correctness/unused")
+    );
+    for item in diagnostics {
+        assert_eq!(
+            item.pointer("/source").expect("has source"),
+            &serde_json::json!("forgels")
+        );
+    }
 }

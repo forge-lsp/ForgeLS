@@ -201,6 +201,8 @@ fn parse_error_becomes_error_diagnostic() {
     let diagnostic = parse_error_to_diagnostic(text, &error);
     assert_eq!(diagnostic.severity, Some(DiagnosticSeverity::Error));
     assert_eq!(diagnostic.message, "expected type name");
+    assert_eq!(diagnostic.code.as_deref(), Some("correctness/parse-error"));
+    assert_eq!(diagnostic.source.as_deref(), Some("forgels"));
     assert_eq!(
         diagnostic.range,
         Range {
@@ -325,7 +327,11 @@ fn warning_constructors_carry_warning_severity() {
     };
     let diagnostic = Diagnostic::warning(range, "caution");
     assert_eq!(diagnostic.severity, Some(DiagnosticSeverity::Warning));
-    let item = DiagnosticData::warning(Span::new(0, 1), "caution".to_string());
+    let item = DiagnosticData::warning(
+        Span::new(0, 1),
+        "caution".to_string(),
+        forgels_lint::RuleId::UNUSED,
+    );
     assert_eq!(item.severity, crate::Severity::Warning);
     assert_eq!(item.severity.to_protocol(), DiagnosticSeverity::Warning);
     assert_eq!(item.severity.to_number(), 2);

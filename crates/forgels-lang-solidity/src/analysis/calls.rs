@@ -3,6 +3,7 @@ use super::{
 };
 use crate::SolidityFile;
 use forgels_core::DiagnosticData;
+use forgels_lint::RuleId;
 use forgels_syntax::AstNode;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -100,6 +101,7 @@ pub fn arity_diagnostics(file: &SolidityFile, scope: &Scope) -> Vec<DiagnosticDa
                             format!(
                                 "this struct '{callee}' takes {expected} arguments but {actual} supplied"
                             ),
+                            RuleId::STRUCT_ARITY,
                         ));
                     }
                     continue;
@@ -121,6 +123,7 @@ pub fn arity_diagnostics(file: &SolidityFile, scope: &Scope) -> Vec<DiagnosticDa
                         format!(
                             "this function '{callee}' takes {expected} arguments but {actual} supplied"
                         ),
+                        RuleId::CALL_ARITY,
                     ));
                 }
             }
@@ -168,6 +171,7 @@ pub fn deploy_arity_diagnostics(
                         format!(
                             "this constructor for '{target}' takes {expected} arguments but {actual} supplied"
                         ),
+                        RuleId::DEPLOY_ARITY,
                     ));
                 }
             }
@@ -284,6 +288,7 @@ pub fn member_arity_diagnostics(
                             format!(
                                 "this function '{name}' takes {expected} arguments but {actual} supplied"
                             ),
+                            RuleId::CALL_ARITY,
                         ));
                     }
                     continue;
@@ -299,6 +304,7 @@ pub fn member_arity_diagnostics(
                             format!(
                                 "this function '{name}' takes {expected} arguments but {actual} supplied"
                             ),
+                            RuleId::CALL_ARITY,
                         ));
                     }
                     continue;
@@ -314,6 +320,7 @@ pub fn member_arity_diagnostics(
                             format!(
                                 "this function '{name}' takes {expected} arguments but {actual} supplied"
                             ),
+                            RuleId::CALL_ARITY,
                         ));
                     }
                     continue;
@@ -327,6 +334,7 @@ pub fn member_arity_diagnostics(
                                 format!(
                                     "this function '{name}' takes {expected} arguments but {actual} supplied"
                                 ),
+                                RuleId::CALL_ARITY,
                             ));
                         }
                     } else if let Some(min) = globals::global_min_arity(receiver_name, &name)
@@ -337,6 +345,7 @@ pub fn member_arity_diagnostics(
                             format!(
                                 "this function '{name}' takes at least {min} arguments but {actual} supplied"
                             ),
+                            RuleId::CALL_ARITY,
                         ));
                     }
                     continue;
@@ -364,6 +373,7 @@ pub fn member_arity_diagnostics(
                             format!(
                                 "this function '{name}' takes {expected} arguments but {actual} supplied"
                             ),
+                            RuleId::CALL_ARITY,
                         ));
                     }
                     continue;
@@ -380,6 +390,7 @@ pub fn member_arity_diagnostics(
                             format!(
                                 "this function '{name}' takes {expected} arguments but {actual} supplied"
                             ),
+                            RuleId::CALL_ARITY,
                         ));
                     }
                     continue;
@@ -397,6 +408,7 @@ pub fn member_arity_diagnostics(
                                 format!(
                                     "this function '{name}' takes {expected} arguments but {actual} supplied"
                                 ),
+                                RuleId::CALL_ARITY,
                             ));
                         }
                     }
@@ -470,6 +482,7 @@ pub fn member_arity_diagnostics(
                         format!(
                             "this function '{name}' takes {expected} arguments but {actual} supplied"
                         ),
+                        RuleId::CALL_ARITY,
                     ));
                 }
             }

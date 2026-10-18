@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use forgels_core::DiagnosticData;
+use forgels_lint::RuleId;
 use forgels_syntax::{AstNode, Span};
 
 use super::{Symbol, SymbolKind, inheritance};
@@ -224,6 +225,7 @@ pub fn unknown_error_diagnostics(
                 out.push(DiagnosticData::error(
                     name_span,
                     format!("unresolved error '{name}'"),
+                    RuleId::UNRESOLVED_EVENT,
                 ));
             }
         }
@@ -342,6 +344,7 @@ pub fn revert_arity_diagnostics(
                         format!(
                             "this error '{name}' takes {expected} arguments but {actual} supplied"
                         ),
+                        RuleId::ERROR_ARITY,
                     ));
                 }
             }

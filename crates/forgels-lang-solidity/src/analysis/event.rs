@@ -1,4 +1,5 @@
 use forgels_core::DiagnosticData;
+use forgels_lint::RuleId;
 use forgels_syntax::AstNode;
 
 use crate::SolidityFile;
@@ -46,6 +47,7 @@ pub fn event_diagnostics(file: &SolidityFile) -> Vec<DiagnosticData> {
         out.push(DiagnosticData::error(
             name_span_or_full(event.name_span(), event.syntax().span),
             format!("event '{name}' has {indexed} indexed params but max is 3"),
+            RuleId::INDEXED_LIMIT,
         ));
     }
     out

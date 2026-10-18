@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 
 use forgels_core::DiagnosticData;
+use forgels_lint::RuleId;
 use forgels_syntax::{AstNode, Lexer};
 
 use super::{Scope, SymbolKind, forge, inheritance, members};
@@ -206,6 +207,7 @@ pub fn payable_diagnostics(
                 out.push(DiagnosticData::error(
                     call.syntax().span,
                     format!("non-payable function '{callee}' cannot receive 'value'"),
+                    RuleId::PAYABLE_VALUE,
                 ));
             }
             for member in body.all_members() {
@@ -260,6 +262,7 @@ pub fn payable_diagnostics(
                 out.push(DiagnosticData::error(
                     member.syntax().span,
                     format!("non-payable function '{name}' cannot receive 'value'"),
+                    RuleId::PAYABLE_VALUE,
                 ));
             }
         }

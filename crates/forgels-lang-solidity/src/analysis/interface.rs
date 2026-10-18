@@ -1,4 +1,5 @@
 use forgels_core::DiagnosticData;
+use forgels_lint::RuleId;
 use forgels_syntax::AstNode;
 
 use crate::SolidityFile;
@@ -35,12 +36,14 @@ pub fn interface_diagnostics(file: &SolidityFile) -> Vec<DiagnosticData> {
             out.push(DiagnosticData::error(
                 name_span_or_full(var.name_span(), var.syntax().span),
                 format!("interface '{contract_name}' cannot have state variable '{var_name}'"),
+                RuleId::INTERFACE_RULES,
             ));
         }
         for constructor in contract.constructors() {
             out.push(DiagnosticData::error(
                 name_span_or_full(constructor.name_span(), constructor.syntax().span),
                 format!("interface '{contract_name}' cannot have constructor"),
+                RuleId::INTERFACE_RULES,
             ));
         }
     }

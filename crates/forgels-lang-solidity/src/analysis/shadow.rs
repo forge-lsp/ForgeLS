@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use forgels_core::DiagnosticData;
+use forgels_lint::RuleId;
 use forgels_syntax::AstNode;
 
 use super::{forge, unknown};
@@ -34,6 +35,7 @@ fn push_shadow(
     out.push(DiagnosticData::error(
         span,
         format!("{kind} '{name}' shadows outer declaration"),
+        RuleId::SHADOWING,
     ));
 }
 

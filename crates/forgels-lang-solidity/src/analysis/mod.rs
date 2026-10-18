@@ -4,6 +4,7 @@ use forgels_core::{
     analyzer::{ImportRef, TextEdit},
     routing::Language,
 };
+use forgels_lint::RuleId;
 use forgels_syntax::{AstNode, Lexer, Span};
 
 use crate::{
@@ -717,7 +718,9 @@ impl SolidityAnalyzer {
     ) -> Vec<DiagnosticData> {
         let mut out: Vec<DiagnosticData> = errors
             .iter()
-            .map(|error| DiagnosticData::error(error.span, error.message.clone()))
+            .map(|error| {
+                DiagnosticData::error(error.span, error.message.clone(), RuleId::PARSE_ERROR)
+            })
             .collect();
         out.extend(calls::arity_diagnostics(file, scope));
         out.extend(calls::member_arity_diagnostics(file, scope, deps));

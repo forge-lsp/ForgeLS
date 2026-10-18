@@ -59,6 +59,7 @@ impl crate::analyzer::Analyzer for StubAnalyzer {
             vec![crate::analyzer::DiagnosticData::error(
                 forgels_syntax::Span::new(0, 6),
                 "stub broken".to_string(),
+                forgels_lint::RuleId::PARSE_ERROR,
             )]
         } else {
             Vec::new()

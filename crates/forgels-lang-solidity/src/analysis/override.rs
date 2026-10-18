@@ -1,4 +1,5 @@
 use forgels_core::DiagnosticData;
+use forgels_lint::RuleId;
 use forgels_syntax::AstNode;
 
 use super::inheritance;
@@ -117,17 +118,20 @@ pub fn override_diagnostics(file: &SolidityFile) -> Vec<DiagnosticData> {
                     out.push(DiagnosticData::error(
                         name_span_or_full(&function),
                         format!("function '{func_name}' has 'override' but no base function"),
+                        RuleId::OVERRIDE,
                     ));
                 } else if !has_virtual_base {
                     out.push(DiagnosticData::error(
                         name_span_or_full(&function),
                         format!("function '{func_name}' overrides non-virtual base"),
+                        RuleId::OVERRIDE,
                     ));
                 }
             } else if has_virtual_base {
                 out.push(DiagnosticData::error(
                     name_span_or_full(&function),
                     format!("function '{func_name}' overrides virtual base but missing 'override'"),
+                    RuleId::OVERRIDE,
                 ));
             }
         }

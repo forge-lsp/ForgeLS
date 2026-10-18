@@ -1,4 +1,5 @@
 use forgels_core::DiagnosticData;
+use forgels_lint::RuleId;
 use forgels_syntax::{AstNode, Span};
 
 use crate::{SolidityFile, lexer::SolidityKind};
@@ -301,6 +302,7 @@ fn check_var(
             "type mismatch: cannot assign {} to '{type_text}'",
             literal_label(literal.kind)
         ),
+        RuleId::TYPE_MISMATCH,
     ));
 }
 
@@ -328,5 +330,6 @@ fn check_builtin(
     out.push(DiagnosticData::error(
         span,
         format!("type mismatch: cannot assign {label} to '{type_text}'"),
+        RuleId::TYPE_MISMATCH,
     ));
 }

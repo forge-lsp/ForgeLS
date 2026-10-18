@@ -1,4 +1,5 @@
 use forgels_core::DiagnosticData;
+use forgels_lint::RuleId;
 use forgels_syntax::AstNode;
 
 use crate::{DataLocation, SolidityFile};
@@ -123,6 +124,7 @@ pub fn data_location_diagnostics(file: &SolidityFile) -> Vec<DiagnosticData> {
                     "data location '{}' not allowed for state variable",
                     location.as_str()
                 ),
+                RuleId::DATA_LOCATION,
             ));
         }
         for function in contract.functions() {
@@ -162,6 +164,7 @@ fn check_param(out: &mut Vec<DiagnosticData>, param: &crate::Param) {
                 out.push(DiagnosticData::error(
                     span,
                     format!("mapping can only be 'storage', found '{}'", other.as_str()),
+                    RuleId::DATA_LOCATION,
                 ));
             }
             None => {
@@ -169,6 +172,7 @@ fn check_param(out: &mut Vec<DiagnosticData>, param: &crate::Param) {
                 out.push(DiagnosticData::error(
                     span,
                     format!("mapping '{type_text}' needs 'storage' data location"),
+                    RuleId::DATA_LOCATION,
                 ));
             }
         }
@@ -185,6 +189,7 @@ fn check_param(out: &mut Vec<DiagnosticData>, param: &crate::Param) {
                     "data location '{}' not allowed for '{type_text}'",
                     other.as_str()
                 ),
+                RuleId::DATA_LOCATION,
             ));
         }
         return;
@@ -194,6 +199,7 @@ fn check_param(out: &mut Vec<DiagnosticData>, param: &crate::Param) {
         out.push(DiagnosticData::error(
             span,
             format!("data location must be specified for '{type_text}'"),
+            RuleId::DATA_LOCATION,
         ));
     }
 }
@@ -220,6 +226,7 @@ fn check_local(out: &mut Vec<DiagnosticData>, local: &crate::LocalVar) {
                 out.push(DiagnosticData::error(
                     span,
                     format!("mapping can only be 'storage', found '{}'", other.as_str()),
+                    RuleId::DATA_LOCATION,
                 ));
             }
             None => {
@@ -227,6 +234,7 @@ fn check_local(out: &mut Vec<DiagnosticData>, local: &crate::LocalVar) {
                 out.push(DiagnosticData::error(
                     span,
                     format!("mapping '{type_text}' needs 'storage' data location"),
+                    RuleId::DATA_LOCATION,
                 ));
             }
         }
@@ -243,6 +251,7 @@ fn check_local(out: &mut Vec<DiagnosticData>, local: &crate::LocalVar) {
                     "data location '{}' not allowed for '{type_text}'",
                     other.as_str()
                 ),
+                RuleId::DATA_LOCATION,
             ));
         }
         return;
@@ -254,6 +263,7 @@ fn check_local(out: &mut Vec<DiagnosticData>, local: &crate::LocalVar) {
         out.push(DiagnosticData::error(
             span,
             String::from("data location 'calldata' not allowed for local variable"),
+            RuleId::DATA_LOCATION,
         ));
         return;
     }
@@ -262,6 +272,7 @@ fn check_local(out: &mut Vec<DiagnosticData>, local: &crate::LocalVar) {
         out.push(DiagnosticData::error(
             span,
             format!("data location must be specified for '{type_text}'"),
+            RuleId::DATA_LOCATION,
         ));
     }
 }

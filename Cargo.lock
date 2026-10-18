@@ -61,6 +61,7 @@ version = "0.2.0-beta"
 dependencies = [
  "forgels-common",
  "forgels-core",
+ "forgels-lint",
  "forgels-protocol",
  "forgels-syntax",
  "serde_json",

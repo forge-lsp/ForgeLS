@@ -1,4 +1,5 @@
 use forgels_core::DiagnosticData;
+use forgels_lint::RuleId;
 use forgels_syntax::{Lexer, Span, Token};
 
 use crate::{SolidityFile, SolidityLexer, lexer::SolidityKind};
@@ -109,11 +110,13 @@ fn check_keys(text: &str, span: Span, is_new: bool, out: &mut Vec<DiagnosticData
             out.push(DiagnosticData::error(
                 key_span,
                 String::from("call option 'salt' only allowed for 'new'"),
+                RuleId::CALL_OPTIONS,
             ));
         } else {
             out.push(DiagnosticData::error(
                 key_span,
                 format!("unknown call option '{key}'"),
+                RuleId::CALL_OPTIONS,
             ));
         }
     }

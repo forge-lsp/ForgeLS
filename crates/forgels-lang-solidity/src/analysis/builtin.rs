@@ -1,4 +1,5 @@
 use forgels_core::DiagnosticData;
+use forgels_lint::RuleId;
 use forgels_syntax::AstNode;
 
 use super::Scope;
@@ -72,6 +73,7 @@ pub fn builtin_arity_diagnostics(file: &SolidityFile, scope: &Scope) -> Vec<Diag
                         format!(
                             "this function '{callee}' takes {expected} arguments but {actual} supplied"
                         ),
+                        RuleId::BUILTIN_ARITY,
                     ));
                 }
             }

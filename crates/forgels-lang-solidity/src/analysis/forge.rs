@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use forgels_core::DiagnosticData;
+use forgels_lint::RuleId;
 use forgels_syntax::AstNode;
 
 use super::Scope;
@@ -303,6 +304,7 @@ pub(crate) fn assert_arity_diagnostics(file: &SolidityFile, scope: &Scope) -> Ve
                         format!(
                             "this function '{callee}' takes {expected} arguments but {actual} supplied"
                         ),
+                        RuleId::CALL_ARITY,
                     ));
                 }
             }

@@ -34,6 +34,7 @@ impl Analyzer for StubAnalyzer {
             vec![DiagnosticData::error(
                 Span::new(0, 6),
                 "stub broken".to_string(),
+                forgels_lint::RuleId::PARSE_ERROR,
             )]
         } else {
             Vec::new()
