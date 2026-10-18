@@ -730,10 +730,10 @@ impl SolidityAnalyzer {
         out.extend(emits::unknown_emit_diagnostics(file, deps));
         out.extend(errors::unknown_error_diagnostics(file, deps));
         out.extend(inheritance::linearization_diagnostics(file, deps));
-        out.extend(visibility::visibility_diagnostics(file, scope));
+        out.extend(visibility::visibility_diagnostics(file, scope, deps));
         out.extend(mutability::mutability_diagnostics(file, text, scope));
         out.extend(payable::payable_diagnostics(file, text, scope, deps));
-        out.extend(type_mismatch::type_mismatch_diagnostics(file));
+        out.extend(type_mismatch::type_mismatch_diagnostics(file, text));
         out.extend(override_diagnostics::override_diagnostics(file));
         out.extend(shadow::shadow_diagnostics(file, scope));
         out.extend(data_location::data_location_diagnostics(file));

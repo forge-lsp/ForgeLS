@@ -424,29 +424,46 @@ Status: beta lexer, parser, and analysis implemented.
 
 - Scope: `analysis::visibility` plus `FunctionDef::visibility` and parser
   storage of `public`, `private`, `internal`, `external` tokens.
-- Rule: plain `f()` where `f` is external in the same contract errors
-  with `external function 'f' must be called via 'this.f()' or 'C.f()'`
-  where `C` is the calling contract. Member calls, `super`, and unknown
-  names stay silent.
-- Lookup: own functions first, then `linearize` bases. Derived wins,
-  first base wins. Overloads use the first definition.
-- Limits: same file only, no cross contract checks, no internal or
-  private cross contract rules.
+- Rules:
+  - Plain `f()` where `f` is external errors with
+    `external function 'f' must be called via 'this.f()' or 'C.f()'`
+    where `C` is the calling contract.
+  - Plain `f()` where `f` is private in a base errors in the derived
+    contract with
+    `private function 'f' cannot be called from derived contract 'D'`.
+    Own private calls stay silent, internal plain calls stay silent.
+  - Instance `c.f()` where `f` is internal or private in the receiver
+    contract errors with
+    `internal function 'f' cannot be called via instance 'c'` or
+    `private function 'f' cannot be called via instance 'c'`.
+- Lookup: own functions first, then `linearize` plus `linearize_across`
+  bases. Derived wins, first base wins. Mixed overloads stay silent.
+- Limits: `this`, `super`, and library targets stay silent. Internal
+  calls through inheritance stay silent. Chains longer than two stay
+  silent. Contract-name calls stay silent.
 
 ## State mutability
 
 - Scope: `analysis::mutability` plus `FunctionDef::mutability` with
   `constant` normalized to `view`. Parser stores `pure`, `view`,
   `payable`, and `constant` tokens.
-- Rule: token scan of `Ident` in the body resolves `StateVar` only.
-  Decl names, imports, and assembly stay silent. `this.x` counts as a
-  read. `delete`, assignments, and `++` or `--` count as writes. Pure
-  errors on reads and writes, view errors on writes only.
+- Rules:
+  - Token scan of `Ident` in the body resolves `StateVar` only.
+    Decl names, imports, and assembly stay silent. `this.x` counts as a
+    read. `delete`, assignments, and `++` or `--` count as writes. Pure
+    errors on reads and writes, view errors on writes only.
+  - Member writes via `all_members`: `arr.push` and `arr.pop` count as
+    writes, plus direct `s.field` on the left of an assign family with
+    a `StateVar` root. Pure and view report the same write messages
+    with the root name. Member roots own the diagnostic once, so pure
+    shows one write, not read plus write.
 - Messages: `pure function 'f' cannot read state variable 'x'`,
   `pure function 'f' cannot write to state variable 'x'`,
   `view function 'f' cannot write to state variable 'x'`.
-- Limits: no dataflow, no transitive calls, params and locals shadow
-  state vars via scope resolve.
+- Limits: two-segment chains only. Mappings, assembly, cross-function
+  calls, call targets, and longer chains stay silent. Struct reads stay
+  silent, only LHS writes lint. Params and locals shadow state vars via
+  scope resolve.
 
 ## Payable call options
 
@@ -485,12 +502,24 @@ Status: beta lexer, parser, and analysis implemented.
 - Scope: `analysis::type_mismatch` plus `StateVar::initializer` and
   `LocalVar::initializer`. Parser stores one literal token only when
   the initializer is exactly one literal.
-- Rule: single literals against elementary types only. Message shape
-  is `type mismatch: cannot assign <literal> to '<type>'` with the
-  literal span. Mappings, arrays, and user types stay silent.
+- Rules:
+  - Single literals against elementary types only. Message shape
+    is `type mismatch: cannot assign <literal> to '<type>'` with the
+    literal span. Mappings, arrays, and user types stay silent.
+  - Tiny builtin inference for non-literals: `msg.sender` as `address`,
+    `block.coinbase` as `address`, `block.basefee`, `block.blobbasefee`,
+    `block.chainid`, `block.difficulty`, `block.gaslimit`, `block.number`,
+    `block.timestamp`, `block.prevrandao` as `uint256`,
+    any `abi.encode*` call as `bytes`,
+    plus `*.balance` and `*.length` as `uint256`. Mismatch reports
+    `type mismatch: cannot assign <inferred> to '<type>'` with the init
+    span. Matches stay silent.
 - Silent: `1 ether` (two tokens), hex numbers for `address`, idents,
-  calls, casts, and binops (no stored literal).
-- Limits: no inference, no range checks, no implicit conversion tables.
+  casts (`Type(...)` always converts), chains, binops, and other calls
+  (no stored literal, no builtin shape).
+- Limits: five builtin shapes only. Literal chains, binops, plain calls,
+  and call returns stay silent. No range checks, no implicit conversion
+  tables. Direct locals only, nested blocks stay silent.
 
 ## Using-for
 

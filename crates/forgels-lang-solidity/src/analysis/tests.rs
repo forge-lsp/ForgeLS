@@ -5870,3 +5870,233 @@ fn function_type_internal_stays_unknown() {
     let at = text.rfind("cb.selector").expect("use") as u32 + 3;
     assert!(hover_at(&file, text, at).is_none());
 }
+
+#[test]
+fn type_mismatch_cast_stays_silent() {
+    let text = "contract C {\nuint x = uint8(1);\naddress a = address(0);\n}";
+    assert!(
+        diagnostics_of(text).is_empty(),
+        "diags: {:?}",
+        diagnostics_of(text)
+    );
+}
+
+#[test]
+fn type_mismatch_builtin_match_stays_silent() {
+    let text = "contract C {\naddress a = msg.sender;\nuint b = block.timestamp;\nbytes c = abi.encode(1);\naddress addr;\nuint d = addr.balance;\nuint[] arr;\nuint e = arr.length;\n}";
+    assert!(
+        diagnostics_of(text).is_empty(),
+        "diags: {:?}",
+        diagnostics_of(text)
+    );
+}
+
+#[test]
+fn type_mismatch_msg_sender_to_uint_errors() {
+    let text = "contract C {\nuint x = msg.sender;\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "type mismatch: cannot assign address to 'uint'"
+    );
+}
+
+#[test]
+fn type_mismatch_block_to_address_errors() {
+    let text = "contract C {\naddress a = block.timestamp;\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "type mismatch: cannot assign uint256 to 'address'"
+    );
+}
+
+#[test]
+fn type_mismatch_coinbase_to_address_stays_silent() {
+    let text = "contract C {\naddress a = block.coinbase;\n}";
+    assert!(
+        diagnostics_of(text).is_empty(),
+        "diags: {:?}",
+        diagnostics_of(text)
+    );
+}
+
+#[test]
+fn type_mismatch_coinbase_to_uint_errors() {
+    let text = "contract C {\nuint x = block.coinbase;\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "type mismatch: cannot assign address to 'uint'"
+    );
+}
+
+#[test]
+fn type_mismatch_encode_to_uint_errors() {
+    let text = "contract C {\nuint x = abi.encode(1);\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "type mismatch: cannot assign bytes to 'uint'"
+    );
+}
+
+#[test]
+fn type_mismatch_balance_to_address_errors() {
+    let text = "contract C {\naddress addr;\naddress a = addr.balance;\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "type mismatch: cannot assign uint256 to 'address'"
+    );
+}
+
+#[test]
+fn type_mismatch_length_to_address_errors() {
+    let text = "contract C {\nuint[] arr;\naddress a = arr.length;\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "type mismatch: cannot assign uint256 to 'address'"
+    );
+}
+
+#[test]
+fn type_mismatch_binop_and_call_stay_silent() {
+    let text = "contract C {\nfunction foo() internal returns (uint) {}\nuint a = 1 + 2;\nuint b = foo();\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn mutability_push_in_view_errors() {
+    let text = "contract C {\nuint[] arr;\nfunction f() view {\narr.push(1);\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "view function 'f' cannot write to state variable 'arr'"
+    );
+}
+
+#[test]
+fn mutability_pop_in_pure_errors() {
+    let text = "contract C {\nuint[] arr;\nfunction f() pure {\narr.pop();\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "pure function 'f' cannot write to state variable 'arr'"
+    );
+}
+
+#[test]
+fn mutability_push_in_public_stays_silent() {
+    let text = "contract C {\nuint[] arr;\nfunction f() public {\narr.push(1);\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn mutability_struct_field_assign_in_view_errors() {
+    let text = "struct S {\nuint x;\n}\ncontract C {\nS s;\nfunction f() view {\ns.x = 1;\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "view function 'f' cannot write to state variable 's'"
+    );
+}
+
+#[test]
+fn mutability_struct_field_read_in_view_stays_silent() {
+    let text = "struct S {\nuint x;\n}\ncontract C {\nS s;\nfunction f() view {\ns.x;\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn mutability_struct_field_assign_in_public_stays_silent() {
+    let text = "struct S {\nuint x;\n}\ncontract C {\nS s;\nfunction f() public {\ns.x = 1;\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn visibility_instance_internal_errors() {
+    let text = "contract C {\nfunction foo() internal {}\n}\ncontract D {\nfunction f() public {\nC c;\nc.foo();\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "internal function 'foo' cannot be called via instance 'c'"
+    );
+}
+
+#[test]
+fn visibility_instance_private_errors() {
+    let text = "contract C {\nfunction bar() private {}\n}\ncontract D {\nfunction f() public {\nC c;\nc.bar();\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "private function 'bar' cannot be called via instance 'c'"
+    );
+}
+
+#[test]
+fn visibility_instance_public_stays_silent() {
+    let text = "contract C {\nfunction foo() public {}\n}\ncontract D {\nfunction f() public {\nC c;\nc.foo();\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn visibility_private_in_derived_errors() {
+    let text = "contract B {\nfunction foo() private {}\n}\ncontract D is B {\nfunction f() public {\nfoo();\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "private function 'foo' cannot be called from derived contract 'D'"
+    );
+}
+
+#[test]
+fn visibility_private_own_call_stays_silent() {
+    let text = "contract C {\nfunction foo() private {}\nfunction f() public {\nfoo();\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn visibility_internal_in_derived_stays_silent() {
+    let text = "contract B {\nfunction foo() internal {}\n}\ncontract D is B {\nfunction f() public {\nfoo();\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn visibility_overload_mixed_stays_silent() {
+    let text = "contract C {\nfunction foo() external {}\nfunction foo(uint a) public { a; }\nfunction f() public {\nfoo();\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn visibility_this_internal_stays_silent() {
+    let text = "contract C {\nfunction foo() internal {}\nfunction f() public {\nthis.foo();\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn visibility_private_across_files_in_derived_errors() {
+    let base = "contract B {\nfunction foo() private {}\n}";
+    let cur = "import \"./B.sol\";\ncontract D is B {\nfunction f() public {\nfoo();\n}\n}";
+    let mut workspace = open_workspace(&[("/B.sol", base), ("/D.sol", cur)]);
+    workspace.set_file_deps(PathBuf::from("/D.sol"), vec![PathBuf::from("/B.sol")]);
+    let found = diagnostics_multi(&workspace, "/D.sol", cur);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "private function 'foo' cannot be called from derived contract 'D'"
+    );
+}
