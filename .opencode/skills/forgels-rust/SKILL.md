@@ -66,7 +66,7 @@ Use when writing, editing, or reviewing Rust in `crates/*`. Load me before any R
 - Every public AST type carries `Span`.
 - Language crates stay independent. Never add one `forgels-lang-*` to another.
 - New shared code goes to `forgels-syntax`, `forgels-protocol`, `forgels-common`, or `forgels-core`.
-- Binary `forgels` stays thin: args, config, route by extension.
+- Binary `fls` stays thin: args, config, route by extension.
 
 ## Good vs bad (naming and flow)
 

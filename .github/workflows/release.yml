@@ -18,13 +18,13 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            bin: forgels
+            bin: fls
           - os: macos-latest
             target: aarch64-apple-darwin
-            bin: forgels
+            bin: fls
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            bin: forgels.exe
+            bin: fls.exe
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -35,12 +35,12 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Build release binary
-        run: cargo build --release --locked -p forgels --target ${{ matrix.target }}
+        run: cargo build --release --locked -p fls --target ${{ matrix.target }}
 
       - name: Package binary
         shell: bash
         run: |
-          staged="forgels-${{ matrix.target }}"
+          staged="fls-${{ matrix.target }}"
           mkdir -p "$staged"
           cp "target/${{ matrix.target }}/release/${{ matrix.bin }}" "$staged/"
           cp README.md "$staged/" 2>/dev/null || true

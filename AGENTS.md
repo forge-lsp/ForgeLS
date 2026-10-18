@@ -12,7 +12,7 @@ We split by function and by language. Shared code is reusable. Language code is 
 forgels/
   Cargo.toml                  # virtual workspace, members = crates/*
   crates/
-    forgels/                  # thin server binary, routes files to language crates
+    fls/                      # sole entrypoint: lsp server plus check linter
     forgels-core/             # server lifecycle, workspace manager, config, diagnostics hub
     forgels-protocol/         # LSP and JSON-RPC types only, no language logic
     forgels-syntax/           # shared AST, lexer, parser toolkit reused by all languages
@@ -29,7 +29,7 @@ forgels/
 - `forgels-protocol`: owns protocol types such as `Position`, `Range`, `Diagnostic`, `Request`, `Response`. No analysis here.
 - `forgels-syntax`: reusable syntax foundation. It provides `Span`, `Token`, `Lexer` trait, `Parser` trait, `SyntaxNode`, `SyntaxToken`, `AstNode`, `Visitor`, `ParseError`. It must stay language agnostic. No Solidity or Noir grammar here.
 - `forgels-common`: small helpers for fs, paths, logging, and http client. Any crate may use this.
-- `forgels` (binary): thin entrypoint. It parses CLI args, loads `Config`, starts `Server` from `forgels-core`, and routes by file extension or language id.
+- `fls` (binary): sole entrypoint. It serves `lsp` on stdio plus `check` lint, loads `Config`, starts `Server` from `forgels-core`, and routes by file extension or language id.
 
 ### 1.2 Language crates
 
@@ -53,7 +53,7 @@ Each language crate is self contained for grammar and analysis:
    - `forgels-core`, `forgels-protocol`, `forgels-syntax`, `forgels-common` must never import `forgels-lang-*`.
 3. `forgels-syntax` is the only place for reusable AST and parser abstractions. New shared syntax logic goes there, not inside a language crate.
 4. `forgels-protocol` has zero language logic and ideally zero heavy deps. Keep it light.
-5. The binary `forgels` may depend on all crates to wire routing. Keep logic thin. Move logic to `forgels-core` or to the relevant language crate.
+5. The binary `fls` may depend on all crates to wire routing. Keep logic thin. Move logic to `forgels-core` or to the relevant language crate.
 6. Add new shared deps via `[workspace.dependencies]` in root `Cargo.toml`, then reference with `*.workspace = true` in crate manifests. Do not pin versions per crate.
 
 Check rule violations with:
@@ -74,7 +74,7 @@ Example for Cairo:
 3. Define `LANGUAGE_ID = "cairo"` and `FILE_EXTENSIONS = &["cairo"]`.
 4. Implement `Lexer` and `Parser` from `forgels-syntax`. Build typed AST with `AstNode`.
 5. Register the crate in root `Cargo.toml` members and `[workspace.dependencies]`.
-6. Wire routing in `crates/forgels/src/main.rs` or `forgels-core` workspace map by extension.
+6. Wire routing in `crates/fls/src/lsp.rs` or `forgels-core` workspace map by extension.
 7. Add docs under `docs/lang-cairo.md` in English, short and direct.
 
 ## 4. Rust Workflow
@@ -86,7 +86,7 @@ cargo check --workspace
 cargo test --workspace
 cargo fmt --all
 cargo clippy --workspace -- -D warnings
-cargo run -p forgels
+cargo run -p fls -- lsp
 ```
 
 Rules:

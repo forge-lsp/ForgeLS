@@ -1,0 +1,46 @@
+use std::path::PathBuf;
+
+use clap::{Args, Parser, Subcommand};
+
+#[derive(Debug, Parser)]
+#[command(
+    name = "fls",
+    version,
+    about = "ForgeLS entrypoint: lsp server plus check linter"
+)]
+pub struct Cli {
+    #[command(subcommand)]
+    pub command: Command,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum Command {
+    /// Run the LSP server on stdio.
+    Lsp(LspArgs),
+    /// Lint Solidity files.
+    Check(CheckArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct LspArgs {
+    /// Log level: trace, debug, info, warn, error.
+    #[arg(long, value_name = "LEVEL")]
+    pub log_level: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct CheckArgs {
+    /// Files or dirs to lint. Empty means scan cwd for *.sol.
+    #[arg(value_name = "PATH")]
+    pub paths: Vec<PathBuf>,
+    /// Apply safe fixes in place.
+    #[arg(long)]
+    pub write: bool,
+    /// Emit JSON report.
+    #[arg(long)]
+    pub json: bool,
+}
+
+pub fn parse() -> Cli {
+    Cli::parse()
+}

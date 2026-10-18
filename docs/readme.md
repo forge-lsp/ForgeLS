@@ -7,6 +7,7 @@ ForgeLS is a Language Server Protocol for smart contract languages such as Solid
 ## Map
 
 - `architecture.md`: workspace layout, crate roles, dependency rules.
+- `fls.md`: entrypoint usage for `lsp` and `check`.
 - `syntax-toolkit.md`: shared AST, lexer, and parser toolkit in `forgels-syntax`.
 - `lang-solidity.md`: Solidity crate scope and status.
 - `lang-noir.md`: Noir crate scope and status.

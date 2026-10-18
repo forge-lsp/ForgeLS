@@ -6,7 +6,7 @@ Scope: whole workspace. Defines crate layout and dependency rules.
 
 ```text
 crates/
-  forgels/                # binary, thin routing only
+  fls/                    # sole entrypoint: lsp plus check
   forgels-core/           # lifecycle, workspace, config, diagnostics
   forgels-protocol/       # LSP and RPC types
   forgels-syntax/         # shared AST and parser toolkit
@@ -17,7 +17,7 @@ crates/
 
 ```mermaid
 flowchart LR
-  BIN[forgels] --> CORE[forgels-core]
+  BIN[fls] --> CORE[forgels-core]
   BIN --> SOL[forgels-lang-solidity]
   BIN --> NOIR[forgels-lang-noir]
   SOL --> SYN[forgels-syntax]
@@ -34,7 +34,7 @@ flowchart LR
 - Shared crates must not depend on language crates.
 - New shared syntax goes to `forgels-syntax`.
 - New protocol types go to `forgels-protocol`.
-- Binary wires routing only. Logic lives in `forgels-core` or language crates.
+- Binary `fls` wires routing only. Logic lives in `forgels-core` or language crates.
 
 ## Cross-file
 
