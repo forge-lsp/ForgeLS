@@ -141,6 +141,9 @@ pub fn unknown_identifier_diagnostics(
             continue;
         }
         let name = token.text.as_str();
+        if name == "_" {
+            continue;
+        }
         if scope.resolve(name, span.start).is_some() {
             continue;
         }

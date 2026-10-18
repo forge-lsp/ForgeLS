@@ -344,10 +344,11 @@ pub(crate) fn parse_param(cursor: &mut Cursor) -> Result<SyntaxNode, ParseError>
     let mut children = vec![SyntaxElement::Node(param_type)];
     // Data location, payable, and indexed sit between type and name:
     // `string memory label`, `address payable holder`,
-    // `address indexed from`. Location is stored for data location
-    // checks; payable and indexed stay consumed. Name lookup skips
-    // the stored token so `memory` never reads as the name.
+    // `address indexed from`. Location and indexed are stored for data
+    // location and event checks; payable stays consumed. Name lookup skips
+    // the stored tokens so `memory` never reads as the name.
     let mut location: Option<forgels_syntax::Token> = None;
+    let mut indexed: Option<forgels_syntax::Token> = None;
     loop {
         match cursor.peek_kind() {
             Some(kind)
@@ -361,16 +362,23 @@ pub(crate) fn parse_param(cursor: &mut Cursor) -> Result<SyntaxNode, ParseError>
                     cursor.bump();
                 }
             }
-            Some(kind)
-                if kind == SolidityKind::Payable.as_u16()
-                    || kind == SolidityKind::Indexed.as_u16() =>
-            {
+            Some(kind) if kind == SolidityKind::Payable.as_u16() => {
                 cursor.bump();
+            }
+            Some(kind) if kind == SolidityKind::Indexed.as_u16() => {
+                if indexed.is_none() {
+                    indexed = cursor.bump();
+                } else {
+                    cursor.bump();
+                }
             }
             _ => break,
         }
     }
     if let Some(token) = location {
+        children.push(token_element(token));
+    }
+    if let Some(token) = indexed {
         children.push(token_element(token));
     }
     let mut end = children

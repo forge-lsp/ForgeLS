@@ -349,7 +349,9 @@ impl Param {
             .iter()
             .find_map(|element| match element {
                 SyntaxElement::Token(token)
-                    if !is_data_location_kind(token.kind) && is_word_text(&token.text) =>
+                    if !is_data_location_kind(token.kind)
+                        && token.kind != SolidityKind::Indexed.as_u16()
+                        && is_word_text(&token.text) =>
                 {
                     Some(token.text.clone())
                 }
@@ -363,8 +365,32 @@ impl Param {
             .iter()
             .find_map(|element| match element {
                 SyntaxElement::Token(token)
-                    if !is_data_location_kind(token.kind) && is_word_text(&token.text) =>
+                    if !is_data_location_kind(token.kind)
+                        && token.kind != SolidityKind::Indexed.as_u16()
+                        && is_word_text(&token.text) =>
                 {
+                    Some(token.span)
+                }
+                _ => None,
+            })
+    }
+
+    pub fn is_indexed(&self) -> bool {
+        self.syntax.children.iter().any(|element| {
+            matches!(
+                element,
+                SyntaxElement::Token(token)
+                    if token.kind == SolidityKind::Indexed.as_u16()
+            )
+        })
+    }
+
+    pub fn indexed_span(&self) -> Option<Span> {
+        self.syntax
+            .children
+            .iter()
+            .find_map(|element| match element {
+                SyntaxElement::Token(token) if token.kind == SolidityKind::Indexed.as_u16() => {
                     Some(token.span)
                 }
                 _ => None,
