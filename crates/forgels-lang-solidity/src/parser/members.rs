@@ -1,5 +1,5 @@
 use super::cursor::{Cursor, token_element};
-use super::types::{is_type_start, parse_type};
+use super::types::{is_function_type_at, is_type_start, parse_type, skip_function_type_at};
 use crate::SolidityNode;
 use crate::ast::MAX_CHAIN_TAILS;
 use crate::lexer::SolidityKind;
@@ -470,6 +470,18 @@ pub(crate) fn parse_block(cursor: &mut Cursor, errors: &mut Vec<ParseError>) -> 
                     }
                 }
             }
+            Some(kind)
+                if kind == SolidityKind::Function.as_u16()
+                    && is_function_type_at(cursor.tokens, cursor.pos()) =>
+            {
+                match parse_local_var(cursor) {
+                    Ok(node) => items.push(SyntaxElement::Node(node)),
+                    Err(error) => {
+                        errors.push(error);
+                        recover_statement(cursor);
+                    }
+                }
+            }
             Some(kind) if kind == SolidityKind::Emit.as_u16() => {
                 if let Some(emit) = try_parse_emit(cursor) {
                     items.push(SyntaxElement::Node(emit));
@@ -809,6 +821,12 @@ fn is_for_decl_ahead(cursor: &mut Cursor) -> bool {
     let Some(first) = cursor.tokens.get(index) else {
         return false;
     };
+    if first.kind == SolidityKind::Function.as_u16() {
+        if !is_function_type_at(cursor.tokens, index) {
+            return false;
+        }
+        return decl_ahead_at(cursor.tokens, index);
+    }
     if !(is_type_start(first.kind) || first.kind == SolidityKind::Ident.as_u16()) {
         return false;
     }
@@ -860,7 +878,10 @@ fn try_parse_tuple(cursor: &mut Cursor) -> Option<Vec<SyntaxNode>> {
             cursor.set_pos(start);
             return None;
         };
-        if is_type_start(first.kind) {
+        if is_type_start(first.kind)
+            || (first.kind == SolidityKind::Function.as_u16()
+                && is_function_type_at(cursor.tokens, element))
+        {
             let Some(node) = parse_tuple_decl_element(cursor) else {
                 cursor.set_pos(start);
                 return None;
@@ -2061,7 +2082,9 @@ pub(crate) fn parse_using(cursor: &mut Cursor, errors: &mut Vec<ParseError>) -> 
         };
         children.push(token_element(star));
     } else if let Some(kind) = cursor.peek_kind()
-        && (is_type_start(kind) || kind == SolidityKind::Ident.as_u16())
+        && (is_type_start(kind)
+            || kind == SolidityKind::Ident.as_u16()
+            || kind == SolidityKind::Function.as_u16())
     {
         match parse_type(cursor) {
             Ok(target) => children.push(SyntaxElement::Node(target)),
@@ -2178,6 +2201,43 @@ pub(crate) fn is_local_decl_ahead(cursor: &mut Cursor) -> bool {
 }
 
 fn decl_ahead_at(tokens: &[forgels_syntax::Token], start: usize) -> bool {
+    if let Some(end) = skip_function_type_at(tokens, start) {
+        let mut index = end;
+        while tokens
+            .get(index)
+            .is_some_and(|token| token.kind == SolidityKind::Comment.as_u16())
+        {
+            index += 1;
+        }
+        loop {
+            if tokens.get(index).is_some_and(|token| {
+                token.kind == SolidityKind::Memory.as_u16()
+                    || token.kind == SolidityKind::Storage.as_u16()
+                    || token.kind == SolidityKind::Calldata.as_u16()
+                    || token.kind == SolidityKind::Public.as_u16()
+                    || token.kind == SolidityKind::Private.as_u16()
+                    || token.kind == SolidityKind::Internal.as_u16()
+                    || token.kind == SolidityKind::Constant.as_u16()
+                    || token.kind == SolidityKind::Immutable.as_u16()
+                    || token.kind == SolidityKind::Override.as_u16()
+                    || token.kind == SolidityKind::Transient.as_u16()
+                    || token.kind == SolidityKind::Payable.as_u16()
+            }) {
+                index += 1;
+                while tokens
+                    .get(index)
+                    .is_some_and(|token| token.kind == SolidityKind::Comment.as_u16())
+                {
+                    index += 1;
+                }
+            } else {
+                break;
+            }
+        }
+        return tokens
+            .get(index)
+            .is_some_and(|token| is_param_name(&token.text));
+    }
     let tokens = match tokens.get(start..) {
         Some(slice) => slice,
         None => return false,

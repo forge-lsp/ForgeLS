@@ -210,6 +210,28 @@ Status: beta lexer, parser, and analysis implemented.
 - Limits: no `address` member in V1, no visibility split for named
   functions, no signature help, chained `a.b.c` resolves final only.
 
+## Function types
+
+- Scope: `parser::parse_function_type` plus `ast::TypeNode::text` and
+  `analysis::unknown::function_type_spans`. No new `SymbolKind`, no new
+  completion kind.
+- Shape: `function (params) internal|external [mutability] [returns (params)]`
+  with array suffixes (`[]`, `[N]`) on the outer type.
+- Visibility is required: only `internal` or `external` pass, anything
+  else errors with `expected 'internal' or 'external'`.
+- Mutability is optional: `pure`, `view`, `payable`, `constant`.
+- Returns is optional with its own param list.
+- Mapping keys reject function types with
+  `function type not allowed as mapping key`; mapping values accept them.
+- Text joins as `function (uint) external` with one space before `(`;
+  `mapping` stays glued as `mapping(address => uint)`.
+- Inner param names stay silent for unknown, references, and rename via
+  `function_type_spans`; outer names resolve normally.
+- Hover and member lookup reuse the type text, so external function vars
+  expose `selector`, `gas`, and `value` with no extra work.
+- Limits: no data location checks for function types, no signature help
+  for inner params.
+
 ## Type metadata
 
 - Scope: `analysis::meta` plus thin wiring in `members`, `hover`,

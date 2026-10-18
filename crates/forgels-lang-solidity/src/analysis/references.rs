@@ -303,6 +303,7 @@ fn scan_plain(
         members.iter().map(|span| (span.start, span.end)).collect();
     let emits = super::unknown::emit_spans(candidate_file);
     let emit_set: HashSet<(u32, u32)> = emits.iter().map(|span| (span.start, span.end)).collect();
+    let func_types = super::unknown::function_type_spans(candidate_file);
     let mut out = Vec::new();
     for token in &tokens {
         if token.kind != crate::SolidityKind::Ident.as_u16() {
@@ -322,6 +323,9 @@ fn scan_plain(
             continue;
         }
         if emit_set.contains(&(span.start, span.end)) {
+            continue;
+        }
+        if super::unknown::inside_any(&func_types, span.start) {
             continue;
         }
         if super::unknown::preceded_by_dot(candidate_text, span.start) {
@@ -398,6 +402,7 @@ fn scan_member(
     let decl_set: HashSet<(u32, u32)> = decls.iter().map(|span| (span.start, span.end)).collect();
     let imports = super::unknown::import_spans(candidate_file);
     let assemblies = super::unknown::assembly_ranges(&tokens);
+    let func_types = super::unknown::function_type_spans(candidate_file);
     let deps = deps_for(ctx, candidate_path, candidate_text);
     let mut out = Vec::new();
     for token in &tokens {
@@ -412,6 +417,9 @@ fn scan_member(
             continue;
         }
         if super::unknown::inside_any(&assemblies, span.start) {
+            continue;
+        }
+        if super::unknown::inside_any(&func_types, span.start) {
             continue;
         }
         if candidate_text
@@ -468,6 +476,7 @@ fn scan_emit(
     let decl_set: HashSet<(u32, u32)> = decls.iter().map(|span| (span.start, span.end)).collect();
     let imports = super::unknown::import_spans(candidate_file);
     let assemblies = super::unknown::assembly_ranges(&tokens);
+    let func_types = super::unknown::function_type_spans(candidate_file);
     let deps = deps_for(ctx, candidate_path, candidate_text);
     let mut out = Vec::new();
     for token in &tokens {
@@ -482,6 +491,9 @@ fn scan_emit(
             continue;
         }
         if super::unknown::inside_any(&assemblies, span.start) {
+            continue;
+        }
+        if super::unknown::inside_any(&func_types, span.start) {
             continue;
         }
         if candidate_text
@@ -780,5 +792,15 @@ mod tests {
         });
         assert_eq!(found, sorted);
         assert!(found.len() <= forgels_core::MAX_REFERENCES);
+    }
+
+    #[test]
+    fn function_type_inner_name_ignored() {
+        let text =
+            "contract C {\nfunction (uint cb) external cb;\nfunction f() public {\ncb;\n}\n}";
+        let workspace = workspace_with(&[("/A.sol", text)]);
+        let found = refs_in(&workspace, "/A.sol", text, "cb;\n}\n}").expect("refs");
+        assert_eq!(found.len(), 2);
+        assert_eq!(found.iter().filter(|item| item.is_declaration).count(), 1);
     }
 }

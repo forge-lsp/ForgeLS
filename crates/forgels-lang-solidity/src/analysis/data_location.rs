@@ -145,6 +145,9 @@ fn check_param(out: &mut Vec<DiagnosticData>, param: &crate::Param) {
     let Some(type_text) = param.type_node().map(|node| node.text()) else {
         return;
     };
+    if type_text.trim_start().starts_with("function") {
+        return;
+    }
     if is_user_text(&type_text) && !is_array_text(&type_text) {
         return;
     }
@@ -200,6 +203,9 @@ fn check_local(out: &mut Vec<DiagnosticData>, local: &crate::LocalVar) {
     let Some(type_text) = local.type_node().map(|node| node.text()) else {
         return;
     };
+    if type_text.trim_start().starts_with("function") {
+        return;
+    }
     if is_user_text(&type_text) && !is_array_text(&type_text) {
         return;
     }

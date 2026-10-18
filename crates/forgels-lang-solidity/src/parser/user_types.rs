@@ -159,10 +159,12 @@ fn parse_type_header(
 }
 
 fn parse_struct_field(cursor: &mut Cursor, errors: &mut Vec<ParseError>) -> Option<SyntaxNode> {
-    use super::types::is_type_start;
+    use super::types::{is_type_start, skip_function_type_at};
     let peek = cursor.peek_kind();
     let is_field_start = matches!(peek, Some(kind)
-        if is_type_start(kind) || kind == SolidityKind::Ident.as_u16());
+        if is_type_start(kind)
+            || kind == SolidityKind::Ident.as_u16()
+            || skip_function_type_at(cursor.tokens, cursor.pos()).is_some());
     if !is_field_start {
         errors.push(ParseError::new(cursor.peek_span(), "expected type"));
         cursor.bump();
