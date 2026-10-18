@@ -27,6 +27,24 @@ pub fn is_trackable_file(path: &Path) -> bool {
     meta.is_file()
 }
 
+/// Build dirs skipped at any depth during recursive walks.
+///
+/// Exact dir names only, no patterns. Covers common build outputs
+/// that would otherwise starve the walker budget.
+pub const DEFAULT_SKIP_DIRS: &[&str] = &["node_modules", "out", "cache", "artifacts", "coverage"];
+
+/// True for exact skip-dir names. Dot check stays at the call site.
+pub fn is_skipped_dir(name: &str) -> bool {
+    DEFAULT_SKIP_DIRS.contains(&name)
+}
+
+/// Outcome of `list_files_with_extension`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WalkOutcome {
+    pub files: Vec<PathBuf>,
+    pub truncated: bool,
+}
+
 /// Bounds for `list_files_with_extension`. Both caps stop the walk.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WalkCaps {
@@ -127,38 +145,69 @@ pub fn list_dir_entries_matching(dir: &Path, prefix: &str, cap: usize) -> Vec<(S
 
 /// List files with `extension` under `root`, recursively.
 ///
-/// Skips dot dirs, never follows symlinks, sorts output. Stops at
-/// `caps.max_visited` entries or `caps.max_matches` hits. Missing or
-/// unreadable dirs yield an empty list.
-pub fn list_files_with_extension(root: &Path, extension: &str, caps: WalkCaps) -> Vec<PathBuf> {
+/// Skips dot dirs and default build dirs at any depth, never follows
+/// symlinks, sorts output. Prunes a dir when a raw exclude equals its
+/// walker-relative posix path or that path plus `/**`. Invalid patterns
+/// never match and stay silent here. Stops at `caps.max_visited`
+/// entries or `caps.max_matches` hits. Missing or unreadable dirs
+/// yield an empty list. A root file is always honored.
+pub fn list_files_with_extension(
+    root: &Path,
+    extension: &str,
+    caps: WalkCaps,
+    excludes: &[String],
+) -> WalkOutcome {
     let want = extension.trim_start_matches('.');
     if want.is_empty() {
-        return Vec::new();
+        return WalkOutcome {
+            files: Vec::new(),
+            truncated: false,
+        };
     }
     if caps.max_visited == 0 || caps.max_matches == 0 {
-        return Vec::new();
+        return WalkOutcome {
+            files: Vec::new(),
+            truncated: false,
+        };
     }
     let Ok(meta) = std::fs::symlink_metadata(root) else {
-        return Vec::new();
+        return WalkOutcome {
+            files: Vec::new(),
+            truncated: false,
+        };
     };
     if meta.file_type().is_symlink() {
-        return Vec::new();
+        return WalkOutcome {
+            files: Vec::new(),
+            truncated: false,
+        };
     }
     if meta.is_file() {
         let hits = root.extension().and_then(|ext| ext.to_str()) == Some(want);
         if hits {
-            return vec![root.to_path_buf()];
+            return WalkOutcome {
+                files: vec![root.to_path_buf()],
+                truncated: false,
+            };
         }
-        return Vec::new();
+        return WalkOutcome {
+            files: Vec::new(),
+            truncated: false,
+        };
     }
     if !meta.is_dir() {
-        return Vec::new();
+        return WalkOutcome {
+            files: Vec::new(),
+            truncated: false,
+        };
     }
     let mut stack: Vec<PathBuf> = vec![root.to_path_buf()];
     let mut out: Vec<PathBuf> = Vec::new();
     let mut visited: usize = 0;
+    let mut truncated = false;
     while let Some(dir) = stack.pop() {
         if visited >= caps.max_visited || out.len() >= caps.max_matches {
+            truncated = true;
             break;
         }
         let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -166,6 +215,7 @@ pub fn list_files_with_extension(root: &Path, extension: &str, caps: WalkCaps) -
         };
         for entry in entries.flatten() {
             if visited >= caps.max_visited || out.len() >= caps.max_matches {
+                truncated = true;
                 break;
             }
             visited += 1;
@@ -177,11 +227,17 @@ pub fn list_files_with_extension(root: &Path, extension: &str, caps: WalkCaps) -
             }
             let path = entry.path();
             if kind.is_dir() {
-                let hidden = path
+                let name = path
                     .file_name()
                     .and_then(|name| name.to_str())
-                    .is_some_and(|name| name.starts_with('.'));
-                if hidden {
+                    .unwrap_or_default();
+                if name.is_empty() || name.starts_with('.') {
+                    continue;
+                }
+                if is_skipped_dir(name) {
+                    continue;
+                }
+                if is_pruned(root, &path, excludes) {
                     continue;
                 }
                 stack.push(path);
@@ -194,8 +250,42 @@ pub fn list_files_with_extension(root: &Path, extension: &str, caps: WalkCaps) -
         }
     }
     out.sort();
-    out.truncate(caps.max_matches);
-    out
+    if out.len() > caps.max_matches {
+        truncated = true;
+        out.truncate(caps.max_matches);
+    }
+    WalkOutcome {
+        files: out,
+        truncated,
+    }
+}
+
+/// True when dir `path` is pruned by a raw exclude.
+///
+/// `rel` is the walker-relative posix path. A prune happens when some
+/// pattern equals `rel` or `rel` plus `/**`. All other patterns,
+/// including invalid ones, never match here.
+fn is_pruned(root: &Path, path: &Path, excludes: &[String]) -> bool {
+    if excludes.is_empty() {
+        return false;
+    }
+    let Ok(rel) = path.strip_prefix(root) else {
+        return false;
+    };
+    if rel.as_os_str().is_empty() {
+        return false;
+    }
+    let rel = rel.to_string_lossy().replace('\\', "/");
+    if rel.is_empty() {
+        return false;
+    }
+    let suffixed = format!("{rel}/**");
+    for pattern in excludes {
+        if pattern == &rel || pattern == &suffixed {
+            return true;
+        }
+    }
+    false
 }
 
 #[cfg(test)]
@@ -225,7 +315,7 @@ mod tests {
         write(&root, "A.sol");
         write(&root, "skip.txt");
         write(&root, ".hidden/D.sol");
-        let found = list_files_with_extension(&root, "sol", WalkCaps::default());
+        let found = list_files_with_extension(&root, "sol", WalkCaps::default(), &[]).files;
         let names: Vec<String> = found
             .iter()
             .map(|path| {
@@ -244,10 +334,14 @@ mod tests {
         let root = fresh_dir("forgels-fs-caps");
         write(&root, "A.sol");
         write(&root, "B.sol");
-        let one = list_files_with_extension(&root, "sol", WalkCaps::new(5000, 1));
+        let one = list_files_with_extension(&root, "sol", WalkCaps::new(5000, 1), &[]).files;
         assert_eq!(one.len(), 1);
         let missing = root.join("nope");
-        assert!(list_files_with_extension(&missing, "sol", WalkCaps::default()).is_empty());
+        assert!(
+            list_files_with_extension(&missing, "sol", WalkCaps::default(), &[])
+                .files
+                .is_empty()
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -255,8 +349,93 @@ mod tests {
     fn dot_extension_and_zero_caps_are_empty() {
         let root = fresh_dir("forgels-fs-edge");
         write(&root, "A.sol");
-        assert!(list_files_with_extension(&root, "", WalkCaps::default()).is_empty());
-        assert!(list_files_with_extension(&root, "sol", WalkCaps::new(0, 10)).is_empty());
+        assert!(
+            list_files_with_extension(&root, "", WalkCaps::default(), &[])
+                .files
+                .is_empty()
+        );
+        assert!(
+            list_files_with_extension(&root, "sol", WalkCaps::new(0, 10), &[])
+                .files
+                .is_empty()
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn skips_build_dirs_at_depth_but_keeps_lib() {
+        let root = fresh_dir("forgels-fs-skip");
+        write(&root, "src/A.sol");
+        write(&root, "lib/B.sol");
+        for dir in DEFAULT_SKIP_DIRS {
+            write(&root, &format!("sub/{dir}/Junk.sol"));
+            write(&root, &format!("{dir}/Top.sol"));
+        }
+        let outcome = list_files_with_extension(&root, "sol", WalkCaps::default(), &[]);
+        let mut names: Vec<String> = outcome
+            .files
+            .iter()
+            .map(|path| {
+                path.strip_prefix(&root)
+                    .expect("under root")
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
+            .collect();
+        names.sort();
+        assert_eq!(names, vec!["lib/B.sol", "src/A.sol"]);
+        assert!(!outcome.truncated);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn prunes_exact_and_star_star_excludes() {
+        let root = fresh_dir("forgels-fs-prune");
+        write(&root, "src/A.sol");
+        write(&root, "lib/B.sol");
+        let exact =
+            list_files_with_extension(&root, "sol", WalkCaps::default(), &[String::from("lib")]);
+        assert_eq!(exact.files.len(), 1);
+        let star =
+            list_files_with_extension(&root, "sol", WalkCaps::default(), &[String::from("lib/**")]);
+        assert_eq!(star.files.len(), 1);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn invalid_exclude_pattern_never_prunes() {
+        let root = fresh_dir("forgels-fs-invalid");
+        write(&root, "src/A.sol");
+        write(&root, "lib/B.sol");
+        let outcome = list_files_with_extension(
+            &root,
+            "sol",
+            WalkCaps::default(),
+            &[String::from("[invalid")],
+        );
+        assert_eq!(outcome.files.len(), 2);
+        assert!(!outcome.truncated);
+        let glob = list_files_with_extension(
+            &root,
+            "sol",
+            WalkCaps::default(),
+            &[String::from("**/*.sol")],
+        );
+        assert_eq!(glob.files.len(), 2);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn truncated_flag_tracks_caps() {
+        let root = fresh_dir("forgels-fs-truncated");
+        write(&root, "A.sol");
+        write(&root, "B.sol");
+        let small = list_files_with_extension(&root, "sol", WalkCaps::new(5000, 1), &[]);
+        assert!(small.truncated);
+        assert_eq!(small.files.len(), 1);
+        let normal = list_files_with_extension(&root, "sol", WalkCaps::default(), &[]);
+        assert!(!normal.truncated);
+        assert_eq!(normal.files.len(), 2);
         let _ = std::fs::remove_dir_all(&root);
     }
 
