@@ -48,6 +48,8 @@ Status: beta lexer, parser, and analysis implemented.
 ## Cross-file
 
 - Completion: local `complete_at` plus `exports_of` from `dep_texts(ctx, 16)`. Deduped by label, local wins. Imported items add ` - from <file>`.
+  Builtin sized types (`uint8` to `uint256`, `int8` to `int256`, `bytes1` to `bytes32`, 96 total) complete with `builtin type` detail and keyword kind (14), sorted with keywords.
+  Fixed `MxN` forms stay out (5184 combos); bare `fixed` and `ufixed` already complete.
 - Hover: local `hover_at` first. Else scan `exports_of` for the word at cursor and show `<detail> - from <file>`.
 - Goto: `goto_definition` for same file. `goto_location` falls back to `resolve_in_dep` over `dep_texts(ctx, 16)` and returns `GotoTarget { path, span }`.
 - Exports: `Scope::export_symbols` returns contracts, functions, structs, enums, errors, events, modifiers, and user types. State vars, params, and locals stay local.

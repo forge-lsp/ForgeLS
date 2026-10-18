@@ -16,6 +16,7 @@ pub struct CompletionItem {
 pub enum CompletionKind {
     Symbol(SymbolKind),
     Keyword,
+    BuiltinType,
     Path,
     Package,
 }
@@ -23,9 +24,10 @@ pub enum CompletionKind {
 /// Map a completion origin to its LSP number.
 ///
 /// State vars stay Variable (6), same as locals and params.
+/// Builtin types reuse Keyword (14) so they render as keywords.
 pub fn completion_item_kind(kind: CompletionKind) -> CompletionItemKind {
     match kind {
-        CompletionKind::Keyword => CompletionItemKind::KEYWORD,
+        CompletionKind::Keyword | CompletionKind::BuiltinType => CompletionItemKind::KEYWORD,
         CompletionKind::Path => CompletionItemKind::FILE,
         CompletionKind::Package => CompletionItemKind::FOLDER,
         CompletionKind::Symbol(symbol) => match symbol {
@@ -46,9 +48,10 @@ pub fn completion_item_kind(kind: CompletionKind) -> CompletionItemKind {
 
 /// Suggest symbols visible at `offset`, filtered by the typed prefix.
 ///
-/// Shadowed names appear once with the innermost detail. Keywords whose
-/// spelling matches the prefix follow the symbols. Positions after a dot
-/// suggest members of the receiver type instead of scope symbols.
+/// Shadowed names appear once with the innermost detail. Keywords and
+/// builtin sized types whose spelling matches the prefix follow the
+/// symbols in one sorted tail. Positions after a dot suggest members
+/// of the receiver type instead of scope symbols.
 /// `type(Inner).` positions suggest the inner dispatch set. Assembly
 /// bodies suggest flat Yul decls plus Yul builtins plus outer scope.
 pub fn complete_at(file: &SolidityFile, text: &str, offset: u32) -> Vec<CompletionItem> {
@@ -104,19 +107,31 @@ pub fn complete_at(file: &SolidityFile, text: &str, offset: u32) -> Vec<Completi
             kind: CompletionKind::Symbol(SymbolKind::Function),
         });
     }
-    let mut keywords: Vec<&str> = crate::lexer::KEYWORDS
+    let mut tail: Vec<CompletionItem> = crate::lexer::KEYWORDS
         .iter()
         .copied()
         .filter(|word| word.starts_with(prefix.as_str()))
-        .collect();
-    keywords.sort_unstable();
-    for word in keywords {
-        items.push(CompletionItem {
+        .map(|word| CompletionItem {
             label: word.to_string(),
             detail: "keyword".to_string(),
             kind: CompletionKind::Keyword,
+        })
+        .collect();
+    for name in crate::lexer::builtin_types() {
+        if !name.starts_with(prefix.as_str()) {
+            continue;
+        }
+        if seen.contains(&name) {
+            continue;
+        }
+        tail.push(CompletionItem {
+            label: name,
+            detail: "builtin type".to_string(),
+            kind: CompletionKind::BuiltinType,
         });
     }
+    tail.sort_by(|left, right| left.label.cmp(&right.label));
+    items.extend(tail);
     items
 }
 
