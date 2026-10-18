@@ -1,14 +1,20 @@
+use std::path::Path;
+
 use forgels_core::DiagnosticData;
 use forgels_lint::RuleId;
 use forgels_syntax::{AstNode, Lexer, Span, SyntaxElement};
 
 use crate::{
-    Mutability, SolidityFile, SolidityLexer, SolidityNode, Visibility, lexer::SolidityKind,
+    Mutability, SolidityFile, SolidityLexer, SolidityNode, SolidityParser, Visibility,
+    lexer::SolidityKind,
 };
 
-// Style batch 1 plus batch 2: warn-only naming, ordering, glue,
-// blank lines, natspec, and line length checks.
+// Style batch 1 plus batch 2 plus batch 3: warn-only naming, ordering,
+// glue, blank lines, natspec, line length, visibility, receive glue,
+// spdx, confusing names, console, and shadow builtin checks.
 // Every push is a warning; config overrides via the lint runner.
+// Filename match stays out: it needs a path, so callers invoke
+// filename_diagnostics separately.
 pub fn style_diagnostics(file: &SolidityFile, text: &str) -> Vec<DiagnosticData> {
     let mut out = Vec::new();
     out.extend(naming_diagnostics(file));
@@ -22,6 +28,12 @@ pub fn style_diagnostics(file: &SolidityFile, text: &str) -> Vec<DiagnosticData>
     out.extend(natspec_missing_diagnostics(file, text));
     out.extend(natspec_param_diagnostics(file, text));
     out.extend(line_length_diagnostics(text));
+    out.extend(state_visibility_diagnostics(file, text));
+    out.extend(receive_glue_diagnostics(text));
+    out.extend(spdx_diagnostics(text));
+    out.extend(confusing_name_diagnostics(file));
+    out.extend(console_diagnostics(file));
+    out.extend(shadow_builtin_diagnostics(file));
     out
 }
 
@@ -952,6 +964,339 @@ fn line_length_diagnostics(text: &str) -> Vec<DiagnosticData> {
     out
 }
 
+// Missing explicit visibility on state vars. The parser stores only
+// public among visibilities, so rescan raw tokens inside the var span
+// bounded to the declaration head (before `=` or `;`). Constants and
+// immutables count too: they still need explicit visibility.
+fn state_visibility_diagnostics(file: &SolidityFile, text: &str) -> Vec<DiagnosticData> {
+    let tokens = SolidityLexer.tokenize(text);
+    let public = SolidityKind::Public.as_u16();
+    let private = SolidityKind::Private.as_u16();
+    let internal = SolidityKind::Internal.as_u16();
+    let assign = SolidityKind::Assign.as_u16();
+    let semi = SolidityKind::Semicolon.as_u16();
+    let mut out = Vec::new();
+    for contract in file.contracts() {
+        for var in contract.state_vars() {
+            let Some(name) = var.name() else {
+                continue;
+            };
+            if name.is_empty() {
+                continue;
+            }
+            let span = var.syntax().span;
+            let mut head_end = span.end;
+            for token in &tokens {
+                if token.span.start < span.start {
+                    continue;
+                }
+                if token.span.start >= span.end {
+                    break;
+                }
+                if token.kind == assign || token.kind == semi {
+                    head_end = token.span.start;
+                    break;
+                }
+            }
+            let mut has = false;
+            for token in &tokens {
+                if token.span.start < span.start || token.span.start >= head_end {
+                    continue;
+                }
+                if token.kind == public || token.kind == private || token.kind == internal {
+                    has = true;
+                    break;
+                }
+                if token.span.start >= span.end {
+                    break;
+                }
+            }
+            if !has {
+                out.push(DiagnosticData::warning(
+                    var.name_span().unwrap_or(span),
+                    format!("state variable '{name}' is missing explicit visibility"),
+                    RuleId::STATE_VISIBILITY,
+                ));
+            }
+        }
+    }
+    out
+}
+
+// Any gap between `receive` or `fallback` and `(` counts. Comments are
+// tokens, so a comment in between always leaves a span gap and fires.
+fn receive_glue_diagnostics(text: &str) -> Vec<DiagnosticData> {
+    let tokens = SolidityLexer.tokenize(text);
+    let receive = SolidityKind::Receive.as_u16();
+    let fallback = SolidityKind::Fallback.as_u16();
+    let comment = SolidityKind::Comment.as_u16();
+    let lparen = SolidityKind::LParen.as_u16();
+    let mut out = Vec::new();
+    let mut index = 0;
+    while index < tokens.len() {
+        if tokens[index].kind != receive && tokens[index].kind != fallback {
+            index += 1;
+            continue;
+        }
+        let word = tokens[index].text.clone();
+        let kw_span = tokens[index].span;
+        let mut next = index + 1;
+        while next < tokens.len() && tokens[next].kind == comment {
+            next += 1;
+        }
+        let Some(open) = tokens.get(next) else {
+            index += 1;
+            continue;
+        };
+        if open.kind == lparen && open.span.start > kw_span.end {
+            out.push(DiagnosticData::warning(
+                kw_span,
+                format!("{word} should be directly followed by '('"),
+                RuleId::RECEIVE_GLUE,
+            ));
+        }
+        index += 1;
+    }
+    out
+}
+
+// SPDX header presence only: any `SPDX-License-Identifier` substring
+// counts, the value is never validated. Warns once on the first line.
+fn spdx_diagnostics(text: &str) -> Vec<DiagnosticData> {
+    if text.contains("SPDX-License-Identifier") {
+        return Vec::new();
+    }
+    let first_len = text
+        .split('\n')
+        .next()
+        .map(|line| line.strip_suffix('\r').unwrap_or(line).len())
+        .unwrap_or(0);
+    let span = Span::new(0, first_len as u32);
+    vec![DiagnosticData::warning(
+        span,
+        String::from("missing SPDX license identifier"),
+        RuleId::SPDX_PRESENT,
+    )]
+}
+
+fn is_confusing_name(name: &str) -> bool {
+    matches!(name, "l" | "O" | "I")
+}
+
+fn push_confusing(out: &mut Vec<DiagnosticData>, kind: &str, name: &str, span: Span) {
+    if !is_confusing_name(name) {
+        return;
+    }
+    out.push(DiagnosticData::warning(
+        span,
+        format!("{kind} '{name}' uses confusing name '{name}'"),
+        RuleId::NO_L_O_I,
+    ));
+}
+
+// Single letter `l`, `O`, `I` on state vars, params, and locals only.
+// Exact match: longer names containing those letters stay silent.
+fn confusing_name_diagnostics(file: &SolidityFile) -> Vec<DiagnosticData> {
+    let mut out = Vec::new();
+    for contract in file.contracts() {
+        for var in contract.state_vars() {
+            let Some(name) = var.name() else {
+                continue;
+            };
+            if name.is_empty() {
+                continue;
+            }
+            let span = var.name_span().unwrap_or(var.syntax().span);
+            push_confusing(&mut out, "state variable", &name, span);
+        }
+        for function in contract.functions() {
+            for param in function.params() {
+                let Some(name) = param.name() else {
+                    continue;
+                };
+                if name.is_empty() {
+                    continue;
+                }
+                let span = param.name_span().unwrap_or(param.syntax().span);
+                push_confusing(&mut out, "parameter", &name, span);
+            }
+            let Some(body) = function.body() else {
+                continue;
+            };
+            for local in body.all_locals() {
+                let Some(name) = local.name() else {
+                    continue;
+                };
+                if name.is_empty() {
+                    continue;
+                }
+                let span = local.name_span().unwrap_or(local.syntax().span);
+                push_confusing(&mut out, "variable", &name, span);
+            }
+            for param in body.all_params() {
+                let Some(name) = param.name() else {
+                    continue;
+                };
+                if name.is_empty() {
+                    continue;
+                }
+                let span = param.name_span().unwrap_or(param.syntax().span);
+                push_confusing(&mut out, "parameter", &name, span);
+            }
+        }
+    }
+    out
+}
+
+// Leftover `console` debug calls plus `console.sol` imports. Only block
+// member calls fire: plain reads stay silent. Any member counts.
+// Shadowing is not respected: a user `console` name still warns.
+fn console_diagnostics(file: &SolidityFile) -> Vec<DiagnosticData> {
+    let mut out = Vec::new();
+    for contract in file.contracts() {
+        for function in contract.functions() {
+            let Some(body) = function.body() else {
+                continue;
+            };
+            for member in body.all_members() {
+                let Some(receiver) = member.receiver() else {
+                    continue;
+                };
+                if receiver != "console" {
+                    continue;
+                }
+                if !member.is_call() {
+                    continue;
+                }
+                let Some(name) = member.member() else {
+                    continue;
+                };
+                if name.is_empty() {
+                    continue;
+                }
+                let span = member
+                    .member_span()
+                    .or_else(|| member.final_span())
+                    .unwrap_or(member.syntax().span);
+                out.push(DiagnosticData::warning(
+                    span,
+                    format!("console.{name} should not remain in production code"),
+                    RuleId::NO_CONSOLE,
+                ));
+            }
+        }
+    }
+    for import in file.imports() {
+        let Some(path) = import.path() else {
+            continue;
+        };
+        if !path.ends_with("console.sol") {
+            continue;
+        }
+        let span = import.path_span().unwrap_or(import.syntax().span);
+        out.push(DiagnosticData::warning(
+            span,
+            String::from("console import should not remain in production code"),
+            RuleId::NO_CONSOLE,
+        ));
+    }
+    out
+}
+
+fn push_shadow_builtin(out: &mut Vec<DiagnosticData>, kind: &str, name: &str, span: Span) {
+    if name.is_empty() {
+        return;
+    }
+    if !super::shadow::is_builtin_word(name) {
+        return;
+    }
+    out.push(DiagnosticData::warning(
+        span,
+        format!("{kind} '{name}' shadows builtin '{name}'"),
+        RuleId::NO_SHADOW_BUILTIN,
+    ));
+}
+
+// Lexical builtin shadowing on state vars, params, and locals. Purely
+// name based via `is_builtin_word`: scopes are never consulted, so a
+// builtin name always warns even when no builtin is in scope.
+fn shadow_builtin_diagnostics(file: &SolidityFile) -> Vec<DiagnosticData> {
+    let mut out = Vec::new();
+    for contract in file.contracts() {
+        for var in contract.state_vars() {
+            let Some(name) = var.name() else {
+                continue;
+            };
+            let span = var.name_span().unwrap_or(var.syntax().span);
+            push_shadow_builtin(&mut out, "state variable", &name, span);
+        }
+        for function in contract.functions() {
+            for param in function.params() {
+                let Some(name) = param.name() else {
+                    continue;
+                };
+                let span = param.name_span().unwrap_or(param.syntax().span);
+                push_shadow_builtin(&mut out, "parameter", &name, span);
+            }
+            let Some(body) = function.body() else {
+                continue;
+            };
+            for local in body.all_locals() {
+                let Some(name) = local.name() else {
+                    continue;
+                };
+                let span = local.name_span().unwrap_or(local.syntax().span);
+                push_shadow_builtin(&mut out, "variable", &name, span);
+            }
+            for param in body.all_params() {
+                let Some(name) = param.name() else {
+                    continue;
+                };
+                let span = param.name_span().unwrap_or(param.syntax().span);
+                push_shadow_builtin(&mut out, "parameter", &name, span);
+            }
+        }
+    }
+    out
+}
+
+// Contract name must match the file stem, case sensitive. Parses the
+// text again with recovery: callers hold only text plus path, and the
+// already parsed file is not threaded through. Files with no contracts
+// or with nameless contracts stay silent. Warns once on the first
+// contract name when no contract matches the stem.
+pub fn filename_diagnostics(text: &str, path: &Path) -> Vec<DiagnosticData> {
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, _) = SolidityParser.parse_with_errors(&tokens);
+    let Some(stem) = path.file_stem().and_then(|raw| raw.to_str()) else {
+        return Vec::new();
+    };
+    let contracts = file.contracts();
+    if contracts.is_empty() {
+        return Vec::new();
+    }
+    for contract in &contracts {
+        if let Some(name) = contract.name()
+            && name == stem
+        {
+            return Vec::new();
+        }
+    }
+    let first = &contracts[0];
+    let Some(name) = first.name() else {
+        return Vec::new();
+    };
+    if name.is_empty() {
+        return Vec::new();
+    }
+    let span = first.name_span().unwrap_or(first.syntax().span);
+    vec![DiagnosticData::warning(
+        span,
+        format!("contract '{name}' does not match file name '{stem}'"),
+        RuleId::FILENAME_MATCH,
+    )]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -973,13 +1318,13 @@ mod tests {
 
     #[test]
     fn naming_good_shapes_stay_silent() {
-        let text = "contract MyToken {\nuint256 public totalSupply;\n/// @notice Transfers.\n/// @param to Recipient.\nfunction transfer(address to) public {}\n}";
+        let text = "// SPDX-License-Identifier: MIT\ncontract MyToken {\nuint256 public totalSupply;\n/// @notice Transfers.\n/// @param to Recipient.\nfunction transfer(address to) public {}\n}";
         assert!(style_of(text).is_empty(), "diags: {:?}", style_of(text));
     }
 
     #[test]
     fn naming_bad_shapes_warn_with_convention() {
-        let text = "contract mytoken {\nuint256 public TotalSupply;\n/// @notice Does work.\n/// @param to Recipient.\nfunction Transfer(address to) public {}\n}";
+        let text = "// SPDX-License-Identifier: MIT\ncontract mytoken {\nuint256 public TotalSupply;\n/// @notice Does work.\n/// @param to Recipient.\nfunction Transfer(address to) public {}\n}";
         let found = style_of(text);
         assert_eq!(found.len(), 3, "diags: {found:?}");
         for diag in &found {
@@ -1005,21 +1350,19 @@ mod tests {
 
     #[test]
     fn naming_upper_case_state_var_stays_silent() {
-        let text = "contract C {\nuint256 constant MAX_SUPPLY = 1;\n}";
+        let text = "// SPDX-License-Identifier: MIT\ncontract C {\nuint256 public constant MAX_SUPPLY = 1;\n}";
         assert!(style_of(text).is_empty(), "diags: {:?}", style_of(text));
     }
 
     #[test]
     fn modifier_order_canonical_stays_silent() {
-        let text =
-            "contract C {\n/// @notice Does f.\nfunction f() public view override onlyOwner {}\n}";
+        let text = "// SPDX-License-Identifier: MIT\ncontract C {\n/// @notice Does f.\nfunction f() public view override onlyOwner {}\n}";
         assert!(style_of(text).is_empty(), "diags: {:?}", style_of(text));
     }
 
     #[test]
     fn modifier_order_shuffled_warns() {
-        let text =
-            "contract C {\n/// @notice Does f.\nfunction f() public override view onlyOwner {}\n}";
+        let text = "// SPDX-License-Identifier: MIT\ncontract C {\n/// @notice Does f.\nfunction f() public override view onlyOwner {}\n}";
         let found = style_of(text);
         assert_eq!(found.len(), 1, "diags: {found:?}");
         assert_eq!(found[0].rule, RuleId::MODIFIER_ORDER);
@@ -1029,13 +1372,13 @@ mod tests {
 
     #[test]
     fn function_order_canonical_stays_silent() {
-        let text = "contract C {\nconstructor() {}\n/// @notice External.\nfunction ext() external {}\n/// @notice Public.\nfunction pubf() public {}\nfunction inter() internal {}\nfunction priv() private {}\n}";
+        let text = "// SPDX-License-Identifier: MIT\ncontract C {\nconstructor() {}\n/// @notice External.\nfunction ext() external {}\n/// @notice Public.\nfunction pubf() public {}\nfunction inter() internal {}\nfunction priv() private {}\n}";
         assert!(style_of(text).is_empty(), "diags: {:?}", style_of(text));
     }
 
     #[test]
     fn function_order_private_before_constructor_warns() {
-        let text = "contract C {\nfunction priv() private {}\nconstructor() {}\n}";
+        let text = "// SPDX-License-Identifier: MIT\ncontract C {\nfunction priv() private {}\nconstructor() {}\n}";
         let found = style_of(text);
         assert_eq!(found.len(), 1, "diags: {found:?}");
         assert_eq!(found[0].rule, RuleId::FUNCTION_ORDER);
@@ -1045,13 +1388,13 @@ mod tests {
 
     #[test]
     fn function_order_plain_before_view_stays_silent() {
-        let text = "contract C {\n/// @notice Does b.\nfunction b() public {}\n/// @notice Does a.\nfunction a() public view {}\n}";
+        let text = "// SPDX-License-Identifier: MIT\ncontract C {\n/// @notice Does b.\nfunction b() public {}\n/// @notice Does a.\nfunction a() public view {}\n}";
         assert!(style_of(text).is_empty(), "diags: {:?}", style_of(text));
     }
 
     #[test]
     fn function_order_view_before_plain_warns() {
-        let text = "contract C {\n/// @notice Does a.\nfunction a() public view {}\n/// @notice Does b.\nfunction b() public {}\n}";
+        let text = "// SPDX-License-Identifier: MIT\ncontract C {\n/// @notice Does a.\nfunction a() public view {}\n/// @notice Does b.\nfunction b() public {}\n}";
         let found = style_of(text);
         assert_eq!(found.len(), 1, "diags: {found:?}");
         assert_eq!(found[0].rule, RuleId::FUNCTION_ORDER);
@@ -1060,13 +1403,13 @@ mod tests {
 
     #[test]
     fn layout_order_canonical_stays_silent() {
-        let text = "pragma solidity ^0.8.0;\n\n\nimport \"./B.sol\";\n\n\nevent E();\n\n\nerror Err();\n\n\ncontract C {\nuint256 x;\nevent F();\n/// @notice Does g.\nfunction g() public {}\n}";
+        let text = "// SPDX-License-Identifier: MIT\npragma solidity ^0.8.0;\n\n\nimport \"./B.sol\";\n\n\nevent E();\n\n\nerror Err();\n\n\ncontract C {\nuint256 public x;\nevent F();\n/// @notice Does g.\nfunction g() public {}\n}";
         assert!(style_of(text).is_empty(), "diags: {:?}", style_of(text));
     }
 
     #[test]
     fn layout_order_var_after_function_warns() {
-        let text = "contract C {\n/// @notice Does g.\nfunction g() public {}\nuint256 x;\n}";
+        let text = "// SPDX-License-Identifier: MIT\ncontract C {\n/// @notice Does g.\nfunction g() public {}\nuint256 public x;\n}";
         let found = style_of(text);
         assert_eq!(found.len(), 1, "diags: {found:?}");
         assert_eq!(found[0].rule, RuleId::LAYOUT_ORDER);
@@ -1076,13 +1419,13 @@ mod tests {
 
     #[test]
     fn import_position_top_stays_silent() {
-        let text = "pragma solidity ^0.8.0;\n\n\nimport \"./B.sol\";\n\n\ncontract C {\n}\n";
+        let text = "// SPDX-License-Identifier: MIT\npragma solidity ^0.8.0;\n\n\nimport \"./B.sol\";\n\n\ncontract C {\n}\n";
         assert!(style_of(text).is_empty(), "diags: {:?}", style_of(text));
     }
 
     #[test]
     fn import_position_after_contract_fires_both_rules() {
-        let text = "contract C {\n}\n\n\nimport \"./B.sol\";\n";
+        let text = "// SPDX-License-Identifier: MIT\ncontract C {\n}\n\n\nimport \"./B.sol\";\n";
         let found = style_of(text);
         let rules = rules_of(text);
         assert!(rules.contains(&"style/import-position"), "rules: {rules:?}");
@@ -1100,13 +1443,13 @@ mod tests {
 
     #[test]
     fn mapping_glue_tight_stays_silent() {
-        let text = "contract C {\nmapping(uint256 => uint256) map;\n}";
+        let text = "// SPDX-License-Identifier: MIT\ncontract C {\nmapping(uint256 => uint256) public map;\n}";
         assert!(style_of(text).is_empty(), "diags: {:?}", style_of(text));
     }
 
     #[test]
     fn mapping_glue_spaced_warns() {
-        let text = "contract C {\nmapping (uint256 => uint256) map;\n}";
+        let text = "// SPDX-License-Identifier: MIT\ncontract C {\nmapping (uint256 => uint256) public map;\n}";
         let found = style_of(text);
         assert_eq!(found.len(), 1, "diags: {found:?}");
         assert_eq!(found[0].rule, RuleId::MAPPING_GLUE);
@@ -1116,7 +1459,7 @@ mod tests {
 
     #[test]
     fn mapping_glue_comment_counts_as_gap() {
-        let text = "contract C {\nmapping/*c*/(uint256 => uint256) map;\n}";
+        let text = "// SPDX-License-Identifier: MIT\ncontract C {\nmapping/*c*/(uint256 => uint256) public map;\n}";
         let found = style_of(text);
         assert_eq!(found.len(), 1, "diags: {found:?}");
         assert_eq!(found[0].rule, RuleId::MAPPING_GLUE);
@@ -1124,13 +1467,13 @@ mod tests {
 
     #[test]
     fn array_glue_tight_stays_silent() {
-        let text = "contract C {\nuint256[] x;\n}";
+        let text = "// SPDX-License-Identifier: MIT\ncontract C {\nuint256[] public x;\n}";
         assert!(style_of(text).is_empty(), "diags: {:?}", style_of(text));
     }
 
     #[test]
     fn array_glue_spaced_warns() {
-        let text = "contract C {\nuint256 [] x;\n}";
+        let text = "// SPDX-License-Identifier: MIT\ncontract C {\nuint256 [] public x;\n}";
         let found = style_of(text);
         assert_eq!(found.len(), 1, "diags: {found:?}");
         assert_eq!(found[0].rule, RuleId::ARRAY_GLUE);
@@ -1288,5 +1631,181 @@ mod tests {
         assert_eq!(found[0].rule.as_str(), "style/line-length");
         assert_eq!(found[0].severity, Severity::Warning);
         assert_eq!(found[0].message, "line exceeds 120 characters (121 found)");
+    }
+
+    #[test]
+    fn state_visibility_explicit_stays_silent() {
+        let text = "contract C {\nuint256 public x;\n}";
+        assert!(
+            only_rule(text, RuleId::STATE_VISIBILITY).is_empty(),
+            "diags: {:?}",
+            style_of(text)
+        );
+    }
+
+    #[test]
+    fn state_visibility_missing_warns() {
+        let text = "contract C {\nuint256 x;\n}";
+        let found = only_rule(text, RuleId::STATE_VISIBILITY);
+        assert_eq!(found.len(), 1, "diags: {found:?}");
+        assert_eq!(found[0].rule, RuleId::STATE_VISIBILITY);
+        assert_eq!(found[0].rule.as_str(), "style/state-visibility");
+        assert_eq!(found[0].severity, Severity::Warning);
+        assert_eq!(
+            found[0].message,
+            "state variable 'x' is missing explicit visibility"
+        );
+    }
+
+    #[test]
+    fn state_visibility_constant_still_warns() {
+        let text = "contract C {\nuint256 constant MAX = 1;\n}";
+        let found = only_rule(text, RuleId::STATE_VISIBILITY);
+        assert_eq!(found.len(), 1, "diags: {found:?}");
+        assert_eq!(found[0].rule, RuleId::STATE_VISIBILITY);
+        assert_eq!(found[0].severity, Severity::Warning);
+    }
+
+    #[test]
+    fn receive_glue_tight_stays_silent() {
+        let text = "contract C {\nreceive() external payable {}\n}";
+        assert!(
+            only_rule(text, RuleId::RECEIVE_GLUE).is_empty(),
+            "diags: {:?}",
+            style_of(text)
+        );
+    }
+
+    #[test]
+    fn receive_glue_spaced_warns() {
+        let text = "contract C {\nreceive () external payable {}\n}";
+        let found = only_rule(text, RuleId::RECEIVE_GLUE);
+        assert_eq!(found.len(), 1, "diags: {found:?}");
+        assert_eq!(found[0].rule, RuleId::RECEIVE_GLUE);
+        assert_eq!(found[0].rule.as_str(), "style/receive-glue");
+        assert_eq!(found[0].severity, Severity::Warning);
+    }
+
+    #[test]
+    fn spdx_present_stays_silent() {
+        let text = "// SPDX-License-Identifier: MIT\npragma solidity ^0.8.0;\n";
+        assert!(
+            only_rule(text, RuleId::SPDX_PRESENT).is_empty(),
+            "diags: {:?}",
+            style_of(text)
+        );
+    }
+
+    #[test]
+    fn spdx_missing_warns_once() {
+        let text = "pragma solidity ^0.8.0;\n";
+        let found = only_rule(text, RuleId::SPDX_PRESENT);
+        assert_eq!(found.len(), 1, "diags: {found:?}");
+        assert_eq!(found[0].rule, RuleId::SPDX_PRESENT);
+        assert_eq!(found[0].rule.as_str(), "style/spdx-present");
+        assert_eq!(found[0].severity, Severity::Warning);
+    }
+
+    #[test]
+    fn confusing_name_clear_stays_silent() {
+        let text = "contract C {\nuint256 public amount;\n}";
+        assert!(
+            only_rule(text, RuleId::NO_L_O_I).is_empty(),
+            "diags: {:?}",
+            style_of(text)
+        );
+    }
+
+    #[test]
+    fn confusing_name_single_l_warns() {
+        let text = "contract C {\nuint256 public l;\n}";
+        let found = only_rule(text, RuleId::NO_L_O_I);
+        assert_eq!(found.len(), 1, "diags: {found:?}");
+        assert_eq!(found[0].rule, RuleId::NO_L_O_I);
+        assert_eq!(found[0].rule.as_str(), "style/no-l-O-I");
+        assert_eq!(found[0].severity, Severity::Warning);
+    }
+
+    #[test]
+    fn confusing_name_param_warns() {
+        let text = "contract C {\nfunction f(uint256 O) public {}\n}";
+        let found = only_rule(text, RuleId::NO_L_O_I);
+        assert_eq!(found.len(), 1, "diags: {found:?}");
+        assert_eq!(found[0].rule, RuleId::NO_L_O_I);
+        assert_eq!(found[0].severity, Severity::Warning);
+    }
+
+    #[test]
+    fn console_clean_stays_silent() {
+        let text = "contract C {\nfunction f() public {}\n}";
+        assert!(
+            only_rule(text, RuleId::NO_CONSOLE).is_empty(),
+            "diags: {:?}",
+            style_of(text)
+        );
+    }
+
+    #[test]
+    fn console_call_warns() {
+        let text = "contract C {\nfunction f() public {\nconsole.log(\"hi\");\n}\n}";
+        let found = only_rule(text, RuleId::NO_CONSOLE);
+        assert_eq!(found.len(), 1, "diags: {found:?}");
+        assert_eq!(found[0].rule, RuleId::NO_CONSOLE);
+        assert_eq!(found[0].rule.as_str(), "style/no-console");
+        assert_eq!(found[0].severity, Severity::Warning);
+    }
+
+    #[test]
+    fn console_import_warns() {
+        let text = "import \"hardhat/console.sol\";\ncontract C {\n}\n";
+        let found = only_rule(text, RuleId::NO_CONSOLE);
+        assert_eq!(found.len(), 1, "diags: {found:?}");
+        assert_eq!(found[0].rule, RuleId::NO_CONSOLE);
+        assert_eq!(found[0].severity, Severity::Warning);
+    }
+
+    #[test]
+    fn shadow_builtin_clear_stays_silent() {
+        let text = "contract C {\nuint256 public total;\n}";
+        assert!(
+            only_rule(text, RuleId::NO_SHADOW_BUILTIN).is_empty(),
+            "diags: {:?}",
+            style_of(text)
+        );
+    }
+
+    #[test]
+    fn shadow_builtin_msg_warns() {
+        let text = "contract C {\nuint256 public msg;\n}";
+        let found = only_rule(text, RuleId::NO_SHADOW_BUILTIN);
+        assert_eq!(found.len(), 1, "diags: {found:?}");
+        assert_eq!(found[0].rule, RuleId::NO_SHADOW_BUILTIN);
+        assert_eq!(found[0].rule.as_str(), "style/no-shadow-builtin");
+        assert_eq!(found[0].severity, Severity::Warning);
+    }
+
+    #[test]
+    fn filename_match_stays_silent() {
+        let found =
+            filename_diagnostics("contract Token {\n}\n", std::path::Path::new("Token.sol"));
+        assert!(found.is_empty(), "diags: {found:?}");
+    }
+
+    #[test]
+    fn filename_mismatch_warns_once() {
+        let found = filename_diagnostics("contract Coin {\n}\n", std::path::Path::new("Token.sol"));
+        assert_eq!(found.len(), 1, "diags: {found:?}");
+        assert_eq!(found[0].rule, RuleId::FILENAME_MATCH);
+        assert_eq!(found[0].rule.as_str(), "style/filename-match");
+        assert_eq!(found[0].severity, Severity::Warning);
+    }
+
+    #[test]
+    fn filename_multi_any_match_stays_silent() {
+        let found = filename_diagnostics(
+            "contract A {\n}\ncontract Token {\n}\n",
+            std::path::Path::new("Token.sol"),
+        );
+        assert!(found.is_empty(), "diags: {found:?}");
     }
 }

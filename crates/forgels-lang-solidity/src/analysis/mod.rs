@@ -71,6 +71,7 @@ pub use imports::imports_in;
 pub use references::find_references;
 pub use rename::{find_rename, is_valid_rename};
 pub use signature::signature_at;
+pub use style::filename_diagnostics;
 pub use symbols::document_symbols_in;
 
 fn is_word_byte(byte: u8) -> bool {
@@ -1179,6 +1180,7 @@ impl Analyzer for SolidityAnalyzer {
         let scope = collect_symbols(&file);
         let deps = Self::dep_files(ctx);
         let mut out = Self::diagnostics_for(&file, ctx.text, &errors, &scope, &deps);
+        out.extend(style::filename_diagnostics(ctx.text, ctx.path));
         out.extend(unused::unused_diagnostics_ctx(
             &file, ctx.text, &scope, &deps, ctx,
         ));

@@ -7,7 +7,7 @@ use forgels_syntax::AstNode;
 use super::{forge, unknown};
 use crate::SolidityFile;
 
-fn is_builtin_word(name: &str) -> bool {
+pub(crate) fn is_builtin_word(name: &str) -> bool {
     if unknown::GLOBAL_RECEIVERS.contains(&name) || unknown::ALWAYS_OK.contains(&name) {
         return true;
     }

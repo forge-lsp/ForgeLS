@@ -801,8 +801,8 @@ fn broken_dep_goto_still_works() {
 }
 
 fn diagnostics_of(text: &str) -> Vec<forgels_core::DiagnosticData> {
-    // Correctness focus: style batch 2 has its own tests in style.rs,
-    // so filter its warn-only rules here to keep this file small.
+    // Correctness focus: style batches have their own tests in style.rs,
+    // so filter their warn-only rules here to keep this file small.
     SolidityAnalyzer
         .diagnostics(text)
         .into_iter()
@@ -813,6 +813,13 @@ fn diagnostics_of(text: &str) -> Vec<forgels_core::DiagnosticData> {
                     | forgels_lint::RuleId::NATSPEC_MISSING
                     | forgels_lint::RuleId::NATSPEC_PARAM
                     | forgels_lint::RuleId::LINE_LENGTH
+                    | forgels_lint::RuleId::STATE_VISIBILITY
+                    | forgels_lint::RuleId::RECEIVE_GLUE
+                    | forgels_lint::RuleId::FILENAME_MATCH
+                    | forgels_lint::RuleId::SPDX_PRESENT
+                    | forgels_lint::RuleId::NO_L_O_I
+                    | forgels_lint::RuleId::NO_CONSOLE
+                    | forgels_lint::RuleId::NO_SHADOW_BUILTIN
             )
         })
         .collect()
@@ -2496,7 +2503,7 @@ fn diagnostics_multi(
     let owned = text.to_string();
     let buf = PathBuf::from(path);
     let ctx = ProjectContext::new(buf.as_path(), &owned, 0, workspace);
-    // Same batch 2 filter as diagnostics_of: correctness only here.
+    // Same style filter as diagnostics_of: correctness only here.
     SolidityAnalyzer
         .diagnostics_ctx(&ctx)
         .into_iter()
@@ -2507,6 +2514,13 @@ fn diagnostics_multi(
                     | forgels_lint::RuleId::NATSPEC_MISSING
                     | forgels_lint::RuleId::NATSPEC_PARAM
                     | forgels_lint::RuleId::LINE_LENGTH
+                    | forgels_lint::RuleId::STATE_VISIBILITY
+                    | forgels_lint::RuleId::RECEIVE_GLUE
+                    | forgels_lint::RuleId::FILENAME_MATCH
+                    | forgels_lint::RuleId::SPDX_PRESENT
+                    | forgels_lint::RuleId::NO_L_O_I
+                    | forgels_lint::RuleId::NO_CONSOLE
+                    | forgels_lint::RuleId::NO_SHADOW_BUILTIN
             )
         })
         .collect()
