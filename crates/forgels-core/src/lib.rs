@@ -14,9 +14,11 @@ pub mod transport;
 pub mod workspace;
 
 pub use analyzer::{
-    Analyzer, AnalyzerMap, CompletionData, DiagnosticData, DocumentSymbolData, GotoTarget,
-    HoverData, ImportRef, MAX_REFERENCES, MAX_WORKSPACE_SYMBOLS, ProjectContext, ReferenceData,
-    SignatureData, SignatureParam, TextEdit, WorkspaceSymbolData, dep_texts, read_tracked_or_disk,
+    Analyzer, AnalyzerMap, CallHierarchyCallData, CallHierarchyItemData, CompletionData,
+    DiagnosticData, DocumentSymbolData, GotoTarget, HoverData, ImportRef, InlayHintData,
+    MAX_CALL_HIERARCHY, MAX_INLAY_HINTS, MAX_REFERENCES, MAX_SEMANTIC_TOKENS,
+    MAX_WORKSPACE_SYMBOLS, ProjectContext, ReferenceData, SemanticTokenData, SignatureData,
+    SignatureParam, TextEdit, WorkspaceSymbolData, dep_texts, read_tracked_or_disk,
     workspace_symbols,
 };
 pub use config::Config;

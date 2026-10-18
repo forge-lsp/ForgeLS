@@ -408,10 +408,57 @@ Status: token kinds defined. Real lexer and parser are planned.
 - Limits: nested mappings stay silent, no struct field getters, no
   visibility split, no cross file getter calls.
 
+## Inlay hints
+
+- Scope: `analysis::inlay` plus `Analyzer::inlay_hints` and the
+  `textDocument/inlayHint` dispatch. Capability
+  `inlayHintProvider: true`.
+- Shape: `InlayHintData {offset, label, kind}`. Dispatch maps `offset`
+  to `position`, `label` carries the trailing colon (`a:`), kind is
+  Parameter (2). Caps at `MAX_INLAY_HINTS = 100`.
+- Resolve: plain calls through scope plus deps, member calls through
+  receiver contract lineage. Builtins and unknown callees stay silent.
+  Slots are lexical: first non-ws byte after `(` or `,` at depth zero.
+  Unnamed params and already named args stay silent. Range filters by
+  offset.
+- Noir: trait default returns `[]`, no noir grammar change.
+
+## Semantic tokens
+
+- Scope: `analysis::semantic` plus `Analyzer::semantic_tokens` and the
+  `textDocument/semanticTokens/full` dispatch. Capability
+  `semanticTokensProvider` with frozen legend and `full: true`.
+- Shape: `SemanticTokenData {span, token_type, modifiers}`. Types index
+  `SEMANTIC_TOKEN_TYPES`, modifiers bitset over
+  `SEMANTIC_TOKEN_MODIFIERS`. Dispatch delta-encodes sorted spans.
+  Caps at `MAX_SEMANTIC_TOKENS = 5000`.
+- Source: declarations from `document_symbols_in` with declaration bit,
+  keywords from a lexer scan via `keyword_kind`. Contract is class,
+  function is method, field is property, event is event, param is
+  parameter, keyword is keyword. No delta or range in V1.
+- Noir: trait default returns `[]`, no noir grammar change.
+
+## Call hierarchy
+
+- Scope: `analysis::call_hierarchy` plus `Analyzer::prepare_call_hierarchy`,
+  `incoming_calls`, `outgoing_calls` and three dispatches
+  (`prepareCallHierarchy`, `incomingCalls`, `outgoingCalls`).
+  Capability `callHierarchyProvider: true`.
+- Shape: `CallHierarchyItemData {name, kind, detail, path, span,
+  selection}` plus `CallHierarchyCallData {item, ranges}`. Dispatch
+  maps spans with tracked or disk text, skips out-of-bounds, caps at
+  `MAX_CALL_HIERARCHY = 50`.
+- Resolve: prepare only for functions, member then plain with builtin
+  guards. Incoming reuses `find_references` identity and groups usages
+  by enclosing function. Outgoing scans the target body for plain and
+  member calls and resolves through scope and lineage. Cross file
+  prepare answers, outgoing lists empty for dep targets in V1.
+- Noir: trait defaults return `None`, no noir grammar change.
+
 ## V1 limits
 
 - Tracked only: `dep_texts` skips untracked and missing files.
-- Caps: dep read cap is 16, republish fan-out cap is 32, references cap is 100.
+- Caps: dep read cap is 16, republish fan-out cap is 32, references cap is 100, inlay cap is 100, semantic cap is 5000, call hierarchy cap is 50.
 - Symbols: `Contract` and `Function` cross files. `StateVar`, `Param`, and `LocalVar` stay local.
 - Imports: union without alias precision. `{B as C}` records both `B` and `C`, no alias mapping.
 - Parse: parse on each call, no incremental cache.

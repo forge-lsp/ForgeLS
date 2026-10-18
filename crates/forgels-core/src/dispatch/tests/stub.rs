@@ -86,6 +86,91 @@ impl crate::analyzer::Analyzer for StubAnalyzer {
             ),
         ])
     }
+
+    fn inlay_hints(
+        &self,
+        _ctx: &crate::analyzer::ProjectContext,
+        _range: forgels_syntax::Span,
+    ) -> Vec<crate::analyzer::InlayHintData> {
+        if !self.found {
+            return Vec::new();
+        }
+        vec![crate::analyzer::InlayHintData::new(
+            0,
+            "a:".to_string(),
+            forgels_protocol::InlayHintKind::PARAMETER,
+        )]
+    }
+
+    fn semantic_tokens(&self, text: &str) -> Vec<crate::analyzer::SemanticTokenData> {
+        if !self.found || text.is_empty() {
+            return Vec::new();
+        }
+        vec![crate::analyzer::SemanticTokenData::new(
+            forgels_syntax::Span::new(0, 8),
+            14,
+            0,
+        )]
+    }
+
+    fn prepare_call_hierarchy(
+        &self,
+        ctx: &crate::analyzer::ProjectContext,
+    ) -> Option<crate::analyzer::CallHierarchyItemData> {
+        if !self.found {
+            return None;
+        }
+        Some(crate::analyzer::CallHierarchyItemData::new(
+            "stub_fn".to_string(),
+            forgels_protocol::SymbolKind::METHOD,
+            "function stub_fn()".to_string(),
+            ctx.path.to_path_buf(),
+            forgels_syntax::Span::new(0, 12),
+            forgels_syntax::Span::new(9, 10),
+        ))
+    }
+
+    fn incoming_calls(
+        &self,
+        ctx: &crate::analyzer::ProjectContext,
+    ) -> Option<Vec<crate::analyzer::CallHierarchyCallData>> {
+        if !self.found {
+            return None;
+        }
+        let item = crate::analyzer::CallHierarchyItemData::new(
+            "caller".to_string(),
+            forgels_protocol::SymbolKind::METHOD,
+            "function caller()".to_string(),
+            ctx.path.to_path_buf(),
+            forgels_syntax::Span::new(0, 12),
+            forgels_syntax::Span::new(9, 10),
+        );
+        Some(vec![crate::analyzer::CallHierarchyCallData::new(
+            item,
+            vec![forgels_syntax::Span::new(0, 1)],
+        )])
+    }
+
+    fn outgoing_calls(
+        &self,
+        ctx: &crate::analyzer::ProjectContext,
+    ) -> Option<Vec<crate::analyzer::CallHierarchyCallData>> {
+        if !self.found {
+            return None;
+        }
+        let item = crate::analyzer::CallHierarchyItemData::new(
+            "callee".to_string(),
+            forgels_protocol::SymbolKind::METHOD,
+            "function callee()".to_string(),
+            ctx.path.to_path_buf(),
+            forgels_syntax::Span::new(0, 12),
+            forgels_syntax::Span::new(9, 10),
+        );
+        Some(vec![crate::analyzer::CallHierarchyCallData::new(
+            item,
+            vec![forgels_syntax::Span::new(0, 1)],
+        )])
+    }
 }
 
 pub(crate) fn session_with_stub(found: bool) -> Session {
