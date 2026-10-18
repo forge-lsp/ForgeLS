@@ -41,7 +41,19 @@ pub fn goto_definition(file: &SolidityFile, text: &str, offset: u32) -> Option<S
         }
         let found = super::members::members_of(file, &kind)
             .into_iter()
-            .find(|member| member.name == ctx.member)?;
+            .find(|member| member.name == ctx.member);
+        if let Some(found) = found {
+            return Some(found.span);
+        }
+        let scope = collect_symbols(file);
+        let (found, _) = super::using::resolve_using_member(
+            file,
+            &scope,
+            offset,
+            &ctx.receiver,
+            &ctx.member,
+            &[],
+        )?;
         return Some(found.span);
     }
     if let Some((name, _)) = super::emits::emit_name_at(text, offset) {

@@ -331,6 +331,34 @@ fn push_matching_events(
     }
 }
 
+fn push_contract_getters(
+    contract: &ContractDef,
+    name: &str,
+    active: u32,
+    out: &mut Vec<SignatureData>,
+) {
+    for getter in super::getter::contract_getters(contract) {
+        if getter.name != name {
+            continue;
+        }
+        let params: Vec<SignatureParam> = getter
+            .params
+            .iter()
+            .map(|label| SignatureParam::new(label.clone()))
+            .collect();
+        let label = format!(
+            "function {}({}) returns ({})",
+            getter.name,
+            getter.params.join(", "),
+            getter.returns
+        );
+        if out.iter().any(|known| known.label == label) {
+            continue;
+        }
+        out.push(SignatureData::new(label, params, active));
+    }
+}
+
 /// Plain call signatures: own contract overloads first, then same
 /// file bases in linear order. Shadowed names stay silent. `Test`
 /// asserts follow via the forge table, then dep contracts in index
@@ -344,12 +372,13 @@ fn plain_signatures(
     active: u32,
 ) -> Option<Vec<SignatureData>> {
     if let Some(symbol) = scope.resolve(name, offset) {
-        if symbol.kind != SymbolKind::Function {
+        if symbol.kind != SymbolKind::Function && symbol.kind != SymbolKind::StateVar {
             return None;
         }
         let mut out = Vec::new();
         if let Some(contract) = contract_at(file, offset) {
             push_contract_functions(&contract, name, active, &mut out);
+            push_contract_getters(&contract, name, active, &mut out);
             if let Some(contract_name) = contract.name()
                 && !contract_name.is_empty()
             {
@@ -404,6 +433,12 @@ fn member_signatures(
     if let Some(builtin) = forge::member_builtin(receiver, name, scope, offset) {
         return Some(vec![builtin_signature(builtin, active)]);
     }
+    if let Some((info, _)) =
+        super::using::resolve_using_member(file, scope, offset, receiver, name, deps)
+    {
+        let params = detail_params(&info.detail);
+        return Some(vec![SignatureData::new(info.detail, params, active)]);
+    }
     let members::TypeKind::Contract(target) =
         members::receiver_type_with_deps(file, scope, offset, receiver, deps)
     else {
@@ -415,6 +450,7 @@ fn member_signatures(
     let (def, _) = inheritance::find_contract_across(&target, file, deps)?;
     let mut out = Vec::new();
     push_contract_functions(&def, name, active, &mut out);
+    push_contract_getters(&def, name, active, &mut out);
     for base in inheritance::linearize(file, &target) {
         push_contract_functions(&base, name, active, &mut out);
     }
@@ -422,6 +458,12 @@ fn member_signatures(
         push_contract_functions(&base, name, active, &mut out);
     }
     if out.is_empty() {
+        if let Some((info, _)) =
+            super::using::resolve_using_member(file, scope, offset, receiver, name, deps)
+        {
+            let params = detail_params(&info.detail);
+            return Some(vec![SignatureData::new(info.detail, params, active)]);
+        }
         return None;
     }
     Some(out)

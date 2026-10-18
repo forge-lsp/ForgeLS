@@ -62,6 +62,7 @@ pub fn unknown_identifier_diagnostics(
         members.iter().map(|span| (span.start, span.end)).collect();
     let options = options_spans(file);
     let assemblies = assembly_ranges(&tokens);
+    let usings = super::using::using_spans(file);
     let dep_names = dep_export_names(deps);
     let mut out = Vec::new();
     for token in &tokens {
@@ -85,6 +86,9 @@ pub fn unknown_identifier_diagnostics(
             continue;
         }
         if inside_any(&options, span.start) {
+            continue;
+        }
+        if inside_any(&usings, span.start) {
             continue;
         }
         if preceded_by_dot(text, span.start) {

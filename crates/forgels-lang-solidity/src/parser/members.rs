@@ -28,19 +28,33 @@ pub(crate) fn parse_var(cursor: &mut Cursor, kind: SolidityNode) -> Result<Synta
         cursor.bump();
     }
     // State modifiers sit between type and name: `uint public constant x`.
-    // Consumed, not stored: the name stays the first word token, so
-    // `StateVar::name` keeps working without modifier filtering.
-    // `payable` covers `address payable owner`: part of the type in
-    // the grammar, consumed here so the name still resolves.
+    // `public`, `virtual`, and `override` are stored for getters and
+    // override checks; the rest stay consumed so `StateVar::name` keeps
+    // working. `payable` covers `address payable owner`: part of the type.
+    let mut stored_mods: Vec<SyntaxElement> = Vec::new();
     loop {
         match cursor.peek_kind() {
             Some(kind)
                 if kind == SolidityKind::Public.as_u16()
-                    || kind == SolidityKind::Private.as_u16()
+                    || kind == SolidityKind::Virtual.as_u16()
+                    || kind == SolidityKind::Override.as_u16() =>
+            {
+                if let Some(token) = cursor.bump() {
+                    stored_mods.push(token_element(token));
+                    if kind == SolidityKind::Override.as_u16()
+                        && cursor.peek_kind() == Some(SolidityKind::LParen.as_u16())
+                    {
+                        skip_parens(cursor);
+                    }
+                } else {
+                    break;
+                }
+            }
+            Some(kind)
+                if kind == SolidityKind::Private.as_u16()
                     || kind == SolidityKind::Internal.as_u16()
                     || kind == SolidityKind::Constant.as_u16()
                     || kind == SolidityKind::Immutable.as_u16()
-                    || kind == SolidityKind::Override.as_u16()
                     || kind == SolidityKind::Transient.as_u16()
                     || kind == SolidityKind::Payable.as_u16() =>
             {
@@ -87,7 +101,9 @@ pub(crate) fn parse_var(cursor: &mut Cursor, kind: SolidityNode) -> Result<Synta
     let semi = cursor.expect(SolidityKind::Semicolon, "`;`")?;
     end = end.max(semi.span.end);
     let type_start = var_type.span.start;
-    let mut children = vec![SyntaxElement::Node(var_type), token_element(name)];
+    let mut children = vec![SyntaxElement::Node(var_type)];
+    children.extend(stored_mods);
+    children.push(token_element(name));
     if let Some(literal) = init_literal {
         children.push(token_element(literal));
     }
@@ -200,11 +216,11 @@ pub(crate) fn parse_function(
         errors.push(ParseError::new(cursor.peek_span(), "expected `)`"));
         return None;
     }
-    // Visibility and mutability are stored as keyword tokens so
-    // `FunctionDef` can report them. Custom modifiers (`onlyOwner`) and
-    // base args (`Base(1)`) are plain idents with optional parens: skip
-    // name plus args so the body still parses without one error per
-    // modifier. `virtual` and `override` stay consumed but not stored.
+    // Visibility, mutability, `virtual`, and `override` are stored as
+    // keyword tokens so `FunctionDef` can report them. Override bases
+    // `(A, B)` keep ident and paren markers for `override_bases`.
+    // Custom modifiers (`onlyOwner`) and base args (`Base(1)`) stay
+    // skipped so the body still parses without one error per modifier.
     loop {
         match cursor.peek_kind() {
             Some(kind)
@@ -226,12 +242,14 @@ pub(crate) fn parse_function(
                 if kind == SolidityKind::Virtual.as_u16()
                     || kind == SolidityKind::Override.as_u16() =>
             {
-                cursor.bump();
-                if (kind == SolidityKind::Virtual.as_u16()
-                    || kind == SolidityKind::Override.as_u16())
+                let Some(token) = cursor.bump() else {
+                    break;
+                };
+                children.push(token_element(token));
+                if kind == SolidityKind::Override.as_u16()
                     && cursor.peek_kind() == Some(SolidityKind::LParen.as_u16())
                 {
-                    skip_parens(cursor);
+                    parse_override_bases(cursor, &mut children);
                 }
             }
             Some(kind) if kind == SolidityKind::Ident.as_u16() => {
@@ -1025,26 +1043,176 @@ pub(crate) fn skip_assembly(cursor: &mut Cursor) {
     }
 }
 
-/// Skip `using X for Y;` without symbols.
+/// Parse `using L for T;`, `using L for *;`, and `using L for T global;`.
 ///
-/// Library attachment needs no AST: consume to `;` so the contract
-/// keeps parsing with zero errors. Brace depth guards `{as +}` forms.
-pub(crate) fn skip_using(cursor: &mut Cursor) {
-    cursor.bump();
+/// Operator forms (`using {f as +}`) and multi-library lists stay
+/// deferred: the full row is consumed with no error and a span-only
+/// node so unknown stays silent while analysis skips them.
+pub(crate) fn parse_using(cursor: &mut Cursor, errors: &mut Vec<ParseError>) -> Option<SyntaxNode> {
+    let Some(using) = cursor.bump() else {
+        errors.push(ParseError::new(cursor.peek_span(), "expected using"));
+        return None;
+    };
+    let start = using.span.start;
+    let mut children = vec![token_element(using)];
+    if cursor.peek_kind() == Some(SolidityKind::LBrace.as_u16()) {
+        let end = skip_to_semi(cursor);
+        return Some(SyntaxNode::with_children(
+            SolidityNode::Using.as_u16(),
+            Span::new(start, end),
+            children,
+        ));
+    }
+    let library = match cursor.peek_kind() {
+        Some(kind) if kind == SolidityKind::Ident.as_u16() => cursor.bump(),
+        _ => {
+            errors.push(ParseError::new(cursor.peek_span(), "expected library name"));
+            skip_to_semi(cursor);
+            return None;
+        }
+    };
+    let Some(library) = library else {
+        errors.push(ParseError::new(cursor.peek_span(), "expected library name"));
+        return None;
+    };
+    children.push(token_element(library));
+    if cursor.peek_kind() == Some(SolidityKind::Comma.as_u16()) {
+        let end = skip_to_semi(cursor);
+        return Some(SyntaxNode::with_children(
+            SolidityNode::Using.as_u16(),
+            Span::new(start, end),
+            children,
+        ));
+    }
+    let Some(for_token) = cursor.bump() else {
+        errors.push(ParseError::new(cursor.peek_span(), "expected `for`"));
+        return None;
+    };
+    if for_token.kind != SolidityKind::For.as_u16() {
+        errors.push(ParseError::new(for_token.span, "expected `for`"));
+        let end = skip_to_semi(cursor);
+        return Some(SyntaxNode::with_children(
+            SolidityNode::Using.as_u16(),
+            Span::new(start, end),
+            children,
+        ));
+    }
+    children.push(token_element(for_token));
+    if cursor.peek_kind() == Some(SolidityKind::Star.as_u16()) {
+        let Some(star) = cursor.bump() else {
+            errors.push(ParseError::new(cursor.peek_span(), "expected target"));
+            return None;
+        };
+        children.push(token_element(star));
+    } else if let Some(kind) = cursor.peek_kind()
+        && (is_type_start(kind) || kind == SolidityKind::Ident.as_u16())
+    {
+        match parse_type(cursor) {
+            Ok(target) => children.push(SyntaxElement::Node(target)),
+            Err(error) => {
+                errors.push(error);
+                let end = skip_to_semi(cursor);
+                return Some(SyntaxNode::with_children(
+                    SolidityNode::Using.as_u16(),
+                    Span::new(start, end),
+                    children,
+                ));
+            }
+        }
+    } else {
+        errors.push(ParseError::new(cursor.peek_span(), "expected target type"));
+        let end = skip_to_semi(cursor);
+        return Some(SyntaxNode::with_children(
+            SolidityNode::Using.as_u16(),
+            Span::new(start, end),
+            children,
+        ));
+    }
+    if cursor.peek_kind() == Some(SolidityKind::Global.as_u16())
+        && let Some(global) = cursor.bump()
+    {
+        children.push(token_element(global));
+    }
+    match cursor.expect(SolidityKind::Semicolon, "`;`") {
+        Ok(semi) => {
+            let end = semi.span.end;
+            children.push(token_element(semi));
+            Some(SyntaxNode::with_children(
+                SolidityNode::Using.as_u16(),
+                Span::new(start, end),
+                children,
+            ))
+        }
+        Err(error) => {
+            errors.push(error);
+            let end = cursor.peek_span().end.max(start);
+            Some(SyntaxNode::with_children(
+                SolidityNode::Using.as_u16(),
+                Span::new(start, end),
+                children,
+            ))
+        }
+    }
+}
+
+fn skip_to_semi(cursor: &mut Cursor) -> u32 {
     let mut depth = 0u32;
+    let mut end = cursor.peek_span().end;
     while let Some(kind) = cursor.peek_kind() {
         if kind == SolidityKind::LBrace.as_u16() {
             depth += 1;
         } else if kind == SolidityKind::RBrace.as_u16() {
             if depth == 0 {
-                return;
+                break;
             }
             depth -= 1;
         } else if kind == SolidityKind::Semicolon.as_u16() && depth == 0 {
-            cursor.bump();
-            return;
+            if let Some(semi) = cursor.bump() {
+                end = semi.span.end;
+            }
+            return end;
         }
-        cursor.bump();
+        if let Some(bumped) = cursor.bump() {
+            end = bumped.span.end;
+        } else {
+            break;
+        }
+    }
+    end
+}
+
+/// Store `override(A, B)` base markers: parens, idents, and commas.
+///
+/// Stops at `)` or at any non-base token so broken lists never hang
+/// the function header. Callers already checked the opening paren.
+fn parse_override_bases(cursor: &mut Cursor, children: &mut Vec<SyntaxElement>) {
+    let Some(open) = cursor.bump() else {
+        return;
+    };
+    children.push(token_element(open));
+    loop {
+        match cursor.peek_kind() {
+            Some(kind) if kind == SolidityKind::Ident.as_u16() => {
+                let Some(name) = cursor.bump() else {
+                    return;
+                };
+                children.push(token_element(name));
+                if cursor.peek_kind() == Some(SolidityKind::Comma.as_u16()) {
+                    let Some(comma) = cursor.bump() else {
+                        return;
+                    };
+                    children.push(token_element(comma));
+                }
+            }
+            Some(kind) if kind == SolidityKind::RParen.as_u16() => {
+                let Some(close) = cursor.bump() else {
+                    return;
+                };
+                children.push(token_element(close));
+                return;
+            }
+            _ => return,
+        }
     }
 }
 

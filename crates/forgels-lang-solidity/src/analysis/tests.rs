@@ -4130,3 +4130,248 @@ fn type_mismatch_array_type_stays_silent() {
     let text = "contract C {\nuint[] a = 1;\n}";
     assert!(diagnostics_of(text).is_empty());
 }
+
+#[test]
+fn using_exact_match_completes_library_function() {
+    let text = "library SafeMath {\nfunction add(uint self, uint other) public returns (uint) {}\n}\ncontract C {\nusing SafeMath for uint;\nfunction f() public {\nuint x;\nx.\n}\n}";
+    let at = text.rfind("x.").expect("dot") as u32 + 2;
+    let labels = complete_labels(text, at);
+    assert!(labels.contains(&"add".to_string()), "labels: {labels:?}");
+}
+
+#[test]
+fn using_wrong_type_stays_silent() {
+    let text = "library SafeMath {\nfunction add(uint self, uint other) public returns (uint) {}\n}\ncontract C {\nusing SafeMath for uint;\nfunction f() public {\nuint256 x;\nx.\n}\n}";
+    let at = text.rfind("x.").expect("dot") as u32 + 2;
+    let labels = complete_labels(text, at);
+    assert!(!labels.contains(&"add".to_string()), "labels: {labels:?}");
+}
+
+#[test]
+fn using_wildcard_matches_first_param_type() {
+    let text = "library SafeMath {\nfunction add(uint self, uint other) public returns (uint) {}\n}\ncontract C {\nusing SafeMath for *;\nfunction f() public {\nuint x;\nx.\n}\n}";
+    let at = text.rfind("x.").expect("dot") as u32 + 2;
+    let labels = complete_labels(text, at);
+    assert!(labels.contains(&"add".to_string()), "labels: {labels:?}");
+}
+
+#[test]
+fn using_own_member_wins_over_library() {
+    let text = "library L {\nfunction foo(C self) public {}\n}\ncontract C {\nusing L for C;\nfunction foo() public {}\nfunction f() public {\nthis.\n}\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let at = text.rfind("this.").expect("dot") as u32 + 5;
+    let items = complete_at(&file, text, at);
+    let matches: Vec<&CompletionItem> = items.iter().filter(|item| item.label == "foo").collect();
+    assert_eq!(matches.len(), 1);
+    assert!(
+        !matches[0].detail.contains("via using"),
+        "detail: {}",
+        matches[0].detail
+    );
+}
+
+#[test]
+fn using_hover_shows_library_origin() {
+    let text = "library SafeMath {\nfunction add(uint self, uint other) public returns (uint) {}\n}\ncontract C {\nusing SafeMath for uint;\nfunction f() public {\nuint x;\nx.add;\n}\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let at = text.rfind("x.add").expect("use") as u32 + 2;
+    let hover = hover_at(&file, text, at).expect("hover");
+    assert!(
+        hover.contents.contains("function add"),
+        "contents: {}",
+        hover.contents
+    );
+    assert!(
+        hover.contents.contains("via using"),
+        "contents: {}",
+        hover.contents
+    );
+}
+
+#[test]
+fn using_goto_jumps_to_library_function() {
+    let text = "library SafeMath {\nfunction add(uint self, uint other) public returns (uint) {}\n}\ncontract C {\nusing SafeMath for uint;\nfunction f() public {\nuint x;\nx.add;\n}\n}";
+    let at_use = text.rfind("x.add").expect("use") as u32 + 2;
+    let at_decl = text.find("function add").expect("decl") as u32 + 9;
+    let target = goto_target(text, at_use);
+    assert!(target.start <= at_decl && at_decl < target.end);
+}
+
+#[test]
+fn using_correct_arity_stays_silent() {
+    let text = "library SafeMath {\nfunction add(uint self, uint other) public returns (uint) {}\n}\ncontract C {\nusing SafeMath for uint;\nfunction f() public {\nuint x;\nx.add(1);\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn using_wrong_arity_reports_expected_minus_one() {
+    let text = "library SafeMath {\nfunction add(uint self, uint other) public returns (uint) {}\n}\ncontract C {\nusing SafeMath for uint;\nfunction f() public {\nuint x;\nx.add(1, 2);\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "this function 'add' takes 1 arguments but 2 supplied"
+    );
+}
+
+#[test]
+fn using_unknown_library_stays_silent() {
+    let text = "contract C {\nusing Missing for uint;\nfunction f() public {\nuint x;\nx;\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn override_missing_override_errors_o1() {
+    let text = "contract B {\nfunction f() public virtual {}\n}\ncontract D is B {\nfunction f() public {}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "function 'f' overrides virtual base but missing 'override'"
+    );
+}
+
+#[test]
+fn override_without_base_errors_o2() {
+    let text = "contract D {\nfunction f() public override {}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "function 'f' has 'override' but no base function"
+    );
+}
+
+#[test]
+fn override_non_virtual_base_errors_o3() {
+    let text = "contract B {\nfunction f() public {}\n}\ncontract D is B {\nfunction f() public override {}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(found[0].message, "function 'f' overrides non-virtual base");
+}
+
+#[test]
+fn override_correct_pair_stays_silent() {
+    let text = "contract B {\nfunction f() public virtual {}\n}\ncontract D is B {\nfunction f() public override {}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn override_overload_with_different_params_stays_silent() {
+    let text = "contract B {\nfunction f(uint a) public virtual {}\n}\ncontract D is B {\nfunction f(uint a, uint b) public {}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn override_private_derived_stays_silent() {
+    let text = "contract B {\nfunction f() public virtual {}\n}\ncontract D is B {\nfunction f() private {}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn override_constructor_stays_silent() {
+    let text =
+        "contract B {\nfunction f() public virtual {}\n}\ncontract D is B {\nconstructor() {}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn getter_scalar_completes_and_resolves() {
+    let text = "contract C {\nuint public total;\nfunction f() public {\ntot\n}\n}";
+    let workspace = open_workspace(&[("/repo/C.sol", text)]);
+    let items = complete_multi(&workspace, "/repo/C.sol", text, "tot");
+    let labels: Vec<&str> = items.iter().map(|item| item.0.as_str()).collect();
+    assert!(labels.contains(&"total"), "labels: {labels:?}");
+}
+
+#[test]
+fn getter_array_takes_index_param() {
+    let text = "contract C {\nuint[] public scores;\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let scope = super::collect_symbols(&file);
+    let found = scope.resolve("scores", 0).expect("found");
+    assert_eq!(found.detail, "uint[] scores");
+    let getters = super::getter::contract_getters(&file.contracts()[0]);
+    assert_eq!(getters.len(), 1);
+    assert_eq!(getters[0].detail, "function scores(uint256) returns (uint)");
+}
+
+#[test]
+fn getter_single_mapping_takes_key_param() {
+    let text = "contract C {\nmapping(address => uint) public balances;\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let getters = super::getter::contract_getters(&file.contracts()[0]);
+    assert_eq!(getters.len(), 1);
+    assert_eq!(
+        getters[0].detail,
+        "function balances(address) returns (uint)"
+    );
+}
+
+#[test]
+fn getter_nested_mapping_stays_silent() {
+    let text = "contract C {\nmapping(address => mapping(uint => bool)) public nested;\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let getters = super::getter::contract_getters(&file.contracts()[0]);
+    assert!(getters.is_empty());
+}
+
+#[test]
+fn getter_explicit_function_wins() {
+    let text = "contract C {\nuint public total;\nfunction total() public returns (uint) {}\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let getters = super::getter::contract_getters(&file.contracts()[0]);
+    assert!(getters.is_empty());
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn getter_member_completion_includes_synthetic() {
+    let text = "contract C {\nuint public total;\nfunction f() public {\nthis.\n}\n}";
+    let at = text.rfind("this.").expect("dot") as u32 + 5;
+    let labels = complete_labels(text, at);
+    assert!(labels.contains(&"total".to_string()), "labels: {labels:?}");
+}
+
+#[test]
+fn getter_signature_shows_synthetic_params() {
+    let text = "contract C {\nmapping(address => uint) public balances;\nfunction f() public {\nbalances(\n}\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, _) = SolidityParser.parse_with_errors(&tokens);
+    let at = text.rfind("balances(").expect("call") as u32 + 9;
+    let found = super::signature_at(&file, text, at, &[]).expect("signature");
+    assert!(
+        found
+            .iter()
+            .any(|item| item.label.contains("balances(address)"))
+    );
+}
+
+#[test]
+fn getter_correct_call_stays_silent() {
+    let text = "contract C {\nuint public total;\nfunction f() public {\ntotal();\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn getter_wrong_call_reports_arity() {
+    let text = "contract C {\nuint public total;\nfunction f() public {\ntotal(1);\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "this function 'total' takes 0 arguments but 1 supplied"
+    );
+}

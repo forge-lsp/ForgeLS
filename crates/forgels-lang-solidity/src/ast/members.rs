@@ -40,9 +40,8 @@ pub enum Mutability {
 /// Function definition: name, params, return types, and body block.
 ///
 /// Children hold the name token, Param nodes, visibility and mutability
-/// keyword tokens, one Returns node, then one Block node. Custom modifiers,
-/// `virtual`, and `override` are consumed but not stored; the node span
-/// still covers them.
+/// keyword tokens, `virtual` and `override` tokens with override bases,
+/// one Returns node, then one Block node. Custom modifiers stay skipped.
 #[derive(Debug, Clone)]
 pub struct FunctionDef {
     syntax: SyntaxNode,
@@ -176,6 +175,80 @@ impl FunctionDef {
                 _ => None,
             })
     }
+
+    pub fn is_virtual(&self) -> bool {
+        self.syntax.children.iter().any(|element| {
+            matches!(
+                element,
+                SyntaxElement::Token(token)
+                    if token.kind == SolidityKind::Virtual.as_u16()
+            )
+        })
+    }
+
+    pub fn is_override(&self) -> bool {
+        self.syntax.children.iter().any(|element| {
+            matches!(
+                element,
+                SyntaxElement::Token(token)
+                    if token.kind == SolidityKind::Override.as_u16()
+            )
+        })
+    }
+
+    pub fn virtual_span(&self) -> Option<Span> {
+        self.syntax
+            .children
+            .iter()
+            .find_map(|element| match element {
+                SyntaxElement::Token(token) if token.kind == SolidityKind::Virtual.as_u16() => {
+                    Some(token.span)
+                }
+                _ => None,
+            })
+    }
+
+    pub fn override_span(&self) -> Option<Span> {
+        self.syntax
+            .children
+            .iter()
+            .find_map(|element| match element {
+                SyntaxElement::Token(token) if token.kind == SolidityKind::Override.as_u16() => {
+                    Some(token.span)
+                }
+                _ => None,
+            })
+    }
+
+    pub fn override_bases(&self) -> Vec<String> {
+        let mut at_override = false;
+        let mut in_list = false;
+        let mut out = Vec::new();
+        for element in &self.syntax.children {
+            match element {
+                SyntaxElement::Token(token) if token.kind == SolidityKind::Override.as_u16() => {
+                    at_override = true;
+                }
+                SyntaxElement::Token(token)
+                    if at_override && token.kind == SolidityKind::LParen.as_u16() =>
+                {
+                    in_list = true;
+                }
+                SyntaxElement::Token(token)
+                    if at_override && token.kind == SolidityKind::RParen.as_u16() =>
+                {
+                    break;
+                }
+                SyntaxElement::Token(token)
+                    if in_list && token.kind == SolidityKind::Ident.as_u16() =>
+                {
+                    out.push(token.text.clone());
+                }
+                _ => {}
+            }
+        }
+        out
+    }
 }
 
 impl AstNode for FunctionDef {
@@ -240,6 +313,12 @@ impl AstNode for Param {
     }
 }
 
+fn is_var_modifier_kind(kind: u16) -> bool {
+    kind == SolidityKind::Public.as_u16()
+        || kind == SolidityKind::Virtual.as_u16()
+        || kind == SolidityKind::Override.as_u16()
+}
+
 fn var_name_and_type(node: &SyntaxNode) -> (Option<TypeNode>, Option<String>) {
     let mut type_node = None;
     let mut name = None;
@@ -250,7 +329,11 @@ fn var_name_and_type(node: &SyntaxNode) -> (Option<TypeNode>, Option<String>) {
                     type_node = TypeNode::cast(child.clone());
                 }
             }
-            SyntaxElement::Token(token) if name.is_none() && is_word_text(&token.text) => {
+            SyntaxElement::Token(token)
+                if name.is_none()
+                    && !is_var_modifier_kind(token.kind)
+                    && is_word_text(&token.text) =>
+            {
                 name = Some(token.text.clone());
             }
             _ => {}
@@ -316,7 +399,9 @@ impl StateVar {
         for element in &self.syntax.children {
             match element {
                 SyntaxElement::Node(child) if child.kind == SolidityNode::Type.as_u16() => {}
-                SyntaxElement::Token(token) if is_word_text(&token.text) => {
+                SyntaxElement::Token(token)
+                    if !is_var_modifier_kind(token.kind) && is_word_text(&token.text) =>
+                {
                     return Some(token.span);
                 }
                 _ => {}
@@ -331,6 +416,52 @@ impl StateVar {
 
     pub fn initializer_span(&self) -> Option<Span> {
         self.initializer().map(|token| token.span)
+    }
+
+    pub fn is_public(&self) -> bool {
+        self.syntax.children.iter().any(|element| {
+            matches!(
+                element,
+                SyntaxElement::Token(token)
+                    if token.kind == SolidityKind::Public.as_u16()
+            )
+        })
+    }
+
+    pub fn is_virtual(&self) -> bool {
+        self.syntax.children.iter().any(|element| {
+            matches!(
+                element,
+                SyntaxElement::Token(token)
+                    if token.kind == SolidityKind::Virtual.as_u16()
+            )
+        })
+    }
+
+    pub fn is_override(&self) -> bool {
+        self.syntax.children.iter().any(|element| {
+            matches!(
+                element,
+                SyntaxElement::Token(token)
+                    if token.kind == SolidityKind::Override.as_u16()
+            )
+        })
+    }
+
+    pub fn visibility_span(&self) -> Option<Span> {
+        self.syntax
+            .children
+            .iter()
+            .find_map(|element| match element {
+                SyntaxElement::Token(token)
+                    if token.kind == SolidityKind::Public.as_u16()
+                        || token.kind == SolidityKind::Private.as_u16()
+                        || token.kind == SolidityKind::Internal.as_u16() =>
+                {
+                    Some(token.span)
+                }
+                _ => None,
+            })
     }
 }
 

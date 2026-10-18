@@ -7,6 +7,7 @@ mod file;
 mod members;
 mod types;
 mod user_types;
+mod using;
 
 pub use calls::CallStmt;
 pub use contract::ContractDef;
@@ -17,6 +18,7 @@ pub use members::{
 };
 pub use types::{BlockNode, TypeNode};
 pub use user_types::{EnumDef, ErrorDef, EventDef, ModifierDef, StructDef, UserTypeDef};
+pub use using::UsingDirective;
 
 /// Node kinds for the Solidity skeleton. Start at 1000 so token kinds
 /// from [`crate::SolidityKind`] never collide.
@@ -43,6 +45,7 @@ pub enum SolidityNode {
     Event,
     Modifier,
     Emit,
+    Using,
 }
 
 impl SolidityNode {

@@ -16,6 +16,7 @@ mod completion;
 mod emits;
 pub(crate) mod forge;
 pub(crate) mod function;
+pub(crate) mod getter;
 pub(crate) mod globals;
 mod goto;
 mod hover;
@@ -24,6 +25,8 @@ pub(crate) mod inheritance;
 pub(crate) mod members;
 pub(crate) mod meta;
 mod mutability;
+#[path = "override.rs"]
+mod override_diagnostics;
 mod payable;
 mod references;
 mod rename;
@@ -31,6 +34,7 @@ mod signature;
 mod symbols;
 mod type_mismatch;
 mod unknown;
+pub(crate) mod using;
 mod visibility;
 
 #[cfg(test)]
@@ -182,6 +186,12 @@ impl Scope {
             }
         }
         for child in &self.children {
+            let state_spans: Vec<(u32, u32)> = child
+                .symbols
+                .iter()
+                .filter(|symbol| symbol.kind == SymbolKind::StateVar)
+                .map(|symbol| (symbol.span.start, symbol.span.end))
+                .collect();
             for symbol in &child.symbols {
                 if matches!(
                     symbol.kind,
@@ -194,6 +204,11 @@ impl Scope {
                         | SymbolKind::Modifier
                         | SymbolKind::UserType
                 ) {
+                    if symbol.kind == SymbolKind::Function
+                        && state_spans.contains(&(symbol.span.start, symbol.span.end))
+                    {
+                        continue;
+                    }
                     out.push(symbol);
                 }
             }
@@ -376,6 +391,16 @@ fn contract_scope(file: &SolidityFile, contract: &ContractDef) -> Scope {
         scope.symbols.push(function_symbol(&function));
         scope.children.push(function_scope(&function));
     }
+    for getter in getter::getter_symbols(contract) {
+        if contract
+            .functions()
+            .iter()
+            .any(|function| function.name().as_deref() == Some(getter.name.as_str()))
+        {
+            continue;
+        }
+        scope.symbols.push(getter);
+    }
     for inherited in inheritance::inherited_symbols(file, contract) {
         if scope.symbols.iter().any(|own| own.name == inherited.name) {
             continue;
@@ -547,6 +572,23 @@ impl SolidityAnalyzer {
                 text_edit: None,
             });
         }
+        for (info, _) in using::using_members_at(file, &scope, offset, &member.receiver, deps) {
+            if !info.name.starts_with(member.member.as_str()) {
+                continue;
+            }
+            if seen.contains(&info.name) {
+                continue;
+            }
+            seen.push(info.name.clone());
+            out.push(CompletionData {
+                label: info.name.clone(),
+                detail: info.detail.clone(),
+                kind: completion::completion_item_kind(completion::CompletionKind::Symbol(
+                    info.kind,
+                )),
+                text_edit: None,
+            });
+        }
         out.sort_by(|left, right| left.label.cmp(&right.label));
         let _ = ctx_text;
         out
@@ -619,6 +661,7 @@ impl SolidityAnalyzer {
         out.extend(mutability::mutability_diagnostics(file, text, scope));
         out.extend(payable::payable_diagnostics(file, text, scope, deps));
         out.extend(type_mismatch::type_mismatch_diagnostics(file));
+        out.extend(override_diagnostics::override_diagnostics(file));
         out.extend(unknown::unknown_identifier_diagnostics(
             file, text, scope, deps,
         ));
@@ -673,6 +716,19 @@ impl Analyzer for SolidityAnalyzer {
             if let Some((info, _)) =
                 members::resolve_member_cross_file(&file, &kind, &member.member, &deps)
             {
+                return Some(HoverData {
+                    contents: info.detail,
+                    span: member.member_span,
+                });
+            }
+            if let Some((info, _)) = using::resolve_using_member(
+                &file,
+                &scope,
+                ctx.offset,
+                &member.receiver,
+                &member.member,
+                &deps,
+            ) {
                 return Some(HoverData {
                     contents: info.detail,
                     span: member.member_span,
@@ -859,6 +915,17 @@ impl Analyzer for SolidityAnalyzer {
                 members::resolve_member_cross_file(&file, &kind, &member.member, &deps)
             {
                 return Some(GotoTarget::new(path, info.span));
+            }
+            if let Some((info, path)) = using::resolve_using_member(
+                &file,
+                &scope,
+                ctx.offset,
+                &member.receiver,
+                &member.member,
+                &deps,
+            ) {
+                let target = path.unwrap_or_else(|| ctx.path.to_path_buf());
+                return Some(GotoTarget::new(target, info.span));
             }
         }
         let (word, _) = word_at(ctx.text, ctx.offset)?;

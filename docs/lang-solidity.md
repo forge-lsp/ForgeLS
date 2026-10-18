@@ -355,6 +355,59 @@ Status: token kinds defined. Real lexer and parser are planned.
   calls, casts, and binops (no stored literal).
 - Limits: no inference, no range checks, no implicit conversion tables.
 
+## Using-for
+
+- Scope: `ast::UsingDirective` plus `parser::parse_using` and
+  `analysis::using`. `ContractDef::usings` and `SolidityFile::usings`
+  list rows. Parser stores library ident, target type or `*`, plus
+  optional `global` and `;`.
+- Rule: `x.f()` where `x: T` attaches library `L` when `using L for T`
+  matches exactly and `L.f` takes `T` first. Wildcard `*` matches any
+  receiver by first param. Own members win by name. Detail adds
+  ` - from L via using`.
+- Completion, hover, goto, signature, and member arity reuse the same
+  attach. Library lookup spans primary then deps. Unknown skips whole
+  using rows so missing libs never lint.
+- Limits: exact spelling only (`uint` never matches `uint256`),
+  operator forms (`using {f as +}`) and multi-library lists keep span
+  only, no `super` receivers, no chained `a.b.c`.
+
+## Override checks
+
+- Scope: `analysis::override_diagnostics` plus `FunctionDef::is_virtual`,
+  `is_override`, `override_bases` and parser storage of `virtual` and
+  `override(A, B)` markers. `StateVar` stores `public`, `virtual`, and
+  `override` for future use but never reports here.
+- Rules:
+  - O1: derived matches a virtual base but misses `override` errors
+    with `function 'f' overrides virtual base but missing 'override'`.
+  - O2: derived has `override` with no matching base errors with
+    `function 'f' has 'override' but no base function`.
+  - O3: derived has `override` but bases are non-virtual errors with
+    `function 'f' overrides non-virtual base`.
+- Silent: overloads (different param types), private derived, private
+  bases, `constructor`, `fallback`, `receive`, and state vars. Any
+  same-name base silences O2 so overloads never report as missing.
+- Limits: same file `linearize` only, no C3, no `override(A, B)` list
+  validation, no state-var override rules.
+
+## Public getters
+
+- Scope: `analysis::getter` plus `StateVar::is_public` and parser
+  storage of `public`. `contract_getters` synthesizes from public vars
+  only. Explicit functions with the same name win and suppress synthesis.
+- Shapes:
+  - Scalar `uint public x` gives `function x() returns (uint)`.
+  - Array `uint[] public a` gives `function a(uint256) returns (uint)`.
+  - Single mapping `mapping(K => V) public m` gives
+    `function m(K) returns (V)`.
+- Wiring: scope symbols plus contract members plus plain and member
+  signature help. Plain and member arity check getter params (0 for
+  scalar, 1 for array and mapping). No cross file export: `export_symbols`
+  skips synthetic spans and dep member collection stays explicit only.
+- Limits: nested mappings stay silent, no struct field getters, no
+  visibility split, no cross file getter calls.
+
 ## V1 limits
 
 - Tracked only: `dep_texts` skips untracked and missing files.

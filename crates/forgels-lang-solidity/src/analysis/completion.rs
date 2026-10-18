@@ -132,16 +132,35 @@ fn complete_members(
                 kind: CompletionKind::Symbol(SymbolKind::Function),
             })
             .collect();
-    items.extend(
-        super::members::members_of(file, &kind)
-            .into_iter()
-            .filter(|member| member.name.starts_with(ctx.member.as_str()))
-            .map(|member| CompletionItem {
-                label: member.name,
-                detail: member.detail,
-                kind: CompletionKind::Symbol(member.kind),
-            }),
-    );
+    let mut seen: Vec<String> = items.iter().map(|item| item.label.clone()).collect();
+    for member in super::members::members_of(file, &kind) {
+        if !member.name.starts_with(ctx.member.as_str()) {
+            continue;
+        }
+        if seen.contains(&member.name) {
+            continue;
+        }
+        seen.push(member.name.clone());
+        items.push(CompletionItem {
+            label: member.name,
+            detail: member.detail,
+            kind: CompletionKind::Symbol(member.kind),
+        });
+    }
+    for (info, _) in super::using::using_members_at(file, &scope, offset, &ctx.receiver, &[]) {
+        if !info.name.starts_with(ctx.member.as_str()) {
+            continue;
+        }
+        if seen.contains(&info.name) {
+            continue;
+        }
+        seen.push(info.name.clone());
+        items.push(CompletionItem {
+            label: info.name,
+            detail: info.detail,
+            kind: CompletionKind::Symbol(info.kind),
+        });
+    }
     items.sort_by(|left, right| left.label.cmp(&right.label));
     items
 }
