@@ -5692,3 +5692,53 @@ fn dep_hover_places_natspec_before_origin() {
     let from_at = hit.contents.find("from B.sol").expect("origin");
     assert!(docs_at < from_at, "contents: {}", hit.contents);
 }
+
+#[test]
+fn function_type_inner_names_stay_silent() {
+    let text = "contract C {\nfunction (uint amount) external cb;\nuint good;\n}";
+    let found = diagnostics_of(text);
+    assert!(found.is_empty(), "diags: {found:?}");
+}
+
+#[test]
+fn function_type_outer_uses_resolve() {
+    let text = "contract C {\nfunction (uint) external cb;\nfunction f() public {\ncb;\n}\n}";
+    let found = diagnostics_of(text);
+    assert!(found.is_empty(), "diags: {found:?}");
+}
+
+#[test]
+fn function_type_hover_shows_canon_text() {
+    let text = "contract C {\nfunction (uint) external cb;\nfunction f() public {\ncb;\n}\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let at = text.rfind("\ncb;\n").expect("use") as u32 + 1;
+    let hover = hover_at(&file, text, at).expect("hover");
+    assert_eq!(hover.contents, "function (uint) external cb");
+}
+
+#[test]
+fn function_type_external_member_resolves() {
+    let text =
+        "contract C {\nfunction (uint) external cb;\nfunction f() public {\ncb.selector;\n}\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let at = text.rfind("cb.selector").expect("use") as u32 + 3;
+    let hover = hover_at(&file, text, at).expect("hover");
+    assert_eq!(hover.contents, "bytes4 selector - from solidity");
+}
+
+#[test]
+fn function_type_internal_stays_unknown() {
+    let text =
+        "contract C {\nfunction (uint) internal cb;\nfunction f() public {\ncb.selector;\n}\n}";
+    let found = diagnostics_of(text);
+    assert!(found.is_empty(), "diags: {found:?}");
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let at = text.rfind("cb.selector").expect("use") as u32 + 3;
+    assert!(hover_at(&file, text, at).is_none());
+}

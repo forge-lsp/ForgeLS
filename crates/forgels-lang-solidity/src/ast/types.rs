@@ -3,10 +3,11 @@ use super::members::{LocalVar, MemberExpr};
 use super::{CallStmt, NewStmt, RevertStmt, SolidityNode, cast_node};
 use forgels_syntax::{AstNode, SyntaxElement, SyntaxNode};
 
-/// Type reference: elementary, mapping, sized, array, or user type.
+/// Type reference: elementary, mapping, sized, array, user, or function type.
 ///
 /// Children hold the raw tokens. Type text joins them with minimal
-/// spacing so hover shows mapping(address => uint).
+/// spacing so hover shows mapping(address => uint) and
+/// function (uint) external.
 #[derive(Debug, Clone)]
 pub struct TypeNode {
     syntax: SyntaxNode,
@@ -49,15 +50,18 @@ fn join_type_text(parts: &[&str]) -> String {
     // (`(`, `[`, `)`, `]`, `,`, `;`, `.`), or when the previous token
     // opens a group (`(`, `[`, `.`). Everything else separates with one
     // space, which gives `=>` its surrounding spaces for free.
+    // Function types keep one space before `(`: `function (uint)`
+    // reads canonical while `mapping(uint)` stays glued.
     const NO_SPACE_BEFORE: &[&str] = &["(", "[", ")", "]", ",", ";", "."];
     const NO_SPACE_AFTER: &[&str] = &["(", "[", "."];
     let mut out = String::new();
     for (index, part) in parts.iter().enumerate() {
-        if index > 0
-            && !NO_SPACE_BEFORE.contains(part)
-            && !NO_SPACE_AFTER.contains(&parts[index - 1])
-        {
-            out.push(' ');
+        if index > 0 {
+            let prev = parts[index - 1];
+            let glued = NO_SPACE_BEFORE.contains(part) && prev != "function" && prev != "returns";
+            if !glued && !NO_SPACE_AFTER.contains(&prev) {
+                out.push(' ');
+            }
         }
         out.push_str(part);
     }

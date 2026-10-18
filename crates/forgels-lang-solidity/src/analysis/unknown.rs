@@ -6,7 +6,7 @@ use forgels_syntax::{AstNode, Lexer, Span};
 
 use super::{Scope, collect_symbols, forge};
 use crate::lexer::SolidityKind;
-use crate::{SolidityFile, SolidityLexer};
+use crate::{SolidityFile, SolidityLexer, SolidityNode};
 
 /// Receivers that never error, even with no declaration.
 ///
@@ -41,6 +41,32 @@ pub(crate) const ALWAYS_OK: &[&str] = &[
     "Panic",
 ];
 
+/// Function type spans: every `Type` node starting with `function`.
+///
+/// Inner param names and type words stay silent for unknown, references,
+/// and rename. The outer variable name lives outside the type node, so
+/// it still lints and resolves normally.
+pub(crate) fn function_type_spans(file: &SolidityFile) -> Vec<Span> {
+    let mut out = Vec::new();
+    collect_function_types(file.syntax(), &mut out);
+    out
+}
+
+fn collect_function_types(node: &forgels_syntax::SyntaxNode, out: &mut Vec<Span>) {
+    if node.kind == SolidityNode::Type.as_u16()
+        && node.children.first().is_some_and(|element| {
+            matches!(element, forgels_syntax::SyntaxElement::Token(token) if token.text == "function")
+        })
+    {
+        out.push(node.span);
+    }
+    for element in &node.children {
+        if let forgels_syntax::SyntaxElement::Node(child) = element {
+            collect_function_types(child, out);
+        }
+    }
+}
+
 /// Unknown identifier errors: every `Ident` token must resolve.
 ///
 /// Resolve order is scope, dep exports, forge asserts, allowlists,
@@ -70,6 +96,7 @@ pub fn unknown_identifier_diagnostics(
     let options = options_spans(file);
     let assemblies = assembly_ranges(&tokens);
     let usings = super::using::using_spans(file);
+    let func_types = function_type_spans(file);
     let dep_names = dep_export_names(deps);
     let mut out = Vec::new();
     for token in &tokens {
@@ -102,6 +129,9 @@ pub fn unknown_identifier_diagnostics(
             continue;
         }
         if inside_any(&usings, span.start) {
+            continue;
+        }
+        if inside_any(&func_types, span.start) {
             continue;
         }
         if preceded_by_dot(text, span.start) {

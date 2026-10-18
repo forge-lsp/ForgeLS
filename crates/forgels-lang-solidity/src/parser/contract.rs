@@ -1,6 +1,6 @@
 use super::cursor::{Cursor, token_element};
 use super::members::{parse_function, parse_state_var, parse_using, skip_balanced, skip_parens};
-use super::types::is_type_start;
+use super::types::{is_type_start, skip_function_type_at};
 use super::user_types::{
     parse_enum, parse_error, parse_event, parse_modifier, parse_struct, parse_user_type,
 };
@@ -133,6 +133,18 @@ pub(crate) fn parse_contract(
             Some(kind) if kind == SolidityKind::RBrace.as_u16() => break,
             Some(kind)
                 if kind == SolidityKind::Function.as_u16()
+                    && skip_function_type_at(cursor.tokens, cursor.pos()).is_some() =>
+            {
+                match parse_state_var(cursor) {
+                    Ok(node) => members.push(SyntaxElement::Node(node)),
+                    Err(error) => {
+                        errors.push(error);
+                        recover_member(cursor);
+                    }
+                }
+            }
+            Some(kind)
+                if kind == SolidityKind::Function.as_u16()
                     || kind == SolidityKind::Constructor.as_u16()
                     || kind == SolidityKind::Fallback.as_u16()
                     || kind == SolidityKind::Receive.as_u16() =>
@@ -182,7 +194,11 @@ pub(crate) fn parse_contract(
                     None => recover_member(cursor),
                 }
             }
-            Some(kind) if is_type_start(kind) || kind == SolidityKind::Ident.as_u16() => {
+            Some(kind)
+                if is_type_start(kind)
+                    || kind == SolidityKind::Ident.as_u16()
+                    || skip_function_type_at(cursor.tokens, cursor.pos()).is_some() =>
+            {
                 match parse_state_var(cursor) {
                     Ok(node) => members.push(SyntaxElement::Node(node)),
                     Err(error) => {

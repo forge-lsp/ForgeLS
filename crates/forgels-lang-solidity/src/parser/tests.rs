@@ -1165,3 +1165,177 @@ fn data_location_name_skips_location_token() {
         ..var.name_span().expect("span").end as usize];
     assert_eq!(covered, "label");
 }
+
+#[test]
+fn function_type_roundtrip_keeps_canon_text() {
+    use crate::TypeNode;
+    let text = "contract C {\nfunction (uint) external cb;\nfunction (uint) internal pure returns (uint) fn2;\nfunction () external payable pay;\n}";
+    let file = parse_ok(text);
+    let types: Vec<String> = file.contracts()[0]
+        .state_vars()
+        .iter()
+        .filter_map(|var| var.type_node().map(|node| TypeNode::text(&node)))
+        .collect();
+    assert_eq!(
+        types,
+        vec![
+            "function (uint) external",
+            "function (uint) internal pure returns (uint)",
+            "function () external payable",
+        ]
+    );
+}
+
+#[test]
+fn function_type_name_is_outer_only() {
+    let text = "contract C {\nfunction (uint a, uint b) external cb;\n}";
+    let file = parse_ok(text);
+    let vars = file.contracts()[0].state_vars();
+    assert_eq!(vars.len(), 1);
+    assert_eq!(vars[0].name().as_deref(), Some("cb"));
+    let covered = &text[vars[0].name_span().expect("span").start as usize
+        ..vars[0].name_span().expect("span").end as usize];
+    assert_eq!(covered, "cb");
+}
+
+#[test]
+fn function_type_position_covers_full_type() {
+    use forgels_syntax::AstNode;
+    let text = "contract C {\nfunction (uint) external cb;\n}";
+    let file = parse_ok(text);
+    let var = &file.contracts()[0].state_vars()[0];
+    let type_node = var.type_node().expect("type");
+    let span = type_node.syntax().span;
+    let covered = &text[span.start as usize..span.end as usize];
+    assert!(covered.starts_with("function (uint) external"));
+    assert_eq!(var.name().as_deref(), Some("cb"));
+}
+
+#[test]
+fn function_type_array_suffix_roundtrip() {
+    use crate::TypeNode;
+    let text =
+        "contract C {\nfunction (uint) external[] cbs;\nfunction (uint) external[2] fixed;\n}";
+    let file = parse_ok(text);
+    let types: Vec<String> = file.contracts()[0]
+        .state_vars()
+        .iter()
+        .filter_map(|var| var.type_node().map(|node| TypeNode::text(&node)))
+        .collect();
+    assert_eq!(
+        types,
+        vec!["function (uint) external[]", "function (uint) external[2]",]
+    );
+}
+
+#[test]
+fn function_type_in_params_and_locals() {
+    let text = "contract C {\nfunction foo(function (uint) external cb) public {\nfunction (uint) internal x;\n}\n}";
+    let file = parse_ok(text);
+    let func = &file.contracts()[0].functions()[0];
+    assert_eq!(func.params().len(), 1);
+    assert_eq!(func.params()[0].name().as_deref(), Some("cb"));
+    assert_eq!(
+        func.params()[0]
+            .type_node()
+            .map(|node| node.text())
+            .as_deref(),
+        Some("function (uint) external")
+    );
+    let body = func.body().expect("body");
+    assert_eq!(body.locals().len(), 1);
+    assert_eq!(body.locals()[0].name().as_deref(), Some("x"));
+    assert_eq!(
+        body.locals()[0]
+            .type_node()
+            .map(|node| node.text())
+            .as_deref(),
+        Some("function (uint) internal")
+    );
+}
+
+#[test]
+fn function_type_invalid_visibility_errors() {
+    let text = "contract C {\nfunction (uint) public bad;\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (_, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(!errors.is_empty());
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.message == "expected 'internal' or 'external'")
+    );
+}
+
+#[test]
+fn function_type_missing_visibility_errors() {
+    let text = "contract C {\nfunction (uint) cb;\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (_, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(!errors.is_empty());
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.message == "expected 'internal' or 'external'")
+    );
+}
+
+#[test]
+fn function_type_mapping_key_is_rejected() {
+    let text = "contract C {\nmapping(function (uint) external => uint) m;\nuint good;\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(!errors.is_empty());
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.message == "function type not allowed as mapping key")
+    );
+    let names: Vec<String> = file.contracts()[0]
+        .state_vars()
+        .iter()
+        .filter_map(|var| var.name())
+        .collect();
+    assert!(names.contains(&"good".to_string()));
+}
+
+#[test]
+fn function_type_mapping_value_accepts() {
+    use crate::TypeNode;
+    let text = "contract C {\nmapping(address => function (uint) external) m;\n}";
+    let file = parse_ok(text);
+    let types: Vec<String> = file.contracts()[0]
+        .state_vars()
+        .iter()
+        .filter_map(|var| var.type_node().map(|node| TypeNode::text(&node)))
+        .collect();
+    assert_eq!(types, vec!["mapping(address => function (uint) external)"]);
+}
+
+#[test]
+fn function_type_broken_keeps_valid_siblings() {
+    let text =
+        "contract C {\nfunction (uint) public bad;\nuint good;\nfunction greet() public {}\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(!errors.is_empty());
+    let names: Vec<String> = file.contracts()[0]
+        .state_vars()
+        .iter()
+        .filter_map(|var| var.name())
+        .collect();
+    assert_eq!(names, vec!["good"]);
+    assert_eq!(file.contracts()[0].functions().len(), 1);
+}
+
+#[test]
+fn function_definition_still_parses_after_function_types() {
+    let text = "contract C {\nfunction (uint) external cb;\nfunction add(uint a) public returns (uint) {\nreturn a;\n}\n}";
+    let file = parse_ok(text);
+    assert_eq!(file.contracts()[0].state_vars().len(), 1);
+    assert_eq!(file.contracts()[0].functions().len(), 1);
+    assert_eq!(
+        file.contracts()[0].functions()[0].name().as_deref(),
+        Some("add")
+    );
+}
