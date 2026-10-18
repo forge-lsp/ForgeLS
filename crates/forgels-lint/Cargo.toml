@@ -10,6 +10,5 @@ forgels-protocol.workspace = true
 forgels-syntax.workspace = true
 forgels-common.workspace = true
 toml.workspace = true
-
-[dev-dependencies]
 serde_json.workspace = true
+glob.workspace = true
