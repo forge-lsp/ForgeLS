@@ -21,6 +21,10 @@ impl<'a> Cursor<'a> {
         self.pos
     }
 
+    pub(crate) fn set_pos(&mut self, pos: usize) {
+        self.pos = pos.min(self.tokens.len());
+    }
+
     pub(crate) fn at_end(&mut self) -> bool {
         self.peek().is_none()
     }

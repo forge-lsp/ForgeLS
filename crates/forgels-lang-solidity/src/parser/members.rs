@@ -410,6 +410,34 @@ pub(crate) fn parse_block(cursor: &mut Cursor, errors: &mut Vec<ParseError>) -> 
             Some(kind) if kind == SolidityKind::Assembly.as_u16() => {
                 skip_assembly(cursor);
             }
+            Some(kind) if kind == SolidityKind::LBrace.as_u16() => {
+                if let Some(nested) = parse_block(cursor, errors) {
+                    items.push(SyntaxElement::Node(nested));
+                }
+            }
+            Some(kind) if kind == SolidityKind::If.as_u16() => {
+                parse_if(cursor, errors, &mut items);
+            }
+            Some(kind) if kind == SolidityKind::For.as_u16() => {
+                parse_for(cursor, errors, &mut items);
+            }
+            Some(kind) if kind == SolidityKind::While.as_u16() => {
+                parse_while(cursor, errors, &mut items);
+            }
+            Some(kind) if kind == SolidityKind::Unchecked.as_u16() => {
+                parse_unchecked(cursor, errors, &mut items);
+            }
+            Some(kind) if kind == SolidityKind::Try.as_u16() => {
+                parse_try(cursor, errors, &mut items);
+            }
+            Some(kind) if kind == SolidityKind::LParen.as_u16() => match try_parse_tuple(cursor) {
+                Some(nodes) => {
+                    for node in nodes {
+                        items.push(SyntaxElement::Node(node));
+                    }
+                }
+                None => recover_statement(cursor),
+            },
             Some(kind)
                 if (is_type_start(kind) || kind == SolidityKind::Ident.as_u16())
                     && is_local_decl_ahead(cursor) =>
@@ -463,6 +491,339 @@ pub(crate) fn parse_block(cursor: &mut Cursor, errors: &mut Vec<ParseError>) -> 
         SolidityNode::Block.as_u16(),
         Span::new(open.span.start, close.span.end),
         items,
+    ))
+}
+
+/// Parse one control body into `items`: brace block or nested control.
+///
+/// Brace bodies recurse into `parse_block` and land as child `Block`
+/// nodes. A nested control (`if` inside `if`) recurses the same way so
+/// decls keep their scope. Anything else falls back to skipping one
+/// statement with no node: single-statement bodies hold no decls in V1.
+fn parse_control_body(
+    cursor: &mut Cursor,
+    errors: &mut Vec<ParseError>,
+    items: &mut Vec<SyntaxElement>,
+) {
+    match cursor.peek_kind() {
+        Some(kind) if kind == SolidityKind::LBrace.as_u16() => {
+            if let Some(body) = parse_block(cursor, errors) {
+                items.push(SyntaxElement::Node(body));
+            }
+        }
+        Some(kind) if kind == SolidityKind::If.as_u16() => parse_if(cursor, errors, items),
+        Some(kind) if kind == SolidityKind::For.as_u16() => parse_for(cursor, errors, items),
+        Some(kind) if kind == SolidityKind::While.as_u16() => parse_while(cursor, errors, items),
+        Some(kind) if kind == SolidityKind::Unchecked.as_u16() => {
+            parse_unchecked(cursor, errors, items);
+        }
+        Some(kind) if kind == SolidityKind::Try.as_u16() => parse_try(cursor, errors, items),
+        Some(kind) if kind == SolidityKind::Assembly.as_u16() => skip_assembly(cursor),
+        _ => recover_statement(cursor),
+    }
+}
+
+/// Parse `if (cond) body [else body]`, pushing body blocks.
+///
+/// The condition is skipped balanced: only bodies hold decls. Broken
+/// headers fall through so the body still parses without cascading.
+fn parse_if(cursor: &mut Cursor, errors: &mut Vec<ParseError>, items: &mut Vec<SyntaxElement>) {
+    cursor.bump();
+    if cursor.peek_kind() == Some(SolidityKind::LParen.as_u16()) {
+        skip_parens(cursor);
+    }
+    parse_control_body(cursor, errors, items);
+    if cursor.peek_kind() == Some(SolidityKind::Else.as_u16()) {
+        cursor.bump();
+        parse_control_body(cursor, errors, items);
+    }
+}
+
+/// Parse `for (init; cond; post) body` as one bounded block.
+///
+/// The whole statement becomes one child `Block` from `for` to body end.
+/// Header decls live inside it so uses after the loop miss. Bodies and
+/// `all_*` still find decls through the wrapper.
+fn parse_for(cursor: &mut Cursor, errors: &mut Vec<ParseError>, items: &mut Vec<SyntaxElement>) {
+    let Some(for_token) = cursor.bump() else {
+        return;
+    };
+    let start = for_token.span.start;
+    let mut inner: Vec<SyntaxElement> = Vec::new();
+    parse_for_header(cursor, &mut inner);
+    parse_control_body(cursor, errors, &mut inner);
+    let mut end = for_token.span.end;
+    for element in &inner {
+        if let SyntaxElement::Node(node) = element {
+            end = end.max(node.span.end);
+        }
+    }
+    // Cover skipped single-statement bodies with no node.
+    if let Some(prev) = cursor.tokens.get(cursor.pos().saturating_sub(1)) {
+        end = end.max(prev.span.end);
+    }
+    items.push(SyntaxElement::Node(SyntaxNode::with_children(
+        SolidityNode::Block.as_u16(),
+        Span::new(start, end),
+        inner,
+    )));
+}
+
+/// Parse `while (cond) body`, pushing the body block.
+fn parse_while(cursor: &mut Cursor, errors: &mut Vec<ParseError>, items: &mut Vec<SyntaxElement>) {
+    cursor.bump();
+    if cursor.peek_kind() == Some(SolidityKind::LParen.as_u16()) {
+        skip_parens(cursor);
+    }
+    parse_control_body(cursor, errors, items);
+}
+
+/// Parse `unchecked { ... }`, pushing the body block.
+fn parse_unchecked(
+    cursor: &mut Cursor,
+    errors: &mut Vec<ParseError>,
+    items: &mut Vec<SyntaxElement>,
+) {
+    cursor.bump();
+    if cursor.peek_kind() == Some(SolidityKind::LBrace.as_u16()) {
+        parse_control_body(cursor, errors, items);
+    } else {
+        recover_statement(cursor);
+    }
+}
+
+/// Parse `try callee [returns (...)] body (catch ... body)*`.
+///
+/// Bodies recurse as child blocks. Catch params stay deferred: the
+/// parenthesized list is skipped balanced with no symbols, so catch
+/// bindings never resolve in V1.
+fn parse_try(cursor: &mut Cursor, errors: &mut Vec<ParseError>, items: &mut Vec<SyntaxElement>) {
+    cursor.bump();
+    loop {
+        match cursor.peek_kind() {
+            None => return,
+            Some(kind) if kind == SolidityKind::LBrace.as_u16() => break,
+            Some(kind)
+                if kind == SolidityKind::Semicolon.as_u16()
+                    || kind == SolidityKind::RBrace.as_u16() =>
+            {
+                return;
+            }
+            Some(kind) if kind == SolidityKind::LParen.as_u16() => skip_parens(cursor),
+            _ => {
+                cursor.bump();
+            }
+        }
+    }
+    parse_control_body(cursor, errors, items);
+    loop {
+        if cursor.peek_kind() != Some(SolidityKind::Catch.as_u16()) {
+            return;
+        }
+        cursor.bump();
+        if cursor.peek_kind() == Some(SolidityKind::Ident.as_u16()) {
+            cursor.bump();
+        }
+        if cursor.peek_kind() == Some(SolidityKind::LParen.as_u16()) {
+            skip_parens(cursor);
+        }
+        match cursor.peek_kind() {
+            None => return,
+            Some(kind)
+                if kind == SolidityKind::RBrace.as_u16()
+                    || kind == SolidityKind::Catch.as_u16() =>
+            {
+                return;
+            }
+            _ => parse_control_body(cursor, errors, items),
+        }
+    }
+}
+
+/// Parse the `(init; cond; post)` header, keeping an init declaration.
+///
+/// Balanced scan only: a `Type name [= init];` init becomes one LocalVar
+/// node in the for wrapper so the body sees it but uses after the loop
+/// miss. Anything else (empty init, assignment, unbalanced) stops
+/// silently past `)`: no node, no error.
+fn parse_for_header(cursor: &mut Cursor, items: &mut Vec<SyntaxElement>) {
+    if cursor.peek_kind() != Some(SolidityKind::LParen.as_u16()) {
+        return;
+    }
+    if !is_for_decl_ahead(cursor) {
+        cursor.bump();
+        skip_to_rparen(cursor);
+        return;
+    }
+    cursor.bump();
+    match parse_local_var(cursor) {
+        Ok(node) => items.push(SyntaxElement::Node(node)),
+        Err(_) => {
+            skip_to_rparen(cursor);
+            return;
+        }
+    }
+    skip_to_rparen(cursor);
+}
+
+/// True when the `for (` init looks like `Type name [= ...];`.
+fn is_for_decl_ahead(cursor: &mut Cursor) -> bool {
+    let comment = SolidityKind::Comment.as_u16();
+    let mut index = cursor.pos() + 1;
+    while cursor
+        .tokens
+        .get(index)
+        .is_some_and(|token| token.kind == comment)
+    {
+        index += 1;
+    }
+    let Some(first) = cursor.tokens.get(index) else {
+        return false;
+    };
+    if !(is_type_start(first.kind) || first.kind == SolidityKind::Ident.as_u16()) {
+        return false;
+    }
+    decl_ahead_at(cursor.tokens, index)
+}
+
+/// Skip to past the matching `)` at depth zero. Callers consumed `(`.
+///
+/// Stops at braces or EOF when unbalanced so body parsing survives.
+fn skip_to_rparen(cursor: &mut Cursor) {
+    let mut depth = 1u32;
+    while let Some(kind) = cursor.peek_kind() {
+        if kind == SolidityKind::LParen.as_u16() {
+            depth += 1;
+        } else if kind == SolidityKind::RParen.as_u16() {
+            depth -= 1;
+            cursor.bump();
+            if depth == 0 {
+                return;
+            }
+            continue;
+        } else if kind == SolidityKind::LBrace.as_u16() || kind == SolidityKind::RBrace.as_u16() {
+            return;
+        }
+        cursor.bump();
+    }
+}
+
+/// Parse `(a, b, ...) = rhs;` tuple rows at block top level.
+///
+/// Each `Type name` element becomes one LocalVar node; bare ident
+/// elements are pure assignments with no symbols. The row must close
+/// with `)` then `=` and end with `;`: anything else returns `None`
+/// with the cursor rewound so the caller recovers one statement.
+fn try_parse_tuple(cursor: &mut Cursor) -> Option<Vec<SyntaxNode>> {
+    let start = cursor.pos();
+    if cursor.peek_kind() != Some(SolidityKind::LParen.as_u16()) {
+        return None;
+    }
+    cursor.bump();
+    let mut nodes = Vec::new();
+    loop {
+        if cursor.peek_kind() == Some(SolidityKind::RParen.as_u16()) {
+            cursor.bump();
+            break;
+        }
+        let element = cursor.pos();
+        let Some(first) = cursor.peek().cloned() else {
+            cursor.set_pos(start);
+            return None;
+        };
+        if is_type_start(first.kind) {
+            let Some(node) = parse_tuple_decl_element(cursor) else {
+                cursor.set_pos(start);
+                return None;
+            };
+            nodes.push(node);
+        } else if first.kind == SolidityKind::Ident.as_u16() {
+            if decl_ahead_at(cursor.tokens, element) {
+                let Some(node) = parse_tuple_decl_element(cursor) else {
+                    cursor.set_pos(start);
+                    return None;
+                };
+                nodes.push(node);
+            } else if is_param_name(&first.text) {
+                cursor.bump();
+            } else {
+                cursor.set_pos(start);
+                return None;
+            }
+        } else {
+            cursor.set_pos(start);
+            return None;
+        }
+        match cursor.peek_kind() {
+            Some(kind) if kind == SolidityKind::Comma.as_u16() => {
+                cursor.bump();
+            }
+            Some(kind) if kind == SolidityKind::RParen.as_u16() => {
+                cursor.bump();
+                break;
+            }
+            _ => {
+                cursor.set_pos(start);
+                return None;
+            }
+        }
+    }
+    if cursor.peek_kind() != Some(SolidityKind::Assign.as_u16()) {
+        cursor.set_pos(start);
+        return None;
+    }
+    cursor.bump();
+    loop {
+        match cursor.peek_kind() {
+            None => {
+                cursor.set_pos(start);
+                return None;
+            }
+            Some(kind) if kind == SolidityKind::Semicolon.as_u16() => {
+                cursor.bump();
+                return Some(nodes);
+            }
+            Some(kind) if kind == SolidityKind::RBrace.as_u16() => {
+                cursor.set_pos(start);
+                return None;
+            }
+            Some(kind) if kind == SolidityKind::LBrace.as_u16() => skip_balanced(cursor),
+            _ => {
+                cursor.bump();
+            }
+        }
+    }
+}
+
+/// Parse one `Type [dataloc] name` tuple element into a LocalVar node.
+///
+/// Shares `parse_type` shape with `parse_var` but spans the element
+/// only: the shared `= rhs` belongs to the row, not to one name.
+fn parse_tuple_decl_element(cursor: &mut Cursor) -> Option<SyntaxNode> {
+    let var_type = parse_type(cursor).ok()?;
+    let start = var_type.span.start;
+    loop {
+        match cursor.peek_kind() {
+            Some(kind)
+                if kind == SolidityKind::Memory.as_u16()
+                    || kind == SolidityKind::Storage.as_u16()
+                    || kind == SolidityKind::Calldata.as_u16() =>
+            {
+                cursor.bump();
+            }
+            _ => break,
+        }
+    }
+    let name = cursor.peek().cloned()?;
+    if !is_param_name(&name.text) {
+        return None;
+    }
+    cursor.bump();
+    let end = name.span.end.max(var_type.span.end);
+    Some(SyntaxNode::with_children(
+        SolidityNode::LocalVar.as_u16(),
+        Span::new(start, end),
+        vec![SyntaxElement::Node(var_type), token_element(name.clone())],
     ))
 }
 
@@ -1218,7 +1579,14 @@ fn parse_override_bases(cursor: &mut Cursor, children: &mut Vec<SyntaxElement>) 
 
 /// True when the upcoming tokens look like `Type name [= ;]`.
 pub(crate) fn is_local_decl_ahead(cursor: &mut Cursor) -> bool {
-    let tokens = &cursor.tokens[cursor.pos()..];
+    decl_ahead_at(cursor.tokens, cursor.pos())
+}
+
+fn decl_ahead_at(tokens: &[forgels_syntax::Token], start: usize) -> bool {
+    let tokens = match tokens.get(start..) {
+        Some(slice) => slice,
+        None => return false,
+    };
     let mut index = 0;
     // Skip the type: mapping(...) or one word, plus array suffixes.
     if tokens.first().is_some_and(|token| {

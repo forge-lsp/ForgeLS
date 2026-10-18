@@ -463,22 +463,38 @@ fn function_scope(function: &FunctionDef) -> Scope {
         }
     }
     if let Some(body) = function.body() {
-        for local in body.locals() {
-            if let Some(name) = local.name() {
-                let mut detail = local
-                    .type_node()
-                    .map(|node| node.text())
-                    .unwrap_or_default();
-                detail.push(' ');
-                detail.push_str(&name);
-                scope.symbols.push(Symbol::new(
-                    name,
-                    SymbolKind::LocalVar,
-                    local.syntax().span,
-                    detail,
-                ));
-            }
+        scope.children.push(block_scope(&body));
+    }
+    scope
+}
+
+/// Scope for one block: direct locals plus nested block scopes.
+///
+/// Nested `if`, `for`, `while`, `unchecked`, and `try` bodies parse as
+/// child `Block` nodes, so shadowing resolves innermost first. For-init
+/// decls live in the `for` wrapper block and stay visible only inside
+/// it, so uses after the loop miss. Tuple decls expand to one `LocalVar`
+/// per name.
+fn block_scope(block: &crate::BlockNode) -> Scope {
+    let mut scope = Scope::new(block.syntax().span);
+    for local in block.locals() {
+        if let Some(name) = local.name() {
+            let mut detail = local
+                .type_node()
+                .map(|node| node.text())
+                .unwrap_or_default();
+            detail.push(' ');
+            detail.push_str(&name);
+            scope.symbols.push(Symbol::new(
+                name,
+                SymbolKind::LocalVar,
+                local.syntax().span,
+                detail,
+            ));
         }
+    }
+    for child in block.child_blocks() {
+        scope.children.push(block_scope(&child));
     }
     scope
 }

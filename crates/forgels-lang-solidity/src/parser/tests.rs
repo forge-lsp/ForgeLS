@@ -895,3 +895,122 @@ fn member_options_without_parens_falls_back_to_plain() {
     assert!(!body.members()[0].has_call_options());
     assert!(!body.members()[0].is_call());
 }
+
+#[test]
+fn nested_blocks_recurse_via_all() {
+    use crate::LocalVar;
+    let text = "contract C {\nfunction f() public {\nuint a = 1;\nif (true) {\nuint b = 2;\nwhile (a > 0) {\nuint c = 3;\n}\n}\n}\n}";
+    let file = parse_ok(text);
+    let body = file.contracts()[0].functions()[0].body().expect("body");
+    let direct: Vec<String> = body.locals().iter().filter_map(LocalVar::name).collect();
+    assert_eq!(direct, vec!["a"]);
+    assert_eq!(body.child_blocks().len(), 1);
+    let all: Vec<String> = body
+        .all_locals()
+        .iter()
+        .filter_map(LocalVar::name)
+        .collect();
+    assert_eq!(all, vec!["a", "b", "c"]);
+}
+
+#[test]
+fn for_header_decl_is_collected() {
+    use crate::LocalVar;
+    let text = "contract C {\nfunction f() public {\nfor (uint i = 0; i < 10; i++) {\nuint x = 1;\n}\n}\n}";
+    let file = parse_ok(text);
+    let body = file.contracts()[0].functions()[0].body().expect("body");
+    let all: Vec<String> = body
+        .all_locals()
+        .iter()
+        .filter_map(LocalVar::name)
+        .collect();
+    assert_eq!(all, vec!["i", "x"]);
+}
+
+#[test]
+fn for_without_decl_collects_nothing() {
+    let text = "contract C {\nfunction f() public {\nuint i = 0;\nfor (; i < 10; i++) {\nuint x = 1;\n}\nfor (i = 0; i < 5; i++) {\n}\n}\n}";
+    let lexer = SolidityLexer;
+    let tokens = lexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let body = file.contracts()[0].functions()[0].body().expect("body");
+    let all: Vec<String> = body
+        .all_locals()
+        .iter()
+        .filter_map(|local| local.name())
+        .collect();
+    assert_eq!(all, vec!["i", "x"]);
+}
+
+#[test]
+fn tuple_decl_expands_per_name() {
+    use crate::LocalVar;
+    let text = "contract C {\nfunction f() public {\n(uint a, uint b) = pair();\n}\n}";
+    let file = parse_ok(text);
+    let body = file.contracts()[0].functions()[0].body().expect("body");
+    let names: Vec<String> = body.locals().iter().filter_map(LocalVar::name).collect();
+    assert_eq!(names, vec!["a", "b"]);
+}
+
+#[test]
+fn tuple_assignment_holds_no_symbols() {
+    let text =
+        "contract C {\nfunction f() public {\nuint a = 1;\nuint b = 2;\n(a, b) = pair();\n}\n}";
+    let file = parse_ok(text);
+    let body = file.contracts()[0].functions()[0].body().expect("body");
+    let names: Vec<String> = body
+        .all_locals()
+        .iter()
+        .filter_map(|local| local.name())
+        .collect();
+    assert_eq!(names, vec!["a", "b"]);
+}
+
+#[test]
+fn try_catch_and_unchecked_bodies_parse() {
+    use crate::LocalVar;
+    let text = "contract C {\nfunction f() public {\nunchecked {\nuint a = 1;\n}\ntry this.greet() {\nuint b = 2;\n} catch (bytes memory e) {\nuint c = 3;\n} catch {\nuint d = 4;\n}\n}\n}";
+    let lexer = SolidityLexer;
+    let tokens = lexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let body = file.contracts()[0].functions()[0].body().expect("body");
+    let all: Vec<String> = body
+        .all_locals()
+        .iter()
+        .filter_map(LocalVar::name)
+        .collect();
+    assert_eq!(all, vec!["a", "b", "c", "d"]);
+}
+
+#[test]
+fn assembly_inside_control_stays_skipped() {
+    use crate::LocalVar;
+    let text = "contract C {\nfunction f() public {\nif (true) {\nassembly {\nlet y := 1\n}\nuint z = 2;\n}\n}\n}";
+    let lexer = SolidityLexer;
+    let tokens = lexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let body = file.contracts()[0].functions()[0].body().expect("body");
+    let all: Vec<String> = body
+        .all_locals()
+        .iter()
+        .filter_map(LocalVar::name)
+        .collect();
+    assert_eq!(all, vec!["z"]);
+}
+
+#[test]
+fn non_brace_body_falls_back_without_node() {
+    let text = "contract C {\nfunction f() public {\nif (true)\nrevert();\nuint x = 1;\n}\n}";
+    let file = parse_ok(text);
+    let body = file.contracts()[0].functions()[0].body().expect("body");
+    assert!(body.child_blocks().is_empty());
+    let names: Vec<String> = body
+        .all_locals()
+        .iter()
+        .filter_map(|local| local.name())
+        .collect();
+    assert_eq!(names, vec!["x"]);
+}

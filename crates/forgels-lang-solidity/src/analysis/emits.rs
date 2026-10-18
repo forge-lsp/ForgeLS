@@ -331,7 +331,7 @@ pub fn unknown_emit_diagnostics(
             let Some(body) = function.body() else {
                 continue;
             };
-            for emit in body.emits() {
+            for emit in body.all_emits() {
                 let Some(name) = emit.name() else {
                     continue;
                 };
@@ -416,7 +416,7 @@ pub fn emit_arity_diagnostics(file: &SolidityFile) -> Vec<DiagnosticData> {
             let Some(body) = function.body() else {
                 continue;
             };
-            for emit in body.emits() {
+            for emit in body.all_emits() {
                 let Some(name) = emit.name() else {
                     continue;
                 };

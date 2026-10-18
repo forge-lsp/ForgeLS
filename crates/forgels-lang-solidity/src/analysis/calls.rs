@@ -50,7 +50,7 @@ pub fn arity_diagnostics(file: &SolidityFile, scope: &Scope) -> Vec<DiagnosticDa
             let Some(body) = function.body() else {
                 continue;
             };
-            for call in body.calls() {
+            for call in body.all_calls() {
                 let Some(callee) = call.callee() else {
                     continue;
                 };
@@ -109,7 +109,7 @@ pub fn member_arity_diagnostics(
             let Some(body) = function.body() else {
                 continue;
             };
-            for member in body.members() {
+            for member in body.all_members() {
                 if !member.is_call() {
                     continue;
                 }
