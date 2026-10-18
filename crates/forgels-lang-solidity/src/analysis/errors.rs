@@ -57,6 +57,17 @@ pub fn is_revert_name_context(text: &str, offset: u32) -> bool {
     if after.contains('(') || after.contains(';') {
         return false;
     }
+    // Slot starts after whitespace: `revert` alone is still the keyword.
+    if !after.chars().any(|c| c == ' ' || c == '\t') {
+        return false;
+    }
+    let trimmed = after.trim_start_matches([' ', '\t']);
+    if !trimmed
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$')
+    {
+        return false;
+    }
     true
 }
 

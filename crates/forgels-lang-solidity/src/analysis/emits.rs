@@ -30,8 +30,9 @@ fn is_emit_word(line: &str, start: usize) -> bool {
 /// True when `offset` sits in the event name slot after `emit`.
 ///
 /// Line scan only: finds the last standalone `emit` on the line and
-/// rejects positions past `(` or `;`. Keywords stay hidden here, only
-/// events complete.
+/// rejects positions past `(` or `;`. Requires whitespace after `emit`
+/// so typing the keyword itself stays keyword context. Keywords stay
+/// hidden here, only events complete.
 pub fn is_emit_name_context(text: &str, offset: u32) -> bool {
     let at = (offset as usize).min(text.len());
     let head = match text.get(..at) {
@@ -59,6 +60,18 @@ pub fn is_emit_name_context(text: &str, offset: u32) -> bool {
         None => return false,
     };
     if after.contains('(') || after.contains(';') {
+        return false;
+    }
+    // Slot starts after whitespace: `emit` alone is still the keyword.
+    if !after.chars().any(|c| c == ' ' || c == '\t') {
+        return false;
+    }
+    // Only spaces plus a word prefix allowed past `emit`.
+    let trimmed = after.trim_start_matches([' ', '\t']);
+    if !trimmed
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$')
+    {
         return false;
     }
     true
