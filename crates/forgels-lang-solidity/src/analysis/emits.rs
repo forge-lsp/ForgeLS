@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use forgels_core::DiagnosticData;
+use forgels_lint::RuleId;
 use forgels_syntax::{AstNode, Span};
 
 use super::{Symbol, SymbolKind, inheritance};
@@ -370,6 +371,7 @@ pub fn unknown_emit_diagnostics(
                 out.push(DiagnosticData::error(
                     name_span,
                     format!("unresolved event '{name}'"),
+                    RuleId::UNRESOLVED_EVENT,
                 ));
             }
         }
@@ -446,6 +448,7 @@ pub fn emit_arity_diagnostics(file: &SolidityFile) -> Vec<DiagnosticData> {
                         format!(
                             "this event '{name}' takes {expected} arguments but {actual} supplied"
                         ),
+                        RuleId::EMIT_ARITY,
                     ));
                 }
             }

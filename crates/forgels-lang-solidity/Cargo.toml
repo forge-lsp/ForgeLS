@@ -9,6 +9,7 @@ forgels-core.workspace = true
 forgels-protocol.workspace = true
 forgels-syntax.workspace = true
 forgels-common.workspace = true
+forgels-lint.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]

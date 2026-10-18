@@ -813,6 +813,7 @@ fn too_few_args_reports_exact_message() {
         found[0].message,
         "this function 'greet' takes 2 arguments but 1 supplied"
     );
+    assert_eq!(found[0].rule.as_str(), "correctness/call-arity");
     let covered = &text[found[0].span.start as usize..found[0].span.end as usize];
     assert!(
         covered.starts_with("greet") && covered.ends_with(')'),
@@ -1477,6 +1478,7 @@ fn try_new_reuses_deploy_arity() {
         found[0].message,
         "this constructor for 'Vault' takes 2 arguments but 1 supplied"
     );
+    assert_eq!(found[0].rule.as_str(), "correctness/deploy-arity");
 }
 
 #[test]
@@ -2462,6 +2464,7 @@ fn emit_arity_reports_exact_message() {
         found[0].message,
         "this event 'Transfer' takes 2 arguments but 1 supplied"
     );
+    assert_eq!(found[0].rule.as_str(), "correctness/emit-arity");
 }
 
 #[test]
@@ -4475,6 +4478,7 @@ fn builtin_arity_wrong_count_reports_exact_message() {
                 arity + 1
             )
         );
+        assert_eq!(found[0].rule.as_str(), "correctness/builtin-arity");
         let covered = &text[found[0].span.start as usize..found[0].span.end as usize];
         assert!(
             covered.starts_with(name) && covered.ends_with(')'),
@@ -4532,11 +4536,13 @@ fn options_unknown_key_errors_for_member_and_new() {
     let found = diagnostics_of(member);
     assert_eq!(found.len(), 1, "diags: {found:?}");
     assert_eq!(found[0].message, "unknown call option 'foo'");
+    assert_eq!(found[0].rule.as_str(), "correctness/call-options");
     let deploy =
         "contract C {\nconstructor(uint a) { a; }\nfunction f() public {\nnew C{foo: 1}(1);\n}\n}";
     let deploy_found = diagnostics_of(deploy);
     assert_eq!(deploy_found.len(), 1, "diags: {deploy_found:?}");
     assert_eq!(deploy_found[0].message, "unknown call option 'foo'");
+    assert_eq!(deploy_found[0].rule.as_str(), "correctness/call-options");
 }
 
 #[test]
@@ -5063,6 +5069,7 @@ fn error_too_many_reports_exact_message() {
         found[0].message,
         "this error 'Insufficient' takes 1 arguments but 2 supplied"
     );
+    assert_eq!(found[0].rule.as_str(), "correctness/error-arity");
 }
 
 #[test]
@@ -5231,6 +5238,7 @@ fn struct_too_many_reports_exact_message() {
         found[0].message,
         "this struct 'Person' takes 1 arguments but 2 supplied"
     );
+    assert_eq!(found[0].rule.as_str(), "correctness/struct-arity");
 }
 
 #[test]

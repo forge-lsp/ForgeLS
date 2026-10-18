@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 
 use forgels_core::DiagnosticData;
+use forgels_lint::RuleId;
 use forgels_syntax::AstNode;
 
 use crate::{ContractDef, EnumDef, SolidityFile, StructDef, UserTypeDef};
@@ -658,6 +659,7 @@ pub(crate) fn linearization_diagnostics(
         out.push(DiagnosticData::error(
             span,
             format!("inconsistent linearization for '{name}'"),
+            RuleId::INCONSISTENT_INHERITANCE,
         ));
     }
     out

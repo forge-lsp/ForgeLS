@@ -8,7 +8,7 @@ use forgels_syntax::Span;
 
 use forgels_common::fs::is_trackable_file;
 use forgels_common::paths::resolve_import;
-use forgels_lint::Severity;
+use forgels_lint::{RuleId, Severity};
 
 use crate::index::ProjectIndex;
 use crate::routing::Language;
@@ -428,30 +428,34 @@ pub struct DiagnosticData {
     pub span: Span,
     pub message: String,
     pub severity: Severity,
+    pub rule: RuleId,
 }
 
 impl DiagnosticData {
-    pub fn new(span: Span, message: String) -> Self {
+    pub fn new(span: Span, message: String, rule: RuleId) -> Self {
         Self {
             span,
             message,
             severity: Severity::Error,
+            rule,
         }
     }
 
-    pub fn error(span: Span, message: String) -> Self {
+    pub fn error(span: Span, message: String, rule: RuleId) -> Self {
         Self {
             span,
             message,
             severity: Severity::Error,
+            rule,
         }
     }
 
-    pub fn warning(span: Span, message: String) -> Self {
+    pub fn warning(span: Span, message: String, rule: RuleId) -> Self {
         Self {
             span,
             message,
             severity: Severity::Warning,
+            rule,
         }
     }
 }

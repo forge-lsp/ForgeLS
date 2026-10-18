@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use forgels_core::DiagnosticData;
+use forgels_lint::RuleId;
 use forgels_syntax::{AstNode, Lexer};
 
 use super::{Scope, SymbolKind, unknown};
@@ -154,6 +155,7 @@ pub fn mutability_diagnostics(
                             format!(
                                 "pure function '{func_name}' cannot write to state variable '{name}'"
                             ),
+                            RuleId::MUTABILITY,
                         ));
                     } else {
                         out.push(DiagnosticData::error(
@@ -161,6 +163,7 @@ pub fn mutability_diagnostics(
                             format!(
                                 "pure function '{func_name}' cannot read state variable '{name}'"
                             ),
+                            RuleId::MUTABILITY,
                         ));
                     }
                 } else if is_write {
@@ -169,6 +172,7 @@ pub fn mutability_diagnostics(
                         format!(
                             "view function '{func_name}' cannot write to state variable '{name}'"
                         ),
+                        RuleId::MUTABILITY,
                     ));
                 }
             }
@@ -312,6 +316,7 @@ fn check_member_write(
         out.push(DiagnosticData::error(
             span,
             format!("pure function '{func_name}' cannot write to state variable '{root}'"),
+            RuleId::MUTABILITY,
         ));
         return;
     }
@@ -319,6 +324,7 @@ fn check_member_write(
         out.push(DiagnosticData::error(
             span,
             format!("view function '{func_name}' cannot write to state variable '{root}'"),
+            RuleId::MUTABILITY,
         ));
     }
 }

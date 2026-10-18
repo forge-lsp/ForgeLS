@@ -9,6 +9,8 @@ use forgels_syntax::{ParseError, Span};
 /// untouched so parser wording stays searchable in tests.
 pub fn parse_error_to_diagnostic(text: &str, error: &ParseError) -> Diagnostic {
     Diagnostic::error(span_to_range(text, error.span), error.message.clone())
+        .with_code("correctness/parse-error")
+        .with_source("forgels")
 }
 
 /// Map every collected error to its own diagnostic, in order.
@@ -29,4 +31,6 @@ pub fn unresolved_import_to_diagnostic(text: &str, span: Span, raw: &str) -> Dia
         span_to_range(text, span),
         format!("unresolved import \"{raw}\""),
     )
+    .with_code("correctness/unresolved-import")
+    .with_source("forgels")
 }

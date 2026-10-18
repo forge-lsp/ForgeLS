@@ -96,6 +96,8 @@ fn publish_for_uri(
                 range: span_to_range(&doc.text, item.span),
                 severity: Some(item.severity.to_protocol()),
                 message: item.message.clone(),
+                code: Some(item.rule.as_str().to_string()),
+                source: Some("forgels".to_string()),
             };
             (item.span, diagnostic)
         })
@@ -137,6 +139,8 @@ fn publish_for_uri(
                 },
                 "severity": severity,
                 "message": diagnostic.message,
+                "code": diagnostic.code,
+                "source": diagnostic.source,
             })
         })
         .collect();

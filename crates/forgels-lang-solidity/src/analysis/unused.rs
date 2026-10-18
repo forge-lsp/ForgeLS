@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use forgels_core::{DiagnosticData, ProjectContext};
+use forgels_lint::RuleId;
 use forgels_syntax::{AstNode, Lexer};
 
 use super::{forge, references, unknown};
@@ -57,6 +58,7 @@ fn push_unused(
     out.push(DiagnosticData::error(
         span,
         format!("unused {kind} '{name}'"),
+        RuleId::UNUSED,
     ));
 }
 
@@ -174,6 +176,7 @@ fn unused_imports(file: &SolidityFile, text: &str) -> Vec<DiagnosticData> {
         out.push(DiagnosticData::error(
             span,
             format!("unused import '{raw}'"),
+            RuleId::UNUSED,
         ));
     }
     out

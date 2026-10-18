@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 
 use forgels_core::DiagnosticData;
+use forgels_lint::RuleId;
 use forgels_syntax::AstNode;
 
 use super::{inheritance, members};
@@ -237,6 +238,7 @@ pub fn visibility_diagnostics(
                         format!(
                             "external function '{callee}' must be called via 'this.{callee}()' or '{contract_name}.{callee}()'"
                         ),
+                        RuleId::VISIBILITY,
                     ));
                     continue;
                 }
@@ -246,6 +248,7 @@ pub fn visibility_diagnostics(
                         format!(
                             "private function '{callee}' cannot be called from derived contract '{contract_name}'"
                         ),
+                        RuleId::VISIBILITY,
                     ));
                 }
             }
@@ -284,6 +287,7 @@ pub fn visibility_diagnostics(
                         format!(
                             "internal function '{name}' cannot be called via instance '{root}'"
                         ),
+                        RuleId::VISIBILITY,
                     ));
                     continue;
                 }
@@ -291,6 +295,7 @@ pub fn visibility_diagnostics(
                     out.push(DiagnosticData::error(
                         member.syntax().span,
                         format!("private function '{name}' cannot be called via instance '{root}'"),
+                        RuleId::VISIBILITY,
                     ));
                 }
             }

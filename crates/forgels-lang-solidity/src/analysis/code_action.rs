@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 
 use forgels_core::{CodeActionData, MAX_CODE_ACTIONS, ProjectContext, analyzer::TextEdit};
+use forgels_lint::RuleId;
 use forgels_syntax::{AstNode, Lexer, Span};
 
 use super::collect_symbols;
@@ -142,6 +143,9 @@ fn override_fixes(file: &SolidityFile, range: Span, out: &mut Vec<CodeActionData
             break;
         }
         if !diag.message.contains("missing 'override'") {
+            continue;
+        }
+        if diag.rule != RuleId::OVERRIDE {
             continue;
         }
         if !overlaps(diag.span, range) {

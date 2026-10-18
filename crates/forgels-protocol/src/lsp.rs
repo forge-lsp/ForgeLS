@@ -27,6 +27,8 @@ pub struct Diagnostic {
     pub range: Range,
     pub severity: Option<DiagnosticSeverity>,
     pub message: String,
+    pub code: Option<String>,
+    pub source: Option<String>,
 }
 
 impl Diagnostic {
@@ -35,6 +37,8 @@ impl Diagnostic {
             range,
             severity: None,
             message: message.into(),
+            code: None,
+            source: None,
         }
     }
 
@@ -43,6 +47,8 @@ impl Diagnostic {
             range,
             severity: Some(DiagnosticSeverity::Error),
             message: message.into(),
+            code: None,
+            source: None,
         }
     }
 
@@ -51,7 +57,19 @@ impl Diagnostic {
             range,
             severity: Some(DiagnosticSeverity::Warning),
             message: message.into(),
+            code: None,
+            source: None,
         }
+    }
+
+    pub fn with_code(mut self, code: impl Into<String>) -> Self {
+        self.code = Some(code.into());
+        self
+    }
+
+    pub fn with_source(mut self, source: impl Into<String>) -> Self {
+        self.source = Some(source.into());
+        self
     }
 }
 
