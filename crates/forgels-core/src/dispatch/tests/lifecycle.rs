@@ -29,16 +29,20 @@ fn advertises_exact_beta_capabilities() {
         keys,
         vec![
             "callHierarchyProvider",
+            "codeActionProvider",
             "completionProvider",
             "definitionProvider",
             "documentSymbolProvider",
+            "foldingRangeProvider",
             "hoverProvider",
             "inlayHintProvider",
             "referencesProvider",
             "renameProvider",
+            "selectionRangeProvider",
             "semanticTokensProvider",
             "signatureHelpProvider",
             "textDocumentSync",
+            "typeHierarchyProvider",
             "workspaceSymbolProvider"
         ]
     );

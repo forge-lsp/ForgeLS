@@ -643,10 +643,63 @@ Status: token kinds defined. Real lexer and parser are planned.
   or editor setting) before any range check makes sense. No task
   created in this change.
 
+## Code actions
+
+- Scope: `analysis::code_action` plus `Analyzer::code_actions` and the
+  `textDocument/codeAction` dispatch. Capability
+  `codeActionProvider: true`.
+- Shape: `CodeActionData {title, kind, edit}`. Dispatch maps `edit` to
+  `WorkspaceEdit` changes. Kind is `quickfix`, no `command`, no
+  `resolve` in V1. Caps at `MAX_CODE_ACTIONS = 10`.
+- Import: unresolved name in `range` with exactly one tracked provider
+  proposes `Import 'X' from "./File.sol"` inserting at offset 0.
+  Ambiguous names, missing names, dep-available names, and already
+  imported files stay silent.
+- Override: O1 diagnostic in `range` proposes `Add 'override' to 'f'`
+  inserting `override` before the function body. Other override
+  diagnostics and bodyless functions stay silent.
+- Noir: trait default returns `[]`, no noir grammar change.
+
+## Folding and selection
+
+- Scope: `analysis::folding` plus `Analyzer::folding_ranges` and the
+  `textDocument/foldingRange` dispatch, plus `analysis::selection`
+  plus `Analyzer::selection_range` and the
+  `textDocument/selectionRange` dispatch. Capabilities
+  `foldingRangeProvider: true` and `selectionRangeProvider: true`.
+- Folding shape: `FoldingRangeData {span}`. Dispatch maps `span` to
+  `startLine` and `endLine`. Caps at `MAX_FOLDING_RANGES = 200`.
+- Folding source: nested contract, function, and block spans in source
+  order. Single line spans drop. Empty text returns empty.
+- Selection shape: `Vec<Span>` innermost first. Dispatch nests each
+  entry into `parent` links. Empty chains fall back to a zero length
+  range at the cursor. Caps at `MAX_SELECTION_DEPTH = 20`.
+- Selection source: word at cursor, then inner blocks out to the body,
+  then function, contract, and file span. Dedupes exact duplicates.
+- Noir: trait defaults return `[]`, no noir grammar change.
+
+## Type hierarchy
+
+- Scope: `analysis::type_hierarchy` plus `Analyzer::prepare_type_hierarchy`,
+  `supertypes`, `subtypes` and three dispatches
+  (`prepareTypeHierarchy`, `supertypes`, `subtypes`).
+  Capability `typeHierarchyProvider: true`.
+- Shape: `TypeHierarchyItemData {name, kind, detail, path, span,
+  selection}`. Dispatch maps spans with tracked or disk text, skips
+  out-of-bounds, caps at `MAX_TYPE_HIERARCHY = 50`.
+- Prepare: contract at the cursor only. Nameless contracts and outside
+  positions return `None`.
+- Supertypes: `linearize` same file bases plus `linearize_across` dep
+  bases in heritage order, transitive first. Dedupes by name.
+- Subtypes: scans tracked Solidity files path-sorted for heritage with
+  the exact target name. Prefix and case variants never count. Target
+  itself is skipped.
+- Noir: trait defaults return `None`, no noir grammar change.
+
 ## V1 limits
 
 - Tracked only: `dep_texts` skips untracked and missing files.
-- Caps: dep read cap is 16, republish fan-out cap is 32, references cap is 100, inlay cap is 100, semantic cap is 5000, call hierarchy cap is 50.
+- Caps: dep read cap is 16, republish fan-out cap is 32, references cap is 100, inlay cap is 100, semantic cap is 5000, call hierarchy cap is 50, code action cap is 10, folding cap is 200, selection depth cap is 20, type hierarchy cap is 50.
 - Symbols: `Contract` and `Function` cross files. `StateVar`, `Param`, and `LocalVar` stay local.
 - Imports: union without alias precision. `{B as C}` records both `B` and `C`, no alias mapping.
 - Parse: parse on each call, no incremental cache.

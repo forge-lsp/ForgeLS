@@ -829,3 +829,403 @@ fn call_hierarchy_outgoing_result(
     }
     Some(Value::Array(out))
 }
+
+/// Answer `textDocument/codeAction` with a quickfix array.
+/// Unknown files get an empty list. Notifications without id stay silent.
+/// Each entry carries `edit` only: no `command`, no `resolve` in V1.
+pub(crate) fn code_action_response(
+    session: &Session,
+    workspace: &Workspace,
+    params: &Value,
+    id: Option<&Value>,
+) -> Option<String> {
+    let id = id?.clone();
+    let result = code_action_result(session, workspace, params).unwrap_or(Value::Array(Vec::new()));
+    let response = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "result": result
+    });
+    Some(response.to_string())
+}
+
+fn code_action_result(session: &Session, workspace: &Workspace, params: &Value) -> Option<Value> {
+    let uri = params.get("textDocument")?.get("uri")?.as_str()?;
+    let range = params.get("range")?;
+    let start = range.get("start")?;
+    let end = range.get("end")?;
+    let start_pos = Position {
+        line: start.get("line")?.as_u64()? as u32,
+        character: start.get("character")?.as_u64()? as u32,
+    };
+    let end_pos = Position {
+        line: end.get("line")?.as_u64()? as u32,
+        character: end.get("character")?.as_u64()? as u32,
+    };
+    let path = uri_to_path(uri);
+    let doc = workspace.get(&path)?;
+    let analyzer = session.analyzers.get(&doc.language)?;
+    let start_off = position_to_offset(&doc.text, start_pos);
+    let end_off = position_to_offset(&doc.text, end_pos);
+    let span = forgels_syntax::Span::new(start_off.min(end_off), start_off.max(end_off));
+    let ctx = ProjectContext::new(&path, &doc.text, start_off, workspace);
+    let mut items = Vec::new();
+    for action in analyzer
+        .code_actions(&ctx, span)
+        .iter()
+        .take(crate::analyzer::MAX_CODE_ACTIONS)
+    {
+        if action.title.is_empty() {
+            continue;
+        }
+        if doc
+            .text
+            .get(action.edit.span.start as usize..action.edit.span.end as usize)
+            .is_none()
+        {
+            continue;
+        }
+        let edit_range = span_to_range(&doc.text, action.edit.span);
+        items.push(serde_json::json!({
+            "title": action.title,
+            "kind": action.kind,
+            "edit": {
+                "changes": {
+                    path_to_uri(&path): [{
+                        "range": {
+                            "start": { "line": edit_range.start.line, "character": edit_range.start.character },
+                            "end": { "line": edit_range.end.line, "character": edit_range.end.character },
+                        },
+                        "newText": action.edit.new_text,
+                    }]
+                }
+            },
+        }));
+    }
+    Some(Value::Array(items))
+}
+
+/// Answer `textDocument/foldingRange` with a range array.
+/// Unknown files get an empty list. Single line spans never surface.
+pub(crate) fn folding_range_response(
+    session: &Session,
+    workspace: &Workspace,
+    params: &Value,
+    id: Option<&Value>,
+) -> Option<String> {
+    let id = id?.clone();
+    let result =
+        folding_range_result(session, workspace, params).unwrap_or(Value::Array(Vec::new()));
+    let response = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "result": result
+    });
+    Some(response.to_string())
+}
+
+fn folding_range_result(session: &Session, workspace: &Workspace, params: &Value) -> Option<Value> {
+    let uri = params.get("textDocument")?.get("uri")?.as_str()?;
+    let path = uri_to_path(uri);
+    let doc = workspace.get(&path)?;
+    let analyzer = session.analyzers.get(&doc.language)?;
+    let mut items = Vec::new();
+    for entry in analyzer
+        .folding_ranges(&doc.text)
+        .iter()
+        .take(crate::analyzer::MAX_FOLDING_RANGES)
+    {
+        if doc
+            .text
+            .get(entry.span.start as usize..entry.span.end as usize)
+            .is_none()
+        {
+            continue;
+        }
+        if entry.span.start >= entry.span.end {
+            continue;
+        }
+        let start = offset_to_position(&doc.text, entry.span.start);
+        let end = offset_to_position(&doc.text, entry.span.end);
+        if start.line >= end.line {
+            continue;
+        }
+        items.push(serde_json::json!({
+            "startLine": start.line,
+            "endLine": end.line,
+        }));
+    }
+    Some(Value::Array(items))
+}
+
+/// Answer `textDocument/selectionRange` with a nested range array.
+/// Unknown files get an empty list. Each position maps to one entry
+/// with its parent chain outermost last.
+pub(crate) fn selection_range_response(
+    session: &Session,
+    workspace: &Workspace,
+    params: &Value,
+    id: Option<&Value>,
+) -> Option<String> {
+    let id = id?.clone();
+    let result =
+        selection_range_result(session, workspace, params).unwrap_or(Value::Array(Vec::new()));
+    let response = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "result": result
+    });
+    Some(response.to_string())
+}
+
+fn selection_value(text: &str, span: forgels_syntax::Span) -> Option<Value> {
+    text.get(span.start as usize..span.end as usize)?;
+    let range = span_to_range(text, span);
+    Some(serde_json::json!({
+        "start": { "line": range.start.line, "character": range.start.character },
+        "end": { "line": range.end.line, "character": range.end.character },
+    }))
+}
+
+fn selection_range_result(
+    session: &Session,
+    workspace: &Workspace,
+    params: &Value,
+) -> Option<Value> {
+    let uri = params.get("textDocument")?.get("uri")?.as_str()?;
+    let positions = params.get("positions")?.as_array()?;
+    let path = uri_to_path(uri);
+    let doc = workspace.get(&path)?;
+    let analyzer = session.analyzers.get(&doc.language)?;
+    let mut out = Vec::with_capacity(positions.len());
+    for position in positions {
+        let line = position.get("line")?.as_u64()? as u32;
+        let character = position.get("character")?.as_u64()? as u32;
+        let offset = position_to_offset(&doc.text, Position { line, character });
+        let ctx = ProjectContext::new(&path, &doc.text, offset, workspace);
+        let chain = analyzer.selection_range(&ctx);
+        let mut spans: Vec<forgels_syntax::Span> = Vec::new();
+        for span in chain.iter().take(crate::analyzer::MAX_SELECTION_DEPTH) {
+            if doc
+                .text
+                .get(span.start as usize..span.end as usize)
+                .is_none()
+            {
+                continue;
+            }
+            if spans.iter().any(|known: &forgels_syntax::Span| {
+                known.start == span.start && known.end == span.end
+            }) {
+                continue;
+            }
+            spans.push(*span);
+        }
+        if spans.is_empty() {
+            let fallback = span_to_range(&doc.text, forgels_syntax::Span::new(offset, offset));
+            out.push(serde_json::json!({
+                "range": {
+                    "start": { "line": fallback.start.line, "character": fallback.start.character },
+                    "end": { "line": fallback.end.line, "character": fallback.end.character },
+                },
+            }));
+            continue;
+        }
+        let Some(nested) = rebuild_selection_inner_first(&doc.text, &spans) else {
+            continue;
+        };
+        out.push(nested);
+    }
+    Some(Value::Array(out))
+}
+
+fn rebuild_selection_inner_first(text: &str, spans: &[forgels_syntax::Span]) -> Option<Value> {
+    if spans.is_empty() {
+        return None;
+    }
+    let mut current: Option<Value> = None;
+    for span in spans.iter().rev() {
+        let Some(range) = selection_value(text, *span) else {
+            continue;
+        };
+        let mut value = serde_json::json!({ "range": range });
+        if let Some(parent) = current {
+            value["parent"] = parent;
+        }
+        current = Some(value);
+    }
+    current
+}
+
+fn type_item_value(text: &str, item: &crate::analyzer::TypeHierarchyItemData) -> Option<Value> {
+    text.get(item.span.start as usize..item.span.end as usize)?;
+    text.get(item.selection.start as usize..item.selection.end as usize)?;
+    let range = span_to_range(text, item.span);
+    let selection = span_to_range(text, item.selection);
+    Some(serde_json::json!({
+        "name": item.name,
+        "kind": item.kind.value(),
+        "detail": item.detail,
+        "uri": path_to_uri(&item.path),
+        "range": {
+            "start": { "line": range.start.line, "character": range.start.character },
+            "end": { "line": range.end.line, "character": range.end.character },
+        },
+        "selectionRange": {
+            "start": { "line": selection.start.line, "character": selection.start.character },
+            "end": { "line": selection.end.line, "character": selection.end.character },
+        },
+    }))
+}
+
+fn type_hierarchy_item_ctx<'a>(
+    session: &Session,
+    workspace: &'a Workspace,
+    item: &Value,
+) -> Option<ProjectContext<'a>> {
+    let uri = item.get("uri")?.as_str()?;
+    let path = uri_to_path(uri);
+    let (stored_path, doc) = workspace.iter_files().find(|(known, _)| **known == path)?;
+    let selection = item.get("selectionRange")?.get("start")?;
+    let range = item.get("range")?.get("start")?;
+    let start = selection.get("line").or_else(|| range.get("line"))?;
+    let character = selection
+        .get("character")
+        .or_else(|| range.get("character"))?;
+    let pos = Position {
+        line: start.as_u64()? as u32,
+        character: character.as_u64()? as u32,
+    };
+    let offset = position_to_offset(&doc.text, pos);
+    let language = doc.language;
+    if !session.analyzers.contains_key(&language) {
+        return None;
+    }
+    Some(ProjectContext::new(
+        stored_path,
+        &doc.text,
+        offset,
+        workspace,
+    ))
+}
+
+/// Answer `textDocument/prepareTypeHierarchy` with a one item array.
+/// Unknown files and non-contracts get null. No id stays silent.
+pub(crate) fn type_hierarchy_prepare_response(
+    session: &Session,
+    workspace: &Workspace,
+    params: &Value,
+    id: Option<&Value>,
+) -> Option<String> {
+    let id = id?.clone();
+    let result = type_hierarchy_prepare_result(session, workspace, params).unwrap_or(Value::Null);
+    let response = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "result": result
+    });
+    Some(response.to_string())
+}
+
+fn type_hierarchy_prepare_result(
+    session: &Session,
+    workspace: &Workspace,
+    params: &Value,
+) -> Option<Value> {
+    let uri = params.get("textDocument")?.get("uri")?.as_str()?;
+    let position = params.get("position")?;
+    let line = position.get("line")?.as_u64()? as u32;
+    let character = position.get("character")?.as_u64()? as u32;
+    let path = uri_to_path(uri);
+    let doc = workspace.get(&path)?;
+    let analyzer = session.analyzers.get(&doc.language)?;
+    let offset = position_to_offset(&doc.text, Position { line, character });
+    let ctx = ProjectContext::new(&path, &doc.text, offset, workspace);
+    let item = analyzer.prepare_type_hierarchy(&ctx)?;
+    let text = load_item_text(workspace, &item.path)?;
+    let value = type_item_value(&text, &item)?;
+    Some(Value::Array(vec![value]))
+}
+
+/// Answer `typeHierarchy/supertypes` with a base item array.
+/// Unknown items get an empty list. No id stays silent.
+pub(crate) fn type_hierarchy_supertypes_response(
+    session: &Session,
+    workspace: &Workspace,
+    params: &Value,
+    id: Option<&Value>,
+) -> Option<String> {
+    let id = id?.clone();
+    let result = type_hierarchy_supertypes_result(session, workspace, params)
+        .unwrap_or(Value::Array(Vec::new()));
+    let response = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "result": result
+    });
+    Some(response.to_string())
+}
+
+fn type_hierarchy_supertypes_result(
+    session: &Session,
+    workspace: &Workspace,
+    params: &Value,
+) -> Option<Value> {
+    let item = params.get("item")?;
+    let ctx = type_hierarchy_item_ctx(session, workspace, item)?;
+    let language = workspace.get(ctx.path)?.language;
+    let analyzer = session.analyzers.get(&language)?;
+    let found = analyzer.supertypes(&ctx)?;
+    let mut out = Vec::with_capacity(found.len());
+    for entry in found.iter().take(crate::analyzer::MAX_TYPE_HIERARCHY) {
+        let Some(text) = load_item_text(workspace, &entry.path) else {
+            continue;
+        };
+        let Some(value) = type_item_value(&text, entry) else {
+            continue;
+        };
+        out.push(value);
+    }
+    Some(Value::Array(out))
+}
+
+/// Answer `typeHierarchy/subtypes` with a derived item array.
+/// Unknown items get an empty list. No id stays silent.
+pub(crate) fn type_hierarchy_subtypes_response(
+    session: &Session,
+    workspace: &Workspace,
+    params: &Value,
+    id: Option<&Value>,
+) -> Option<String> {
+    let id = id?.clone();
+    let result = type_hierarchy_subtypes_result(session, workspace, params)
+        .unwrap_or(Value::Array(Vec::new()));
+    let response = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "result": result
+    });
+    Some(response.to_string())
+}
+
+fn type_hierarchy_subtypes_result(
+    session: &Session,
+    workspace: &Workspace,
+    params: &Value,
+) -> Option<Value> {
+    let item = params.get("item")?;
+    let ctx = type_hierarchy_item_ctx(session, workspace, item)?;
+    let language = workspace.get(ctx.path)?.language;
+    let analyzer = session.analyzers.get(&language)?;
+    let found = analyzer.subtypes(&ctx)?;
+    let mut out = Vec::with_capacity(found.len());
+    for entry in found.iter().take(crate::analyzer::MAX_TYPE_HIERARCHY) {
+        let Some(text) = load_item_text(workspace, &entry.path) else {
+            continue;
+        };
+        let Some(value) = type_item_value(&text, entry) else {
+            continue;
+        };
+        out.push(value);
+    }
+    Some(Value::Array(out))
+}

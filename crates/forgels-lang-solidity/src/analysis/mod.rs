@@ -1,5 +1,6 @@
 use forgels_core::{
-    Analyzer, CompletionData, DiagnosticData, GotoTarget, HoverData, ProjectContext, Workspace,
+    Analyzer, CodeActionData, CompletionData, DiagnosticData, FoldingRangeData, GotoTarget,
+    HoverData, ProjectContext, TypeHierarchyItemData, Workspace,
     analyzer::{ImportRef, TextEdit},
     routing::Language,
 };
@@ -14,10 +15,12 @@ pub(crate) mod array;
 pub(crate) mod bytes;
 mod call_hierarchy;
 mod calls;
+mod code_action;
 mod completion;
 mod data_location;
 mod emits;
 mod errors;
+mod folding;
 pub(crate) mod forge;
 pub(crate) mod function;
 pub(crate) mod getter;
@@ -35,10 +38,12 @@ mod override_diagnostics;
 mod payable;
 mod references;
 mod rename;
+mod selection;
 mod semantic;
 mod shadow;
 mod signature;
 mod symbols;
+mod type_hierarchy;
 mod type_mismatch;
 mod unknown;
 mod unused;
@@ -1135,5 +1140,37 @@ impl Analyzer for SolidityAnalyzer {
         let file = Self::parse_file(ctx.text);
         let deps = Self::dep_files(ctx);
         call_hierarchy::outgoing_in(&file, ctx.text, ctx.offset, ctx.path, &deps)
+    }
+
+    fn code_actions(&self, ctx: &ProjectContext, range: Span) -> Vec<CodeActionData> {
+        let file = Self::parse_file(ctx.text);
+        let deps = Self::dep_files(ctx);
+        code_action::code_actions_in(&file, ctx, range, &deps)
+    }
+
+    fn folding_ranges(&self, text: &str) -> Vec<FoldingRangeData> {
+        let file = Self::parse_file(text);
+        folding::folding_ranges_in(&file, text)
+    }
+
+    fn selection_range(&self, ctx: &ProjectContext) -> Vec<Span> {
+        let file = Self::parse_file(ctx.text);
+        selection::selection_chain_in(&file, ctx.text, ctx.offset)
+    }
+
+    fn prepare_type_hierarchy(&self, ctx: &ProjectContext) -> Option<TypeHierarchyItemData> {
+        let file = Self::parse_file(ctx.text);
+        type_hierarchy::prepare_type_in(&file, ctx.offset, ctx.path)
+    }
+
+    fn supertypes(&self, ctx: &ProjectContext) -> Option<Vec<TypeHierarchyItemData>> {
+        let file = Self::parse_file(ctx.text);
+        let deps = Self::dep_files(ctx);
+        type_hierarchy::supertypes_in(&file, ctx.offset, ctx.path, &deps)
+    }
+
+    fn subtypes(&self, ctx: &ProjectContext) -> Option<Vec<TypeHierarchyItemData>> {
+        let file = Self::parse_file(ctx.text);
+        type_hierarchy::subtypes_in(&file, ctx.offset, ctx.path, ctx)
     }
 }
