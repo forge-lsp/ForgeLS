@@ -227,6 +227,8 @@ fn super_params_of(
 /// check `gas` and `value` (1 each): `selector` calls stay silent.
 /// Globals check `block.blobhash` (1), `abi.decode` (2), and
 /// `abi.encodeCall` (2): fields and variadic `abi.encode*` stay silent.
+/// `abi.encodeWithSelector` and `abi.encodeWithSignature` need at
+/// least 1 arg each.
 /// Bytes `length`, string members, and `type()` metadata stay silent.
 /// `super` calls check base signatures across files, derived bypassed.
 /// `wrap` and `unwrap` take 1 arg each, other user type names stay silent.
@@ -316,16 +318,23 @@ pub fn member_arity_diagnostics(
                     continue;
                 }
                 if let members::TypeKind::Global(ref receiver_name) = kind {
-                    let Some(expected) = globals::global_expected_arity(receiver_name, &name)
-                    else {
-                        continue;
-                    };
                     let actual = member.arg_count();
-                    if expected != actual {
+                    if let Some(expected) = globals::global_expected_arity(receiver_name, &name) {
+                        if expected != actual {
+                            out.push(DiagnosticData {
+                                span: member.syntax().span,
+                                message: format!(
+                                    "this function '{name}' takes {expected} arguments but {actual} supplied"
+                                ),
+                            });
+                        }
+                    } else if let Some(min) = globals::global_min_arity(receiver_name, &name)
+                        && actual < min
+                    {
                         out.push(DiagnosticData {
                             span: member.syntax().span,
                             message: format!(
-                                "this function '{name}' takes {expected} arguments but {actual} supplied"
+                                "this function '{name}' takes at least {min} arguments but {actual} supplied"
                             ),
                         });
                     }
