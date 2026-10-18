@@ -2,6 +2,7 @@ mod bridge;
 mod cli;
 mod config;
 mod fix;
+mod lsp;
 mod run;
 mod walk;
 
@@ -15,15 +16,21 @@ fn cwd() -> PathBuf {
 
 fn main() {
     let Cli { command } = cli::parse();
-    let Command::Check(args) = command;
-    let root = cwd();
-    let config = match config::load(&root) {
-        Ok(config) => config,
-        Err(message) => {
-            eprintln!("{message}");
-            std::process::exit(2);
+    match command {
+        Command::Check(args) => {
+            let root = cwd();
+            let config = match config::load(&root) {
+                Ok(config) => config,
+                Err(message) => {
+                    eprintln!("{message}");
+                    std::process::exit(2);
+                }
+            };
+            let code = run::run(&args, &root, &config);
+            std::process::exit(code);
         }
-    };
-    let code = run::run(&args, &root, &config);
-    std::process::exit(code);
+        Command::Lsp(args) => {
+            lsp::run(args.log_level.as_deref());
+        }
+    }
 }

@@ -1,20 +1,23 @@
-# Linter CLI
+# fls
 
-Scope: `fls` crate. Command line lint for Solidity.
+Scope: `fls` crate. LSP server plus command line check for Solidity.
 
 ## Usage
 
 ```bash
+fls lsp [--log-level LEVEL]
 fls check [PATH...] [--write] [--json]
 ```
 
-- No path scans cwd recursively for `*.sol`.
-- Explicit paths accept files or dirs. Output is sorted and deduped.
+- `lsp` runs the LSP server on stdio with Solidity wired in.
+- `check` lints Solidity files. No path scans cwd recursively for `*.sol`.
+- Explicit check paths accept files or dirs. Output is sorted and deduped.
 - `--write` applies safe fixes in place.
 - `--json` emits the engine JSON report as-is.
 
 ## Flags
 
+- `lsp [--log-level LEVEL]`: level is trace, debug, info, warn, or error. Flag wins over config.
 - `check [PATH...]`: files or dirs. Empty means cwd scan.
 - `--write`: write safe fixes. Only safe applicability applies.
 - `--json`: machine output with 0-based ranges, fix, fixed, summary.

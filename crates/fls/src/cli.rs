@@ -3,7 +3,10 @@ use std::path::PathBuf;
 use clap::{Args, Parser, Subcommand};
 
 #[derive(Debug, Parser)]
-#[command(name = "fls", about = "ForgeLS linter CLI")]
+#[command(
+    name = "fls",
+    about = "ForgeLS entrypoint: lsp server plus check linter"
+)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Command,
@@ -11,8 +14,17 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// Run the LSP server on stdio.
+    Lsp(LspArgs),
     /// Lint Solidity files.
     Check(CheckArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct LspArgs {
+    /// Log level: trace, debug, info, warn, error.
+    #[arg(long, value_name = "LEVEL")]
+    pub log_level: Option<String>,
 }
 
 #[derive(Debug, Args)]
