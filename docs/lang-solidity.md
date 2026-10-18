@@ -551,6 +551,77 @@ Status: token kinds defined. Real lexer and parser are planned.
 - Limits: top-level deploys only, initializers stay skipped, no
   heritage args, no payable checks for deploys.
 
+## Shadowing
+
+- Scope: `analysis::shadow` plus `Analyzer::diagnostics` and
+  `diagnostics_ctx`. No new `SymbolKind`, no grammar change.
+- Rule: inner `Param` or `LocalVar` that matches an outer `StateVar`,
+  `Param`, or ancestor `LocalVar` errors with
+  `parameter 'x' shadows outer declaration` or
+  `variable 'x' shadows outer declaration` at the inner name span.
+  Sibling blocks never clash, same block duplicates report.
+- Silent: heritage, functions, contracts, structs, enums, errors,
+  events, modifiers, user types, and builtins (`msg`, `block`, `vm`,
+  `console`, forge tables, allowlists). State to state duplicates
+  stay silent, only nested shadows report.
+- Severity: Error in V1. Solc treats shadowing as warning. Deviation
+  is documented here. Follow-up Warning severity infra is proposed
+  but not created as a task in this change.
+
+## Unused
+
+- Scope: `analysis::unused` plus `Analyzer::diagnostics` and
+  `diagnostics_ctx`. Reuses `find_references` for variables, token
+  scan for imports. No new `SymbolKind`.
+- Rule: named params (with body) and locals in `all_locals` with no
+  non-declaration reference error with `unused parameter 'x'` or
+  `unused variable 'x'` at the name span. Named imports with no use
+  outside the import span error once per directive with
+  `unused import './B.sol'` at the path span.
+- Silent: state vars, functions, structs, return params, catch
+  params, assembly, builtins, empty names. Plain
+  `import "./A.sol";` stays silent. Results dedupe by span so one
+  decl gives one diagnostic.
+- Severity: Error in V1, same deviation and follow-up note as above.
+
+## Data location
+
+- Scope: `analysis::data_location` plus `Param::data_location`,
+  `StateVar::data_location`, `LocalVar::data_location` and spans.
+  Parser stores `memory`, `storage`, `calldata` tokens between type
+  and name. Name lookup skips them so `memory` never reads as name.
+  Audit: `Param::name`, `var_name_and_type`, and both `name_span`
+  helpers skip location kinds. `TypeNode::text` is unchanged since
+  location lives outside the type node.
+- Rules (sound subset):
+  - State vars with any location error with
+    `data location 'memory' not allowed for state variable`.
+  - Value params and locals (`bool`, `address`, `uint`, `int`,
+    sized `bytes`, `fixed`) with any location error with
+    `data location 'memory' not allowed for 'uint'`.
+  - Reference params (`string`, `bytes`, arrays, mappings) without
+    location error with `data location must be specified for 'string'`.
+    Mappings need `storage`, other mappings error with
+    `mapping can only be 'storage', found 'memory'`.
+  - Locals with `calldata` error with
+    `data location 'calldata' not allowed for local variable`.
+    Other reference locals without location error the same as params.
+- Silent: user types (struct versus contract cannot be told from
+  text, except arrays which still check), struct fields, event and
+  error params.
+- Severity: Error in V1, same deviation and follow-up note as above.
+
+## Pragma version (deferred)
+
+- Status: no check in V1 by design, documented here only.
+- Rationale: without a configured compiler version the check has no
+  meaning. A pragma such as `pragma solidity ^0.8.0` cannot pass or
+  fail without knowing which compiler runs. Flagging it would be
+  noise, so the analyzer stays silent on all pragmas.
+- Follow-up needs a compiler version source (config, toolchain file,
+  or editor setting) before any range check makes sense. No task
+  created in this change.
+
 ## V1 limits
 
 - Tracked only: `dep_texts` skips untracked and missing files.

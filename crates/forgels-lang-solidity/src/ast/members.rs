@@ -20,6 +20,43 @@ fn initializer_token(node: &SyntaxNode) -> Option<SyntaxToken> {
     })
 }
 
+/// Data location for reference types: `memory`, `storage`, `calldata`.
+///
+/// Stored as a token child in `Param`, `StateVar`, and `LocalVar` between
+/// the type node and the name. Value types never carry one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DataLocation {
+    Memory,
+    Storage,
+    Calldata,
+}
+
+impl DataLocation {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Memory => "memory",
+            Self::Storage => "storage",
+            Self::Calldata => "calldata",
+        }
+    }
+
+    pub fn from_kind(kind: u16) -> Option<Self> {
+        if kind == SolidityKind::Memory.as_u16() {
+            Some(Self::Memory)
+        } else if kind == SolidityKind::Storage.as_u16() {
+            Some(Self::Storage)
+        } else if kind == SolidityKind::Calldata.as_u16() {
+            Some(Self::Calldata)
+        } else {
+            None
+        }
+    }
+}
+
+pub fn is_data_location_kind(kind: u16) -> bool {
+    DataLocation::from_kind(kind).is_some()
+}
+
 /// Visibility modifier for functions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Visibility {
@@ -284,8 +321,40 @@ impl Param {
             })
     }
 
+    pub fn data_location(&self) -> Option<DataLocation> {
+        self.syntax
+            .children
+            .iter()
+            .find_map(|element| match element {
+                SyntaxElement::Token(token) => DataLocation::from_kind(token.kind),
+                _ => None,
+            })
+    }
+
+    pub fn data_location_span(&self) -> Option<Span> {
+        self.syntax
+            .children
+            .iter()
+            .find_map(|element| match element {
+                SyntaxElement::Token(token) if is_data_location_kind(token.kind) => {
+                    Some(token.span)
+                }
+                _ => None,
+            })
+    }
+
     pub fn name(&self) -> Option<String> {
-        first_ident_text(&self.syntax)
+        self.syntax
+            .children
+            .iter()
+            .find_map(|element| match element {
+                SyntaxElement::Token(token)
+                    if !is_data_location_kind(token.kind) && is_word_text(&token.text) =>
+                {
+                    Some(token.text.clone())
+                }
+                _ => None,
+            })
     }
 
     pub fn name_span(&self) -> Option<Span> {
@@ -293,7 +362,11 @@ impl Param {
             .children
             .iter()
             .find_map(|element| match element {
-                SyntaxElement::Token(token) if is_word_text(&token.text) => Some(token.span),
+                SyntaxElement::Token(token)
+                    if !is_data_location_kind(token.kind) && is_word_text(&token.text) =>
+                {
+                    Some(token.span)
+                }
                 _ => None,
             })
     }
@@ -332,6 +405,7 @@ fn var_name_and_type(node: &SyntaxNode) -> (Option<TypeNode>, Option<String>) {
             SyntaxElement::Token(token)
                 if name.is_none()
                     && !is_var_modifier_kind(token.kind)
+                    && !is_data_location_kind(token.kind)
                     && is_word_text(&token.text) =>
             {
                 name = Some(token.text.clone());
@@ -340,6 +414,20 @@ fn var_name_and_type(node: &SyntaxNode) -> (Option<TypeNode>, Option<String>) {
         }
     }
     (type_node, name)
+}
+
+fn var_location(node: &SyntaxNode) -> Option<DataLocation> {
+    node.children.iter().find_map(|element| match element {
+        SyntaxElement::Token(token) => DataLocation::from_kind(token.kind),
+        _ => None,
+    })
+}
+
+fn var_location_span(node: &SyntaxNode) -> Option<Span> {
+    node.children.iter().find_map(|element| match element {
+        SyntaxElement::Token(token) if is_data_location_kind(token.kind) => Some(token.span),
+        _ => None,
+    })
 }
 
 /// Returns clause: the parenthesized type list after `returns`.
@@ -395,12 +483,22 @@ impl StateVar {
         var_name_and_type(&self.syntax).1
     }
 
+    pub fn data_location(&self) -> Option<DataLocation> {
+        var_location(&self.syntax)
+    }
+
+    pub fn data_location_span(&self) -> Option<Span> {
+        var_location_span(&self.syntax)
+    }
+
     pub fn name_span(&self) -> Option<Span> {
         for element in &self.syntax.children {
             match element {
                 SyntaxElement::Node(child) if child.kind == SolidityNode::Type.as_u16() => {}
                 SyntaxElement::Token(token)
-                    if !is_var_modifier_kind(token.kind) && is_word_text(&token.text) =>
+                    if !is_var_modifier_kind(token.kind)
+                        && !is_data_location_kind(token.kind)
+                        && is_word_text(&token.text) =>
                 {
                     return Some(token.span);
                 }
@@ -494,11 +592,23 @@ impl LocalVar {
         var_name_and_type(&self.syntax).1
     }
 
+    pub fn data_location(&self) -> Option<DataLocation> {
+        var_location(&self.syntax)
+    }
+
+    pub fn data_location_span(&self) -> Option<Span> {
+        var_location_span(&self.syntax)
+    }
+
     pub fn name_span(&self) -> Option<Span> {
         for element in &self.syntax.children {
             match element {
                 SyntaxElement::Node(child) if child.kind == SolidityNode::Type.as_u16() => {}
-                SyntaxElement::Token(token) if is_word_text(&token.text) => {
+                SyntaxElement::Token(token)
+                    if !is_var_modifier_kind(token.kind)
+                        && !is_data_location_kind(token.kind)
+                        && is_word_text(&token.text) =>
+                {
                     return Some(token.span);
                 }
                 _ => {}

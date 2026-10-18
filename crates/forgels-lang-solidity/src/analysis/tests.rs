@@ -707,7 +707,7 @@ fn diagnostics_of(text: &str) -> Vec<forgels_core::DiagnosticData> {
 
 #[test]
 fn too_few_args_reports_exact_message() {
-    let text = "contract C {\nfunction greet(uint a, uint b) public {}\nfunction f() public {\ngreet(1);\n}\n}";
+    let text = "contract C {\nfunction greet(uint a, uint b) public { a; b; }\nfunction f() public {\ngreet(1);\n}\n}";
     let found = diagnostics_of(text);
     assert_eq!(found.len(), 1);
     assert_eq!(
@@ -723,8 +723,7 @@ fn too_few_args_reports_exact_message() {
 
 #[test]
 fn too_many_args_reports_exact_message() {
-    let text =
-        "contract C {\nfunction greet(uint a) public {}\nfunction f() public {\ngreet(1, 2);\n}\n}";
+    let text = "contract C {\nfunction greet(uint a) public { a; }\nfunction f() public {\ngreet(1, 2);\n}\n}";
     let found = diagnostics_of(text);
     assert_eq!(found.len(), 1);
     assert_eq!(
@@ -735,7 +734,7 @@ fn too_many_args_reports_exact_message() {
 
 #[test]
 fn correct_arg_count_has_no_diagnostic() {
-    let text = "contract C {\nfunction greet(uint a, uint b) public {}\nfunction f() public {\ngreet(1, 2);\n}\n}";
+    let text = "contract C {\nfunction greet(uint a, uint b) public { a; b; }\nfunction f() public {\ngreet(1, 2);\n}\n}";
     assert!(diagnostics_of(text).is_empty());
 }
 
@@ -751,7 +750,7 @@ fn unknown_callee_reports_unresolved() {
 
 #[test]
 fn unknown_member_receiver_reports_receiver_only() {
-    let text = "contract C {\nfunction greet(uint a, uint b) public {}\nfunction f() public {\nobj.greet(1);\n}\n}";
+    let text = "contract C {\nfunction greet(uint a, uint b) public { a; b; }\nfunction f() public {\nobj.greet(1);\n}\n}";
     let found = diagnostics_of(text);
     assert_eq!(found.len(), 1, "diags: {found:?}");
     assert_eq!(found[0].message, "unresolved identifier 'obj'");
@@ -761,7 +760,7 @@ fn unknown_member_receiver_reports_receiver_only() {
 
 #[test]
 fn unknown_bare_usage_reports_name_span() {
-    let text = "contract C {\nfunction f() public {\nuint x = 1;\nmissing;\n}\n}";
+    let text = "contract C {\nfunction f() public {\nuint x = 1;\nx;\nmissing;\n}\n}";
     let found = diagnostics_of(text);
     assert_eq!(found.len(), 1, "diags: {found:?}");
     assert_eq!(found[0].message, "unresolved identifier 'missing'");
@@ -848,7 +847,8 @@ fn unknown_assembly_idents_stay_silent() {
 fn unknown_trivia_words_stay_silent() {
     let text = "contract C {\nfunction f() public {}\n}\n// missing\n/* bogus */";
     assert!(diagnostics_of(text).is_empty());
-    let with_string = "contract C {\nfunction f() public {\nstring s = \"missing\";\n}\n}";
+    let with_string =
+        "contract C {\nfunction f() public {\nstring memory s = \"missing\";\ns;\n}\n}";
     assert!(diagnostics_of(with_string).is_empty());
 }
 
@@ -864,13 +864,13 @@ fn unknown_multiple_errors_sort_by_span() {
 
 #[test]
 fn member_call_correct_count_stays_silent() {
-    let text = "contract Hello {\nfunction greet(uint a, uint b) public {}\n}\ncontract C {\nfunction f() public {\nHello h;\nh.greet(1, 2);\n}\n}";
+    let text = "contract Hello {\nfunction greet(uint a, uint b) public { a; b; }\n}\ncontract C {\nfunction f() public {\nHello h;\nh.greet(1, 2);\n}\n}";
     assert!(diagnostics_of(text).is_empty());
 }
 
 #[test]
 fn member_call_too_few_reports_exact_message() {
-    let text = "contract Hello {\nfunction greet(uint a, uint b) public {}\n}\ncontract C {\nfunction f() public {\nHello h;\nh.greet(1);\n}\n}";
+    let text = "contract Hello {\nfunction greet(uint a, uint b) public { a; b; }\n}\ncontract C {\nfunction f() public {\nHello h;\nh.greet(1);\n}\n}";
     let found = diagnostics_of(text);
     assert_eq!(found.len(), 1, "diags: {found:?}");
     assert_eq!(
@@ -886,7 +886,7 @@ fn member_call_too_few_reports_exact_message() {
 
 #[test]
 fn member_call_too_many_reports_exact_message() {
-    let text = "contract Hello {\nfunction greet(uint a) public {}\n}\ncontract C {\nfunction f() public {\nHello h;\nh.greet(1, 2);\n}\n}";
+    let text = "contract Hello {\nfunction greet(uint a) public { a; }\n}\ncontract C {\nfunction f() public {\nHello h;\nh.greet(1, 2);\n}\n}";
     let found = diagnostics_of(text);
     assert_eq!(found.len(), 1, "diags: {found:?}");
     assert_eq!(
@@ -897,13 +897,13 @@ fn member_call_too_many_reports_exact_message() {
 
 #[test]
 fn member_plain_access_stays_silent() {
-    let text = "contract Hello {\nfunction greet(uint a) public {}\n}\ncontract C {\nfunction f() public {\nHello h;\nh.greet;\n}\n}";
+    let text = "contract Hello {\nfunction greet(uint a) public { a; }\n}\ncontract C {\nfunction f() public {\nHello h;\nh.greet;\n}\n}";
     assert!(diagnostics_of(text).is_empty());
 }
 
 #[test]
 fn member_empty_call_reports_zero_supplied() {
-    let text = "contract Hello {\nfunction greet(uint a) public {}\n}\ncontract C {\nfunction f() public {\nHello h;\nh.greet();\n}\n}";
+    let text = "contract Hello {\nfunction greet(uint a) public { a; }\n}\ncontract C {\nfunction f() public {\nHello h;\nh.greet();\n}\n}";
     let found = diagnostics_of(text);
     assert_eq!(found.len(), 1, "diags: {found:?}");
     assert_eq!(
@@ -914,7 +914,7 @@ fn member_empty_call_reports_zero_supplied() {
 
 #[test]
 fn member_this_call_reports_exact_message() {
-    let text = "contract C {\nfunction greet(uint a, uint b) public {}\nfunction f() public {\nthis.greet(1);\n}\n}";
+    let text = "contract C {\nfunction greet(uint a, uint b) public { a; b; }\nfunction f() public {\nthis.greet(1);\n}\n}";
     let found = diagnostics_of(text);
     assert_eq!(found.len(), 1, "diags: {found:?}");
     assert_eq!(
@@ -925,13 +925,13 @@ fn member_this_call_reports_exact_message() {
 
 #[test]
 fn member_this_correct_count_stays_silent() {
-    let text = "contract C {\nfunction greet(uint a) public {}\nfunction f() public {\nthis.greet(1);\n}\n}";
+    let text = "contract C {\nfunction greet(uint a) public { a; }\nfunction f() public {\nthis.greet(1);\n}\n}";
     assert!(diagnostics_of(text).is_empty());
 }
 
 #[test]
 fn member_inherited_arity_uses_base_signature() {
-    let text = "contract B {\nfunction greet(uint a, uint b) public {}\n}\ncontract D is B {\nfunction f() public {\nthis.greet(1);\n}\n}";
+    let text = "contract B {\nfunction greet(uint a, uint b) public { a; b; }\n}\ncontract D is B {\nfunction f() public {\nthis.greet(1);\n}\n}";
     let found = diagnostics_of(text);
     assert_eq!(found.len(), 1, "diags: {found:?}");
     assert_eq!(
@@ -942,7 +942,7 @@ fn member_inherited_arity_uses_base_signature() {
 
 #[test]
 fn member_shadow_uses_derived_signature() {
-    let text = "contract B {\nfunction greet(uint a, uint b) public {}\n}\ncontract D is B {\nfunction greet(uint a) public {}\nfunction f() public {\nthis.greet(1, 2);\n}\n}";
+    let text = "contract B {\nfunction greet(uint a, uint b) public { a; b; }\n}\ncontract D is B {\nfunction greet(uint a) public { a; }\nfunction f() public {\nthis.greet(1, 2);\n}\n}";
     let found = diagnostics_of(text);
     assert_eq!(found.len(), 1, "diags: {found:?}");
     assert_eq!(
@@ -965,13 +965,13 @@ fn member_struct_field_call_stays_silent() {
 
 #[test]
 fn member_unknown_function_stays_silent() {
-    let text = "contract Hello {\nfunction greet(uint a) public {}\n}\ncontract C {\nfunction f() public {\nHello h;\nh.missing(1, 2);\n}\n}";
+    let text = "contract Hello {\nfunction greet(uint a) public { a; }\n}\ncontract C {\nfunction f() public {\nHello h;\nh.missing(1, 2);\n}\n}";
     assert!(diagnostics_of(text).is_empty());
 }
 
 #[test]
 fn member_dep_arity_reports() {
-    let dep = "contract Hello {\nfunction greet(uint a, uint b) public {}\n}";
+    let dep = "contract Hello {\nfunction greet(uint a, uint b) public { a; b; }\n}";
     let cur =
         "import \"./H.sol\";\ncontract C {\nfunction f() public {\nHello h;\nh.greet(1);\n}\n}";
     let mut workspace = open_workspace(&[("/H.sol", dep), ("/C.sol", cur)]);
@@ -986,7 +986,7 @@ fn member_dep_arity_reports() {
 
 #[test]
 fn member_dep_correct_count_stays_silent() {
-    let dep = "contract Hello {\nfunction greet(uint a) public {}\n}";
+    let dep = "contract Hello {\nfunction greet(uint a) public { a; }\n}";
     let cur =
         "import \"./H.sol\";\ncontract C {\nfunction f() public {\nHello h;\nh.greet(1);\n}\n}";
     let mut workspace = open_workspace(&[("/H.sol", dep), ("/C.sol", cur)]);
@@ -996,7 +996,7 @@ fn member_dep_correct_count_stays_silent() {
 
 #[test]
 fn member_dep_inherited_arity_uses_base() {
-    let base = "contract B {\nfunction greet(uint a, uint b) public {}\n}";
+    let base = "contract B {\nfunction greet(uint a, uint b) public { a; b; }\n}";
     let cur = "import \"./B.sol\";\ncontract D is B {\nfunction f() public {\nthis.greet(1);\n}\n}";
     let mut workspace = open_workspace(&[("/B.sol", base), ("/D.sol", cur)]);
     workspace.set_file_deps(PathBuf::from("/D.sol"), vec![PathBuf::from("/B.sol")]);
@@ -1010,13 +1010,13 @@ fn member_dep_inherited_arity_uses_base() {
 
 #[test]
 fn super_and_constructor_calls_stay_silent() {
-    let text = "contract C {\nfunction greet(uint a, uint b) public {}\nfunction f() public {\nsuper.greet(1);\nsuper(1);\nconstructor(1);\n}\n}";
+    let text = "contract C {\nfunction greet(uint a, uint b) public { a; b; }\nfunction f() public {\nsuper.greet(1);\nsuper(1);\nconstructor(1);\n}\n}";
     assert!(diagnostics_of(text).is_empty());
 }
 
 #[test]
 fn overload_uses_first_definition() {
-    let text = "contract C {\nfunction greet(uint a) public {}\nfunction greet(uint a, uint b) public {}\nfunction f() public {\ngreet(1, 2);\n}\n}";
+    let text = "contract C {\nfunction greet(uint a) public { a; }\nfunction greet(uint a, uint b) public { a; b; }\nfunction f() public {\ngreet(1, 2);\n}\n}";
     let found = diagnostics_of(text);
     assert_eq!(found.len(), 1);
     assert_eq!(
@@ -1297,7 +1297,7 @@ fn chained_member_returns_scope_fallback() {
 
 #[test]
 fn inherited_plain_completion_shows_base_function() {
-    let text = "contract B {\nfunction greet(uint a) public {}\n}\ncontract D is B {\nfunction f() public {\ngre\n}\n}";
+    let text = "contract B {\nfunction greet(uint a) public { a; }\n}\ncontract D is B {\nfunction f() public {\ngre\n}\n}";
     let at = text.rfind("gre").expect("prefix") as u32 + 3;
     let labels = complete_labels(text, at);
     assert!(labels.contains(&"greet".to_string()), "labels: {labels:?}");
@@ -1313,7 +1313,7 @@ fn inherited_plain_completion_shows_base_function() {
 
 #[test]
 fn inherited_plain_hover_shows_origin() {
-    let text = "contract B {\nfunction greet(uint a) public {}\n}\ncontract D is B {\nfunction f() public {\ngreet;\n}\n}";
+    let text = "contract B {\nfunction greet(uint a) public { a; }\n}\ncontract D is B {\nfunction f() public {\ngreet;\n}\n}";
     let tokens = SolidityLexer.tokenize(text);
     let (file, errors) = SolidityParser.parse_with_errors(&tokens);
     assert!(errors.is_empty(), "errors: {errors:?}");
@@ -1333,7 +1333,7 @@ fn inherited_plain_hover_shows_origin() {
 
 #[test]
 fn inherited_plain_goto_jumps_to_base() {
-    let text = "contract B {\nfunction greet(uint a) public {}\n}\ncontract D is B {\nfunction f() public {\ngreet;\n}\n}";
+    let text = "contract B {\nfunction greet(uint a) public { a; }\n}\ncontract D is B {\nfunction f() public {\ngreet;\n}\n}";
     let at_use = text.rfind("greet;").expect("use") as u32;
     let at_decl = text.find("greet").expect("decl") as u32;
     let target = goto_target(text, at_use);
@@ -1373,7 +1373,7 @@ fn inherited_diamond_keeps_first_origin_once() {
 
 #[test]
 fn inherited_shadow_derived_wins_without_suffix() {
-    let text = "contract B {\nfunction greet(uint a) public {}\n}\ncontract D is B {\nfunction greet() public {}\nfunction f() public {\ngreet;\n}\n}";
+    let text = "contract B {\nfunction greet(uint a) public { a; }\n}\ncontract D is B {\nfunction greet() public {}\nfunction f() public {\ngreet;\n}\n}";
     let tokens = SolidityLexer.tokenize(text);
     let (file, errors) = SolidityParser.parse_with_errors(&tokens);
     assert!(errors.is_empty(), "errors: {errors:?}");
@@ -1426,7 +1426,7 @@ fn inherited_cycle_terminates() {
 
 #[test]
 fn inherited_arity_uses_base_signature() {
-    let text = "contract B {\nfunction greet(uint a, uint b) public {}\n}\ncontract D is B {\nfunction f() public {\ngreet(1);\n}\n}";
+    let text = "contract B {\nfunction greet(uint a, uint b) public { a; b; }\n}\ncontract D is B {\nfunction f() public {\ngreet(1);\n}\n}";
     let found = diagnostics_of(text);
     assert_eq!(found.len(), 1, "diags: {found:?}");
     assert_eq!(
@@ -1437,7 +1437,7 @@ fn inherited_arity_uses_base_signature() {
 
 #[test]
 fn inherited_arity_shadow_uses_derived_signature() {
-    let text = "contract B {\nfunction greet(uint a, uint b) public {}\n}\ncontract D is B {\nfunction greet(uint a) public {}\nfunction f() public {\ngreet(1, 2);\n}\n}";
+    let text = "contract B {\nfunction greet(uint a, uint b) public { a; b; }\n}\ncontract D is B {\nfunction greet(uint a) public { a; }\nfunction f() public {\ngreet(1, 2);\n}\n}";
     let found = diagnostics_of(text);
     assert_eq!(found.len(), 1, "diags: {found:?}");
     assert_eq!(
@@ -1539,7 +1539,7 @@ fn cross_file_member_receiver_type_in_dep() {
 
 #[test]
 fn cross_file_member_shadow_local_wins() {
-    let dep = "contract Hello {\nfunction greet(uint a) public {}\n}";
+    let dep = "contract Hello {\nfunction greet(uint a) public { a; }\n}";
     let cur = "import \"./a.sol\";\ncontract HelloWorld is Hello {\nfunction greet() public {}\nfunction f() public {\nthis.greet;\nthis.\n}\n}";
     let mut workspace = open_workspace(&[("/a.sol", dep), ("/hello.sol", cur)]);
     workspace.set_file_deps(PathBuf::from("/hello.sol"), vec![PathBuf::from("/a.sol")]);
@@ -2591,7 +2591,7 @@ fn signature_multi(
 
 #[test]
 fn signature_plain_first_param_active_zero() {
-    let text = "contract C {\nfunction greet(uint a, uint b) public {}\nfunction f() public {\ngreet(\n}\n}";
+    let text = "contract C {\nfunction greet(uint a, uint b) public { a; b; }\nfunction f() public {\ngreet(\n}\n}";
     let workspace = open_workspace(&[("/repo/C.sol", text)]);
     let found = signature_multi(&workspace, "/repo/C.sol", text, "greet(").expect("help");
     assert_eq!(found.len(), 1);
@@ -2616,8 +2616,7 @@ fn signature_second_param_skips_string_comma() {
 
 #[test]
 fn signature_unclosed_paren_still_helps() {
-    let text =
-        "contract C {\nfunction greet(uint a, uint b) public {}\nfunction f() public {\ngreet(1, 2";
+    let text = "contract C {\nfunction greet(uint a, uint b) public { a; b; }\nfunction f() public {\ngreet(1, 2";
     let workspace = open_workspace(&[("/repo/C.sol", text)]);
     let found = signature_multi(&workspace, "/repo/C.sol", text, "greet(1, 2").expect("help");
     assert_eq!(found.len(), 1);
@@ -2628,7 +2627,7 @@ fn signature_unclosed_paren_still_helps() {
 #[test]
 fn signature_outside_paren_returns_none() {
     let text =
-        "contract C {\nfunction greet(uint a) public {}\nfunction f() public {\ngreet(1)\n}\n}";
+        "contract C {\nfunction greet(uint a) public { a; }\nfunction f() public {\ngreet(1)\n}\n}";
     let workspace = open_workspace(&[("/repo/C.sol", text)]);
     assert!(signature_multi(&workspace, "/repo/C.sol", text, "greet(1)").is_none());
 }
@@ -2642,7 +2641,7 @@ fn signature_unknown_callee_returns_none() {
 
 #[test]
 fn signature_member_call_shows_receiver_signature() {
-    let text = "contract Hello {\nfunction greet(uint a, uint b) public {}\n}\ncontract C {\nfunction f() public {\nHello h;\nh.greet(\n}\n}";
+    let text = "contract Hello {\nfunction greet(uint a, uint b) public { a; b; }\n}\ncontract C {\nfunction f() public {\nHello h;\nh.greet(\n}\n}";
     let workspace = open_workspace(&[("/repo/C.sol", text)]);
     let found = signature_multi(&workspace, "/repo/C.sol", text, "h.greet(").expect("help");
     assert_eq!(found.len(), 1);
@@ -2697,7 +2696,7 @@ fn signature_vm_member_builtin_signature() {
 
 #[test]
 fn signature_overloads_return_all_signatures() {
-    let text = "contract C {\nfunction greet(uint a) public {}\nfunction greet(uint a, uint b) public {}\nfunction f() public {\ngreet(\n}\n}";
+    let text = "contract C {\nfunction greet(uint a) public { a; }\nfunction greet(uint a, uint b) public { a; b; }\nfunction f() public {\ngreet(\n}\n}";
     let workspace = open_workspace(&[("/repo/C.sol", text)]);
     let found = signature_multi(&workspace, "/repo/C.sol", text, "greet(").expect("help");
     assert_eq!(found.len(), 2);
@@ -2709,7 +2708,7 @@ fn signature_overloads_return_all_signatures() {
 
 #[test]
 fn array_dynamic_completion_lists_length_push_pop() {
-    let text = "contract C {\nfunction f() public {\nuint[] arr;\narr.\n}\n}";
+    let text = "contract C {\nfunction f() public {\nuint[] memory arr;\narr.\n}\n}";
     let at = text.rfind("arr.").expect("dot") as u32 + 4;
     let labels = complete_labels(text, at);
     assert!(labels.contains(&"length".to_string()), "labels: {labels:?}");
@@ -2736,7 +2735,7 @@ fn array_dynamic_completion_lists_length_push_pop() {
 
 #[test]
 fn array_fixed_completion_lists_length_only() {
-    let text = "contract C {\nfunction f() public {\nuint[3] fixedArr;\nfixedArr.\n}\n}";
+    let text = "contract C {\nfunction f() public {\nuint[3] memory fixedArr;\nfixedArr.\n}\n}";
     let at = text.rfind("fixedArr.").expect("dot") as u32 + 9;
     let labels = complete_labels(text, at);
     assert!(labels.contains(&"length".to_string()), "labels: {labels:?}");
@@ -2777,7 +2776,7 @@ fn array_multidim_outer_suffix_decides_dynamic() {
 
 #[test]
 fn array_hover_shows_solidity_origin_with_member_span() {
-    let text = "contract C {\nfunction f() public {\nuint[] arr;\narr.length;\n}\n}";
+    let text = "contract C {\nfunction f() public {\nuint[] memory arr;\narr.length;\n}\n}";
     let tokens = SolidityLexer.tokenize(text);
     let (file, errors) = SolidityParser.parse_with_errors(&tokens);
     assert!(errors.is_empty(), "errors: {errors:?}");
@@ -2791,14 +2790,14 @@ fn array_hover_shows_solidity_origin_with_member_span() {
 
 #[test]
 fn array_goto_returns_none_and_skips_coincidental_dep() {
-    let text = "contract C {\nfunction f() public {\nuint[] arr;\narr.length;\n}\n}";
+    let text = "contract C {\nfunction f() public {\nuint[] memory arr;\narr.length;\n}\n}";
     let tokens = SolidityLexer.tokenize(text);
     let (file, errors) = SolidityParser.parse_with_errors(&tokens);
     assert!(errors.is_empty(), "errors: {errors:?}");
     let at = text.rfind("arr.length").expect("use") as u32 + 4;
     assert!(goto_definition(&file, text, at).is_none());
     let dep = "contract B {\nfunction length() public {}\nfunction push() public {}\n}";
-    let cur = "import \"./B.sol\";\ncontract C {\nfunction f() public {\nuint[] arr;\narr.length;\narr.push;\n}\n}";
+    let cur = "import \"./B.sol\";\ncontract C {\nfunction f() public {\nuint[] memory arr;\narr.length;\narr.push;\n}\n}";
     let mut workspace = open_workspace(&[("/A.sol", cur), ("/B.sol", dep)]);
     workspace.set_file_deps(PathBuf::from("/A.sol"), vec![PathBuf::from("/B.sol")]);
     assert!(goto_multi(&workspace, "/A.sol", cur, "length").is_none());
@@ -2807,7 +2806,7 @@ fn array_goto_returns_none_and_skips_coincidental_dep() {
 
 #[test]
 fn array_push_wrong_arity_reports_exact_message() {
-    let text = "contract C {\nfunction f() public {\nuint[] arr;\narr.push();\n}\n}";
+    let text = "contract C {\nfunction f() public {\nuint[] memory arr;\narr.push();\n}\n}";
     let found = diagnostics_of(text);
     assert_eq!(found.len(), 1, "diags: {found:?}");
     assert_eq!(
@@ -2819,26 +2818,26 @@ fn array_push_wrong_arity_reports_exact_message() {
         covered.starts_with("arr.push") && covered.ends_with(')'),
         "span: {covered}"
     );
-    let ok = "contract C {\nfunction f() public {\nuint[] arr;\narr.push(1);\n}\n}";
+    let ok = "contract C {\nfunction f() public {\nuint[] memory arr;\narr.push(1);\n}\n}";
     assert!(diagnostics_of(ok).is_empty());
 }
 
 #[test]
 fn array_pop_wrong_arity_reports_exact_message() {
-    let text = "contract C {\nfunction f() public {\nuint[] arr;\narr.pop(1);\n}\n}";
+    let text = "contract C {\nfunction f() public {\nuint[] memory arr;\narr.pop(1);\n}\n}";
     let found = diagnostics_of(text);
     assert_eq!(found.len(), 1, "diags: {found:?}");
     assert_eq!(
         found[0].message,
         "this function 'pop' takes 0 arguments but 1 supplied"
     );
-    let ok = "contract C {\nfunction f() public {\nuint[] arr;\narr.pop();\n}\n}";
+    let ok = "contract C {\nfunction f() public {\nuint[] memory arr;\narr.pop();\n}\n}";
     assert!(diagnostics_of(ok).is_empty());
 }
 
 #[test]
 fn array_length_and_fixed_calls_stay_silent() {
-    let text = "contract C {\nfunction f() public {\nuint[] arr;\nuint[3] fixedArr;\narr.length(1);\nfixedArr.push(1);\nfixedArr.pop();\narr.bogus(1, 2);\n}\n}";
+    let text = "contract C {\nfunction f() public {\nuint[] memory arr;\nuint[3] memory fixedArr;\narr.length(1);\nfixedArr.push(1);\nfixedArr.pop();\narr.bogus(1, 2);\n}\n}";
     assert!(diagnostics_of(text).is_empty());
 }
 
@@ -2855,7 +2854,7 @@ fn array_memory_param_still_resolves() {
 #[test]
 fn array_cross_file_members_stay_empty() {
     let dep = "contract Hello {\nfunction greet() public {}\n}";
-    let cur = "import \"./H.sol\";\ncontract C {\nfunction f() public {\nuint[] arr;\narr.length;\narr.\n}\n}";
+    let cur = "import \"./H.sol\";\ncontract C {\nfunction f() public {\nuint[] memory arr;\narr.length;\narr.\n}\n}";
     let mut workspace = open_workspace(&[("/H.sol", dep), ("/C.sol", cur)]);
     workspace.set_file_deps(PathBuf::from("/C.sol"), vec![PathBuf::from("/H.sol")]);
     let found = member_complete_multi(&workspace, "/C.sol", cur, "arr.");
@@ -3013,7 +3012,7 @@ fn address_cross_file_members_stay_empty() {
 
 #[test]
 fn contract_instance_completion_lists_state_and_function() {
-    let text = "contract Hello {\nuint total;\nfunction greet(uint a) public {}\n}\ncontract C {\nfunction f() public {\nHello h;\nh.\n}\n}";
+    let text = "contract Hello {\nuint total;\nfunction greet(uint a) public { a; }\n}\ncontract C {\nfunction f() public {\nHello h;\nh.\n}\n}";
     let at = text.rfind("h.").expect("dot") as u32 + 2;
     let labels = complete_labels(text, at);
     assert!(labels.contains(&"total".to_string()), "labels: {labels:?}");
@@ -3022,7 +3021,7 @@ fn contract_instance_completion_lists_state_and_function() {
 
 #[test]
 fn contract_instance_completion_filters_by_prefix() {
-    let text = "contract Hello {\nuint total;\nfunction greet(uint a) public {}\n}\ncontract C {\nfunction f() public {\nHello h;\nh.gre\n}\n}";
+    let text = "contract Hello {\nuint total;\nfunction greet(uint a) public { a; }\n}\ncontract C {\nfunction f() public {\nHello h;\nh.gre\n}\n}";
     let at = text.rfind("h.gre").expect("dot") as u32 + 5;
     let labels = complete_labels(text, at);
     assert!(labels.contains(&"greet".to_string()), "labels: {labels:?}");
@@ -3031,7 +3030,7 @@ fn contract_instance_completion_filters_by_prefix() {
 
 #[test]
 fn contract_instance_hover_shows_function_detail() {
-    let text = "contract Hello {\nfunction greet(uint a) public {}\n}\ncontract C {\nfunction f() public {\nHello h;\nh.greet;\n}\n}";
+    let text = "contract Hello {\nfunction greet(uint a) public { a; }\n}\ncontract C {\nfunction f() public {\nHello h;\nh.greet;\n}\n}";
     let tokens = SolidityLexer.tokenize(text);
     let (file, errors) = SolidityParser.parse_with_errors(&tokens);
     assert!(errors.is_empty(), "errors: {errors:?}");
@@ -3042,7 +3041,7 @@ fn contract_instance_hover_shows_function_detail() {
 
 #[test]
 fn contract_instance_goto_jumps_to_decl() {
-    let text = "contract Hello {\nfunction greet(uint a) public {}\n}\ncontract C {\nfunction f() public {\nHello h;\nh.greet;\n}\n}";
+    let text = "contract Hello {\nfunction greet(uint a) public { a; }\n}\ncontract C {\nfunction f() public {\nHello h;\nh.greet;\n}\n}";
     let at_use = text.rfind("h.greet").expect("use") as u32 + 2;
     let at_decl = text.find("greet").expect("decl") as u32;
     let target = goto_target(text, at_use);
@@ -3073,7 +3072,7 @@ fn contract_instance_param_receiver_resolves() {
 
 #[test]
 fn cross_file_instance_hover_includes_origin() {
-    let dep = "contract Hello {\nfunction greet(uint a) public {}\n}";
+    let dep = "contract Hello {\nfunction greet(uint a) public { a; }\n}";
     let cur = "import \"./H.sol\";\ncontract C {\nfunction f() public {\nHello h;\nh.greet;\n}\n}";
     let mut workspace = open_workspace(&[("/H.sol", dep), ("/C.sol", cur)]);
     workspace.set_file_deps(PathBuf::from("/C.sol"), vec![PathBuf::from("/H.sol")]);
@@ -3092,7 +3091,7 @@ fn cross_file_instance_hover_includes_origin() {
 
 #[test]
 fn cross_file_instance_goto_jumps_to_dep() {
-    let dep = "contract Hello {\nfunction greet(uint a) public {}\n}";
+    let dep = "contract Hello {\nfunction greet(uint a) public { a; }\n}";
     let cur = "import \"./H.sol\";\ncontract C {\nfunction f() public {\nHello h;\nh.greet;\n}\n}";
     let mut workspace = open_workspace(&[("/H.sol", dep), ("/C.sol", cur)]);
     workspace.set_file_deps(PathBuf::from("/C.sol"), vec![PathBuf::from("/H.sol")]);
@@ -3104,7 +3103,7 @@ fn cross_file_instance_goto_jumps_to_dep() {
 
 #[test]
 fn cross_file_instance_signature_shows_dep() {
-    let dep = "contract Hello {\nfunction greet(uint a, uint b) public {}\n}";
+    let dep = "contract Hello {\nfunction greet(uint a, uint b) public { a; b; }\n}";
     let cur = "import \"./H.sol\";\ncontract C {\nfunction f() public {\nHello h;\nh.greet(\n}\n}";
     let mut workspace = open_workspace(&[("/H.sol", dep), ("/C.sol", cur)]);
     workspace.set_file_deps(PathBuf::from("/C.sol"), vec![PathBuf::from("/H.sol")]);
@@ -3220,7 +3219,7 @@ fn variable_completion_shows_param_and_local_types() {
 
 #[test]
 fn member_completion_shows_state_and_field_types() {
-    let text = "contract Hello {\nuint total;\nfunction greet(uint a) public {}\n}\ncontract C {\nfunction f() public {\nHello h;\nh.\n}\n}";
+    let text = "contract Hello {\nuint total;\nfunction greet(uint a) public { a; }\n}\ncontract C {\nfunction f() public {\nHello h;\nh.\n}\n}";
     let at = text.rfind("h.").expect("dot") as u32 + 2;
     let tokens = SolidityLexer.tokenize(text);
     let (file, errors) = SolidityParser.parse_with_errors(&tokens);
@@ -3417,7 +3416,7 @@ fn string_member_hover_returns_none() {
 #[test]
 fn function_member_completion_lists_selector_gas_value() {
     let text =
-        "contract C {\nfunction greet(uint a) public {}\nfunction f() public {\ngreet.\n}\n}";
+        "contract C {\nfunction greet(uint a) public { a; }\nfunction f() public {\ngreet.\n}\n}";
     let at = text.rfind("greet.").expect("dot") as u32 + 6;
     let labels = complete_labels(text, at);
     assert!(
@@ -3431,7 +3430,7 @@ fn function_member_completion_lists_selector_gas_value() {
 
 #[test]
 fn function_hover_shows_selector_detail() {
-    let text = "contract C {\nfunction greet(uint a) public {}\nfunction f() public {\ngreet.selector;\n}\n}";
+    let text = "contract C {\nfunction greet(uint a) public { a; }\nfunction f() public {\ngreet.selector;\n}\n}";
     let tokens = SolidityLexer.tokenize(text);
     let (file, errors) = SolidityParser.parse_with_errors(&tokens);
     assert!(errors.is_empty(), "errors: {errors:?}");
@@ -3442,7 +3441,7 @@ fn function_hover_shows_selector_detail() {
 
 #[test]
 fn function_goto_returns_none() {
-    let text = "contract C {\nfunction greet(uint a) public {}\nfunction f() public {\ngreet.selector;\n}\n}";
+    let text = "contract C {\nfunction greet(uint a) public { a; }\nfunction f() public {\ngreet.selector;\n}\n}";
     let tokens = SolidityLexer.tokenize(text);
     let (file, errors) = SolidityParser.parse_with_errors(&tokens);
     assert!(errors.is_empty(), "errors: {errors:?}");
@@ -3452,14 +3451,13 @@ fn function_goto_returns_none() {
 
 #[test]
 fn function_gas_correct_count_stays_silent() {
-    let text = "contract C {\nfunction greet(uint a) public {}\nfunction f() public {\ngreet.gas(100);\n}\n}";
+    let text = "contract C {\nfunction greet(uint a) public { a; }\nfunction f() public {\ngreet.gas(100);\n}\n}";
     assert!(diagnostics_of(text).is_empty());
 }
 
 #[test]
 fn function_gas_wrong_count_reports() {
-    let text =
-        "contract C {\nfunction greet(uint a) public {}\nfunction f() public {\ngreet.gas();\n}\n}";
+    let text = "contract C {\nfunction greet(uint a) public { a; }\nfunction f() public {\ngreet.gas();\n}\n}";
     let found = diagnostics_of(text);
     assert_eq!(found.len(), 1, "diags: {found:?}");
     assert_eq!(
@@ -3470,7 +3468,7 @@ fn function_gas_wrong_count_reports() {
 
 #[test]
 fn function_selector_call_stays_silent() {
-    let text = "contract C {\nfunction greet(uint a) public {}\nfunction f() public {\ngreet.selector(1);\n}\n}";
+    let text = "contract C {\nfunction greet(uint a) public { a; }\nfunction f() public {\ngreet.selector(1);\n}\n}";
     assert!(diagnostics_of(text).is_empty());
 }
 
@@ -3701,7 +3699,7 @@ fn global_member_access_stays_silent_in_diagnostics() {
 #[test]
 fn builtin_members_never_jump_to_dep_declarations() {
     let dep = "contract D {\nfunction sender() public {}\nfunction length() public {}\nfunction selector() public {}\n}";
-    let cur = "contract C {\nbytes b;\nfunction greet(uint a) public {}\nfunction f() public {\nmsg.sender;\nb.length;\ngreet.selector;\n}\n}";
+    let cur = "contract C {\nbytes b;\nfunction greet(uint a) public { a; }\nfunction f() public {\nmsg.sender;\nb.length;\ngreet.selector;\n}\n}";
     let mut workspace = open_workspace(&[("/D.sol", dep), ("/C.sol", cur)]);
     workspace.set_file_deps(PathBuf::from("/C.sol"), vec![PathBuf::from("/D.sol")]);
     for needle in ["msg.sender", "b.length", "greet.selector"] {
@@ -3806,7 +3804,7 @@ fn outline_struct_enum_event_shapes() {
 
 #[test]
 fn outline_modifier_error_constructor_kinds() {
-    let text = "contract C {\nconstructor(uint a) {}\nmodifier onlyOwner() {\n_\n}\nerror Unauthorized();\n}";
+    let text = "contract C {\nconstructor(uint a) { a; }\nmodifier onlyOwner() {\n_\n}\nerror Unauthorized();\n}";
     let symbols = outline_of(text);
     assert_eq!(symbols.len(), 1);
     let kinds: Vec<(String, u8)> = symbols[0]
@@ -3942,9 +3940,11 @@ fn mutability_plain_function_stays_silent() {
 }
 
 #[test]
-fn mutability_param_shadow_stays_silent() {
+fn mutability_param_shadow_reports_shadow() {
     let text = "contract C {\nuint x;\nfunction f(uint x) pure {\nx;\n}\n}";
-    assert!(diagnostics_of(text).is_empty());
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(found[0].message, "parameter 'x' shadows outer declaration");
 }
 
 #[test]
@@ -4116,7 +4116,7 @@ fn type_mismatch_ether_and_ident_stay_silent() {
 
 #[test]
 fn type_mismatch_local_var_errors() {
-    let text = "contract C {\nfunction f() public {\nuint x = \"hi\";\n}\n}";
+    let text = "contract C {\nfunction f() public {\nuint x = \"hi\";\nx;\n}\n}";
     let found = diagnostics_of(text);
     assert_eq!(found.len(), 1, "diags: {found:?}");
     assert_eq!(
@@ -4133,7 +4133,7 @@ fn type_mismatch_array_type_stays_silent() {
 
 #[test]
 fn using_exact_match_completes_library_function() {
-    let text = "library SafeMath {\nfunction add(uint self, uint other) public returns (uint) {}\n}\ncontract C {\nusing SafeMath for uint;\nfunction f() public {\nuint x;\nx.\n}\n}";
+    let text = "library SafeMath {\nfunction add(uint self, uint other) public returns (uint) { self; other; }\n}\ncontract C {\nusing SafeMath for uint;\nfunction f() public {\nuint x;\nx.\n}\n}";
     let at = text.rfind("x.").expect("dot") as u32 + 2;
     let labels = complete_labels(text, at);
     assert!(labels.contains(&"add".to_string()), "labels: {labels:?}");
@@ -4141,7 +4141,7 @@ fn using_exact_match_completes_library_function() {
 
 #[test]
 fn using_wrong_type_stays_silent() {
-    let text = "library SafeMath {\nfunction add(uint self, uint other) public returns (uint) {}\n}\ncontract C {\nusing SafeMath for uint;\nfunction f() public {\nuint256 x;\nx.\n}\n}";
+    let text = "library SafeMath {\nfunction add(uint self, uint other) public returns (uint) { self; other; }\n}\ncontract C {\nusing SafeMath for uint;\nfunction f() public {\nuint256 x;\nx.\n}\n}";
     let at = text.rfind("x.").expect("dot") as u32 + 2;
     let labels = complete_labels(text, at);
     assert!(!labels.contains(&"add".to_string()), "labels: {labels:?}");
@@ -4149,7 +4149,7 @@ fn using_wrong_type_stays_silent() {
 
 #[test]
 fn using_wildcard_matches_first_param_type() {
-    let text = "library SafeMath {\nfunction add(uint self, uint other) public returns (uint) {}\n}\ncontract C {\nusing SafeMath for *;\nfunction f() public {\nuint x;\nx.\n}\n}";
+    let text = "library SafeMath {\nfunction add(uint self, uint other) public returns (uint) { self; other; }\n}\ncontract C {\nusing SafeMath for *;\nfunction f() public {\nuint x;\nx.\n}\n}";
     let at = text.rfind("x.").expect("dot") as u32 + 2;
     let labels = complete_labels(text, at);
     assert!(labels.contains(&"add".to_string()), "labels: {labels:?}");
@@ -4174,7 +4174,7 @@ fn using_own_member_wins_over_library() {
 
 #[test]
 fn using_hover_shows_library_origin() {
-    let text = "library SafeMath {\nfunction add(uint self, uint other) public returns (uint) {}\n}\ncontract C {\nusing SafeMath for uint;\nfunction f() public {\nuint x;\nx.add;\n}\n}";
+    let text = "library SafeMath {\nfunction add(uint self, uint other) public returns (uint) { self; other; }\n}\ncontract C {\nusing SafeMath for uint;\nfunction f() public {\nuint x;\nx.add;\n}\n}";
     let tokens = SolidityLexer.tokenize(text);
     let (file, errors) = SolidityParser.parse_with_errors(&tokens);
     assert!(errors.is_empty(), "errors: {errors:?}");
@@ -4194,7 +4194,7 @@ fn using_hover_shows_library_origin() {
 
 #[test]
 fn using_goto_jumps_to_library_function() {
-    let text = "library SafeMath {\nfunction add(uint self, uint other) public returns (uint) {}\n}\ncontract C {\nusing SafeMath for uint;\nfunction f() public {\nuint x;\nx.add;\n}\n}";
+    let text = "library SafeMath {\nfunction add(uint self, uint other) public returns (uint) { self; other; }\n}\ncontract C {\nusing SafeMath for uint;\nfunction f() public {\nuint x;\nx.add;\n}\n}";
     let at_use = text.rfind("x.add").expect("use") as u32 + 2;
     let at_decl = text.find("function add").expect("decl") as u32 + 9;
     let target = goto_target(text, at_use);
@@ -4203,13 +4203,13 @@ fn using_goto_jumps_to_library_function() {
 
 #[test]
 fn using_correct_arity_stays_silent() {
-    let text = "library SafeMath {\nfunction add(uint self, uint other) public returns (uint) {}\n}\ncontract C {\nusing SafeMath for uint;\nfunction f() public {\nuint x;\nx.add(1);\n}\n}";
+    let text = "library SafeMath {\nfunction add(uint self, uint other) public returns (uint) { self; other; }\n}\ncontract C {\nusing SafeMath for uint;\nfunction f() public {\nuint x;\nx.add(1);\n}\n}";
     assert!(diagnostics_of(text).is_empty());
 }
 
 #[test]
 fn using_wrong_arity_reports_expected_minus_one() {
-    let text = "library SafeMath {\nfunction add(uint self, uint other) public returns (uint) {}\n}\ncontract C {\nusing SafeMath for uint;\nfunction f() public {\nuint x;\nx.add(1, 2);\n}\n}";
+    let text = "library SafeMath {\nfunction add(uint self, uint other) public returns (uint) { self; other; }\n}\ncontract C {\nusing SafeMath for uint;\nfunction f() public {\nuint x;\nx.add(1, 2);\n}\n}";
     let found = diagnostics_of(text);
     assert_eq!(found.len(), 1, "diags: {found:?}");
     assert_eq!(
@@ -4262,7 +4262,7 @@ fn override_correct_pair_stays_silent() {
 
 #[test]
 fn override_overload_with_different_params_stays_silent() {
-    let text = "contract B {\nfunction f(uint a) public virtual {}\n}\ncontract D is B {\nfunction f(uint a, uint b) public {}\n}";
+    let text = "contract B {\nfunction f(uint a) public virtual { a; }\n}\ncontract D is B {\nfunction f(uint a, uint b) public { a; b; }\n}";
     assert!(diagnostics_of(text).is_empty());
 }
 
@@ -4433,7 +4433,7 @@ fn tuple_names_resolve_and_stay_silent() {
 
 #[test]
 fn nested_call_arity_reports() {
-    let text = "contract C {\nfunction greet(uint a, uint b) public {}\nfunction f() public {\nif (true) {\ngreet(1);\n}\n}\n}";
+    let text = "contract C {\nfunction greet(uint a, uint b) public { a; b; }\nfunction f() public {\nif (true) {\ngreet(1);\n}\n}\n}";
     let found = diagnostics_of(text);
     assert_eq!(found.len(), 1, "diags: {found:?}");
     assert_eq!(
@@ -4444,7 +4444,7 @@ fn nested_call_arity_reports() {
 
 #[test]
 fn nested_member_arity_reports() {
-    let text = "contract Hello {\nfunction greet(uint a, uint b) public {}\n}\ncontract C {\nfunction f() public {\nHello h;\nwhile (true) {\nh.greet(1);\n}\n}\n}";
+    let text = "contract Hello {\nfunction greet(uint a, uint b) public { a; b; }\n}\ncontract C {\nfunction f() public {\nHello h;\nwhile (true) {\nh.greet(1);\n}\n}\n}";
     let found = diagnostics_of(text);
     assert_eq!(found.len(), 1, "diags: {found:?}");
     assert_eq!(
@@ -4653,8 +4653,7 @@ fn deploy_implicit_ctor_empty_stays_silent() {
 
 #[test]
 fn deploy_explicit_ctor_wrong_count_reports() {
-    let text =
-        "contract C {\nconstructor(uint a, uint b) {}\nfunction f() public {\nnew C(1);\n}\n}";
+    let text = "contract C {\nconstructor(uint a, uint b) { a; b; }\nfunction f() public {\nnew C(1);\n}\n}";
     let found = diagnostics_of(text);
     assert_eq!(found.len(), 1, "diags: {found:?}");
     assert_eq!(
@@ -4665,13 +4664,13 @@ fn deploy_explicit_ctor_wrong_count_reports() {
 
 #[test]
 fn deploy_explicit_ctor_correct_stays_silent() {
-    let text = "contract C {\nconstructor(uint a) {}\nfunction f() public {\nnew C(1);\n}\n}";
+    let text = "contract C {\nconstructor(uint a) { a; }\nfunction f() public {\nnew C(1);\n}\n}";
     assert!(diagnostics_of(text).is_empty());
 }
 
 #[test]
 fn deploy_across_file_uses_target_ctor() {
-    let dep = "contract Vault {\nconstructor(uint a, uint b) {}\n}";
+    let dep = "contract Vault {\nconstructor(uint a, uint b) { a; b; }\n}";
     let cur = "import \"./V.sol\";\ncontract C {\nfunction f() public {\nnew Vault(1);\n}\n}";
     let mut workspace = open_workspace(&[("/V.sol", dep), ("/C.sol", cur)]);
     workspace.set_file_deps(PathBuf::from("/C.sol"), vec![PathBuf::from("/V.sol")]);
@@ -4705,9 +4704,154 @@ fn deploy_unknown_target_stays_silent_without_double() {
 
 #[test]
 fn deploy_option_and_named_args_stay_silent() {
-    let option =
-        "contract C {\nconstructor(uint a) {}\nfunction f() public {\nnew C{value: 1}(1);\n}\n}";
+    let option = "contract C {\nconstructor(uint a) { a; }\nfunction f() public {\nnew C{value: 1}(1);\n}\n}";
     assert!(diagnostics_of(option).is_empty());
-    let named = "contract C {\nconstructor(uint a) {}\nfunction f() public {\nnew C({a: 1});\n}\n}";
+    let named =
+        "contract C {\nconstructor(uint a) { a; }\nfunction f() public {\nnew C({a: 1});\n}\n}";
     assert!(diagnostics_of(named).is_empty());
+}
+
+#[test]
+fn shadow_param_shadows_state_reports() {
+    let text = "contract C {\nuint x;\nfunction f(uint x) public {\nx;\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(found[0].message, "parameter 'x' shadows outer declaration");
+}
+
+#[test]
+fn shadow_local_shadows_state_reports() {
+    let text = "contract C {\nuint total;\nfunction f() public {\nuint total = 1;\ntotal;\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "variable 'total' shadows outer declaration"
+    );
+}
+
+#[test]
+fn shadow_nested_local_shadows_outer_reports() {
+    let text = "contract C {\nfunction f() public {\nuint x = 1;\nx;\n{\nuint x = 2;\nx;\n}\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(found[0].message, "variable 'x' shadows outer declaration");
+}
+
+#[test]
+fn shadow_sibling_blocks_stay_silent() {
+    let text =
+        "contract C {\nfunction f() public {\n{\nuint x = 1;\nx;\n}\n{\nuint x = 2;\nx;\n}\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn shadow_function_name_stays_silent() {
+    let text = "contract C {\nfunction foo() public {\n}\nfunction f() public {\nuint foo = 1;\nfoo;\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn shadow_inherited_state_stays_silent() {
+    let text =
+        "contract B {\nuint x;\n}\ncontract D is B {\nfunction f() public {\nuint x = 1;\nx;\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn shadow_builtin_name_stays_silent() {
+    let text = "contract C {\nfunction f() public {\nuint msg = 1;\nmsg;\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn unused_param_reports() {
+    let text = "contract C {\nfunction f(uint a) public {\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(found[0].message, "unused parameter 'a'");
+}
+
+#[test]
+fn unused_local_reports() {
+    let text = "contract C {\nfunction f() public {\nuint x = 1;\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(found[0].message, "unused variable 'x'");
+}
+
+#[test]
+fn unused_used_names_stay_silent() {
+    let text = "contract C {\nfunction f(uint a) public {\nuint x = 1;\na;\nx;\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn unused_named_import_reports_once() {
+    let text = "import {B} from \"./B.sol\";\ncontract A {\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(found[0].message, "unused import './B.sol'");
+}
+
+#[test]
+fn unused_plain_import_stays_silent() {
+    let text = "import \"./A.sol\";\ncontract A {\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn data_location_state_with_memory_errors() {
+    let text = "contract C {\nstring memory s;\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "data location 'memory' not allowed for state variable"
+    );
+}
+
+#[test]
+fn data_location_value_with_location_errors() {
+    let text = "contract C {\nfunction f(uint memory a) public {\na;\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "data location 'memory' not allowed for 'uint'"
+    );
+}
+
+#[test]
+fn data_location_missing_for_string_param_errors() {
+    let text = "contract C {\nfunction f(string a) public {\na;\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "data location must be specified for 'string'"
+    );
+}
+
+#[test]
+fn data_location_correct_param_stays_silent() {
+    let text = "contract C {\nfunction f(string memory a) public {\na;\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn data_location_calldata_local_errors() {
+    let text = "contract C {\nfunction f() public {\nstring calldata s;\ns;\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "data location 'calldata' not allowed for local variable"
+    );
+}
+
+#[test]
+fn data_location_user_type_stays_silent() {
+    let text = "struct S {\nuint a;\n}\ncontract C {\nfunction f(S s) public {\ns;\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
 }

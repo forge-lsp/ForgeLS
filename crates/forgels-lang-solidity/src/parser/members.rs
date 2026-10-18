@@ -18,6 +18,9 @@ pub(crate) fn parse_var(cursor: &mut Cursor, kind: SolidityNode) -> Result<Synta
     let var_type = parse_type(cursor)?;
     let type_end = var_type.span.end;
     // Data location sits between type and name: `string memory label`.
+    // Stored so `StateVar` and `LocalVar` expose it; name lookup skips
+    // it so `memory` never reads as the name.
+    let mut location: Option<forgels_syntax::Token> = None;
     if matches!(
         cursor.peek_kind(),
         Some(kind)
@@ -25,7 +28,7 @@ pub(crate) fn parse_var(cursor: &mut Cursor, kind: SolidityNode) -> Result<Synta
                 || kind == SolidityKind::Storage.as_u16()
                 || kind == SolidityKind::Calldata.as_u16()
     ) {
-        cursor.bump();
+        location = cursor.bump();
     }
     // State modifiers sit between type and name: `uint public constant x`.
     // `public`, `virtual`, and `override` are stored for getters and
@@ -102,6 +105,9 @@ pub(crate) fn parse_var(cursor: &mut Cursor, kind: SolidityNode) -> Result<Synta
     end = end.max(semi.span.end);
     let type_start = var_type.span.start;
     let mut children = vec![SyntaxElement::Node(var_type)];
+    if let Some(token) = location {
+        children.push(token_element(token));
+    }
     children.extend(stored_mods);
     children.push(token_element(name));
     if let Some(literal) = init_literal {
@@ -337,21 +343,34 @@ pub(crate) fn parse_param(cursor: &mut Cursor) -> Result<SyntaxNode, ParseError>
     let mut children = vec![SyntaxElement::Node(param_type)];
     // Data location, payable, and indexed sit between type and name:
     // `string memory label`, `address payable holder`,
-    // `address indexed from`. Consumed in any order so the trailing
-    // name still parses.
+    // `address indexed from`. Location is stored for data location
+    // checks; payable and indexed stay consumed. Name lookup skips
+    // the stored token so `memory` never reads as the name.
+    let mut location: Option<forgels_syntax::Token> = None;
     loop {
         match cursor.peek_kind() {
             Some(kind)
                 if kind == SolidityKind::Memory.as_u16()
                     || kind == SolidityKind::Storage.as_u16()
-                    || kind == SolidityKind::Calldata.as_u16()
-                    || kind == SolidityKind::Payable.as_u16()
+                    || kind == SolidityKind::Calldata.as_u16() =>
+            {
+                if location.is_none() {
+                    location = cursor.bump();
+                } else {
+                    cursor.bump();
+                }
+            }
+            Some(kind)
+                if kind == SolidityKind::Payable.as_u16()
                     || kind == SolidityKind::Indexed.as_u16() =>
             {
                 cursor.bump();
             }
             _ => break,
         }
+    }
+    if let Some(token) = location {
+        children.push(token_element(token));
     }
     let mut end = children
         .first()
@@ -816,6 +835,7 @@ fn try_parse_tuple(cursor: &mut Cursor) -> Option<Vec<SyntaxNode>> {
 fn parse_tuple_decl_element(cursor: &mut Cursor) -> Option<SyntaxNode> {
     let var_type = parse_type(cursor).ok()?;
     let start = var_type.span.start;
+    let mut location: Option<forgels_syntax::Token> = None;
     loop {
         match cursor.peek_kind() {
             Some(kind)
@@ -823,7 +843,11 @@ fn parse_tuple_decl_element(cursor: &mut Cursor) -> Option<SyntaxNode> {
                     || kind == SolidityKind::Storage.as_u16()
                     || kind == SolidityKind::Calldata.as_u16() =>
             {
-                cursor.bump();
+                if location.is_none() {
+                    location = cursor.bump();
+                } else {
+                    cursor.bump();
+                }
             }
             _ => break,
         }
@@ -834,10 +858,15 @@ fn parse_tuple_decl_element(cursor: &mut Cursor) -> Option<SyntaxNode> {
     }
     cursor.bump();
     let end = name.span.end.max(var_type.span.end);
+    let mut children = vec![SyntaxElement::Node(var_type)];
+    if let Some(token) = location {
+        children.push(token_element(token));
+    }
+    children.push(token_element(name.clone()));
     Some(SyntaxNode::with_children(
         SolidityNode::LocalVar.as_u16(),
         Span::new(start, end),
-        vec![SyntaxElement::Node(var_type), token_element(name.clone())],
+        children,
     ))
 }
 

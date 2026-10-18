@@ -16,8 +16,8 @@ pub use analysis::{
 };
 
 pub use ast::{
-    BlockNode, CallStmt, ContractDef, EmitStmt, EnumDef, ErrorDef, EventDef, FunctionDef,
-    ImportDirective, LocalVar, MemberExpr, ModifierDef, Mutability, NewStmt, Param,
+    BlockNode, CallStmt, ContractDef, DataLocation, EmitStmt, EnumDef, ErrorDef, EventDef,
+    FunctionDef, ImportDirective, LocalVar, MemberExpr, ModifierDef, Mutability, NewStmt, Param,
     PragmaDirective, Returns, RevertStmt, SolidityFile, SolidityNode, StateVar, StructDef,
     TypeNode, UserTypeDef, UsingDirective, Visibility,
 };
