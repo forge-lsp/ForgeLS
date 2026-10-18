@@ -1060,3 +1060,40 @@ fn new_parses_with_contract_and_args() {
     assert_eq!(news[0].arg_count(), 2);
     assert_eq!(body.all_news().len(), 1);
 }
+
+#[test]
+fn data_location_stored_for_param_state_and_local() {
+    use crate::DataLocation;
+    let text = "contract C {\nstring memory label;\nfunction f(string calldata a, uint b) public {\nstring memory s;\nuint x;\n}\n}";
+    let file = parse_ok(text);
+    let contract = &file.contracts()[0];
+    let state = &contract.state_vars()[0];
+    assert_eq!(state.name().as_deref(), Some("label"));
+    assert_eq!(state.data_location(), Some(DataLocation::Memory));
+    assert!(state.data_location_span().is_some());
+    let params = contract.functions()[0].params();
+    assert_eq!(params.len(), 2);
+    assert_eq!(params[0].name().as_deref(), Some("a"));
+    assert_eq!(params[0].data_location(), Some(DataLocation::Calldata));
+    assert_eq!(params[1].name().as_deref(), Some("b"));
+    assert_eq!(params[1].data_location(), None);
+    let body = contract.functions()[0].body().expect("body");
+    let locals = body.all_locals();
+    assert_eq!(locals.len(), 2);
+    assert_eq!(locals[0].name().as_deref(), Some("s"));
+    assert_eq!(locals[0].data_location(), Some(DataLocation::Memory));
+    assert_eq!(locals[1].name().as_deref(), Some("x"));
+    assert_eq!(locals[1].data_location(), None);
+}
+
+#[test]
+fn data_location_name_skips_location_token() {
+    let text = "contract C {\nstring memory label;\n}";
+    let file = parse_ok(text);
+    let var = &file.contracts()[0].state_vars()[0];
+    assert_eq!(var.name().as_deref(), Some("label"));
+    assert!(var.name_span().is_some());
+    let covered = &text[var.name_span().expect("span").start as usize
+        ..var.name_span().expect("span").end as usize];
+    assert_eq!(covered, "label");
+}

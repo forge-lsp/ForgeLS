@@ -1,6 +1,7 @@
 use forgels_core::{
-    Analyzer, CompletionData, DiagnosticData, GotoTarget, HoverData, ProjectContext,
+    Analyzer, CompletionData, DiagnosticData, GotoTarget, HoverData, ProjectContext, Workspace,
     analyzer::{ImportRef, TextEdit},
+    routing::Language,
 };
 use forgels_syntax::{AstNode, Lexer, Span};
 
@@ -14,6 +15,7 @@ pub(crate) mod bytes;
 mod call_hierarchy;
 mod calls;
 mod completion;
+mod data_location;
 mod emits;
 mod errors;
 pub(crate) mod forge;
@@ -34,10 +36,12 @@ mod payable;
 mod references;
 mod rename;
 mod semantic;
+mod shadow;
 mod signature;
 mod symbols;
 mod type_mismatch;
 mod unknown;
+mod unused;
 pub(crate) mod using;
 mod visibility;
 
@@ -685,6 +689,8 @@ impl SolidityAnalyzer {
         out.extend(payable::payable_diagnostics(file, text, scope, deps));
         out.extend(type_mismatch::type_mismatch_diagnostics(file));
         out.extend(override_diagnostics::override_diagnostics(file));
+        out.extend(shadow::shadow_diagnostics(file, scope));
+        out.extend(data_location::data_location_diagnostics(file));
         out.extend(unknown::unknown_identifier_diagnostics(
             file, text, scope, deps,
         ));
@@ -697,6 +703,24 @@ impl SolidityAnalyzer {
         });
         out
     }
+}
+
+/// Single file unused check via a synthetic workspace.
+///
+/// Builds a one file workspace so `find_references` reuses the same
+/// path as the context version. Failures fall back to empty so
+/// diagnostics never breaks on workspace setup.
+fn unused_for_text(file: &SolidityFile, text: &str, scope: &Scope) -> Vec<DiagnosticData> {
+    let mut workspace = Workspace::new();
+    let path = std::path::PathBuf::from("/unused.sol");
+    if workspace
+        .open(path.clone(), Language::Solidity, text.to_string(), 1)
+        .is_err()
+    {
+        return Vec::new();
+    }
+    let ctx = ProjectContext::new(path.as_path(), text, 0, &workspace);
+    unused::unused_diagnostics_ctx(file, text, scope, &[], &ctx)
 }
 
 impl Analyzer for SolidityAnalyzer {
@@ -989,7 +1013,16 @@ impl Analyzer for SolidityAnalyzer {
         let tokens = SolidityLexer.tokenize(text);
         let (file, errors) = SolidityParser.parse_with_errors(&tokens);
         let scope = collect_symbols(&file);
-        Self::diagnostics_for(&file, text, &errors, &scope, &[])
+        let mut out = Self::diagnostics_for(&file, text, &errors, &scope, &[]);
+        out.extend(unused_for_text(&file, text, &scope));
+        out.sort_by(|left, right| {
+            left.span
+                .start
+                .cmp(&right.span.start)
+                .then(left.span.end.cmp(&right.span.end))
+                .then(left.message.cmp(&right.message))
+        });
+        out
     }
 
     fn diagnostics_ctx(&self, ctx: &ProjectContext) -> Vec<DiagnosticData> {
@@ -997,7 +1030,18 @@ impl Analyzer for SolidityAnalyzer {
         let (file, errors) = SolidityParser.parse_with_errors(&tokens);
         let scope = collect_symbols(&file);
         let deps = Self::dep_files(ctx);
-        Self::diagnostics_for(&file, ctx.text, &errors, &scope, &deps)
+        let mut out = Self::diagnostics_for(&file, ctx.text, &errors, &scope, &deps);
+        out.extend(unused::unused_diagnostics_ctx(
+            &file, ctx.text, &scope, &deps, ctx,
+        ));
+        out.sort_by(|left, right| {
+            left.span
+                .start
+                .cmp(&right.span.start)
+                .then(left.span.end.cmp(&right.span.end))
+                .then(left.message.cmp(&right.message))
+        });
+        out
     }
 
     fn imports(&self, text: &str) -> Vec<ImportRef> {

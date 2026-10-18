@@ -14,7 +14,8 @@ pub use contract::ContractDef;
 pub use emits::EmitStmt;
 pub use file::{ImportDirective, PragmaDirective, SolidityFile};
 pub use members::{
-    FunctionDef, LocalVar, MemberExpr, Mutability, Param, Returns, StateVar, Visibility,
+    DataLocation, FunctionDef, LocalVar, MemberExpr, Mutability, Param, Returns, StateVar,
+    Visibility, is_data_location_kind,
 };
 pub use types::{BlockNode, TypeNode};
 pub use user_types::{EnumDef, ErrorDef, EventDef, ModifierDef, StructDef, UserTypeDef};
