@@ -801,8 +801,9 @@ fn broken_dep_goto_still_works() {
 }
 
 fn diagnostics_of(text: &str) -> Vec<forgels_core::DiagnosticData> {
-    // Correctness focus: style batches have their own tests in style.rs,
-    // so filter their warn-only rules here to keep this file small.
+    // Correctness focus: style, safety, and foundry batches have their
+    // own tests in style.rs and safety.rs, so filter their warn-only
+    // rules here to keep this file small.
     SolidityAnalyzer
         .diagnostics(text)
         .into_iter()
@@ -820,6 +821,12 @@ fn diagnostics_of(text: &str) -> Vec<forgels_core::DiagnosticData> {
                     | forgels_lint::RuleId::NO_L_O_I
                     | forgels_lint::RuleId::NO_CONSOLE
                     | forgels_lint::RuleId::NO_SHADOW_BUILTIN
+                    | forgels_lint::RuleId::TEST_NAMING
+                    | forgels_lint::RuleId::TX_ORIGIN
+                    | forgels_lint::RuleId::UNCHECKED_CALL
+                    | forgels_lint::RuleId::REENTRANCY_PATTERN
+                    | forgels_lint::RuleId::ENCODE_PACKED_DYNAMIC
+                    | forgels_lint::RuleId::PAYABLE_FALLBACK
             )
         })
         .collect()
@@ -2521,6 +2528,12 @@ fn diagnostics_multi(
                     | forgels_lint::RuleId::NO_L_O_I
                     | forgels_lint::RuleId::NO_CONSOLE
                     | forgels_lint::RuleId::NO_SHADOW_BUILTIN
+                    | forgels_lint::RuleId::TEST_NAMING
+                    | forgels_lint::RuleId::TX_ORIGIN
+                    | forgels_lint::RuleId::UNCHECKED_CALL
+                    | forgels_lint::RuleId::REENTRANCY_PATTERN
+                    | forgels_lint::RuleId::ENCODE_PACKED_DYNAMIC
+                    | forgels_lint::RuleId::PAYABLE_FALLBACK
             )
         })
         .collect()

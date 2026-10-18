@@ -45,6 +45,12 @@ impl RuleId {
     pub const NO_L_O_I: Self = Self("style/no-l-O-I");
     pub const NO_CONSOLE: Self = Self("style/no-console");
     pub const NO_SHADOW_BUILTIN: Self = Self("style/no-shadow-builtin");
+    pub const TEST_NAMING: Self = Self("foundry/test-naming");
+    pub const TX_ORIGIN: Self = Self("safety/tx-origin");
+    pub const UNCHECKED_CALL: Self = Self("safety/unchecked-call");
+    pub const REENTRANCY_PATTERN: Self = Self("safety/reentrancy-pattern");
+    pub const ENCODE_PACKED_DYNAMIC: Self = Self("safety/encode-packed-dynamic");
+    pub const PAYABLE_FALLBACK: Self = Self("safety/payable-fallback");
 
     pub const fn as_str(self) -> &'static str {
         self.0
@@ -69,7 +75,13 @@ impl RuleId {
             | "style/spdx-present"
             | "style/no-l-O-I"
             | "style/no-console"
-            | "style/no-shadow-builtin" => Severity::Warning,
+            | "style/no-shadow-builtin"
+            | "foundry/test-naming"
+            | "safety/tx-origin"
+            | "safety/unchecked-call"
+            | "safety/reentrancy-pattern"
+            | "safety/encode-packed-dynamic"
+            | "safety/payable-fallback" => Severity::Warning,
             _ => Severity::Error,
         }
     }
@@ -79,7 +91,7 @@ impl RuleId {
     }
 }
 
-const ALL: [RuleId; 40] = [
+const ALL: [RuleId; 46] = [
     RuleId::PARSE_ERROR,
     RuleId::CALL_ARITY,
     RuleId::STRUCT_ARITY,
@@ -120,4 +132,10 @@ const ALL: [RuleId; 40] = [
     RuleId::NO_L_O_I,
     RuleId::NO_CONSOLE,
     RuleId::NO_SHADOW_BUILTIN,
+    RuleId::TEST_NAMING,
+    RuleId::TX_ORIGIN,
+    RuleId::UNCHECKED_CALL,
+    RuleId::REENTRANCY_PATTERN,
+    RuleId::ENCODE_PACKED_DYNAMIC,
+    RuleId::PAYABLE_FALLBACK,
 ];

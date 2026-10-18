@@ -20,8 +20,8 @@ pub use diagnostic::{Applicability, LintDiagnostic, LintFix};
 pub use filter::should_lint;
 pub use fix::{FixOutcome, apply};
 pub use plugin::{
-    CorrectnessPlugin, LintPlugin, Registry, RuleMeta, StylePlugin, builtin_correctness_plugin,
-    builtin_style_plugin,
+    CorrectnessPlugin, LintPlugin, Registry, RuleMeta, SafetyPlugin, StylePlugin,
+    builtin_correctness_plugin, builtin_safety_plugin, builtin_style_plugin,
 };
 pub use reporter::{FileReport, report, report_json};
 pub use rule::RuleId;

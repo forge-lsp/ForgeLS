@@ -7,7 +7,9 @@ use forgels_syntax::{AstNode, Lexer};
 use super::{Scope, SymbolKind, unknown};
 use crate::{SolidityFile, SolidityLexer, lexer::SolidityKind};
 
-fn is_write_kind(kind: u16) -> bool {
+// Shared with safety: assign family plus ++/-- counts as a write.
+// Limits live at the call sites, not here.
+pub(crate) fn is_write_kind(kind: u16) -> bool {
     kind == SolidityKind::Assign.as_u16()
         || kind == SolidityKind::PlusAssign.as_u16()
         || kind == SolidityKind::MinusAssign.as_u16()
@@ -24,7 +26,7 @@ fn is_write_kind(kind: u16) -> bool {
         || kind == SolidityKind::MinusMinus.as_u16()
 }
 
-fn receiver_before(text: &str, dot: usize) -> Option<String> {
+pub(crate) fn receiver_before(text: &str, dot: usize) -> Option<String> {
     let bytes = text.as_bytes();
     if dot == 0 || dot > bytes.len() {
         return None;
@@ -193,7 +195,10 @@ pub fn mutability_diagnostics(
     out
 }
 
-fn prev_code(tokens: &[forgels_syntax::Token], index: usize) -> Option<forgels_syntax::Token> {
+pub(crate) fn prev_code(
+    tokens: &[forgels_syntax::Token],
+    index: usize,
+) -> Option<forgels_syntax::Token> {
     let comment = SolidityKind::Comment.as_u16();
     let mut at = index.checked_sub(1)?;
     loop {
@@ -205,7 +210,7 @@ fn prev_code(tokens: &[forgels_syntax::Token], index: usize) -> Option<forgels_s
     }
 }
 
-fn next_code_token(
+pub(crate) fn next_code_token(
     tokens: &[forgels_syntax::Token],
     index: usize,
 ) -> Option<forgels_syntax::Token> {
@@ -221,7 +226,7 @@ fn next_code_token(
 }
 
 /// True when `delete` precedes `this` in `delete this.x`.
-fn delete_before_this(tokens: &[forgels_syntax::Token], x_index: usize) -> bool {
+pub(crate) fn delete_before_this(tokens: &[forgels_syntax::Token], x_index: usize) -> bool {
     let comment = SolidityKind::Comment.as_u16();
     // x <- dot <- this <- maybe delete. Walk back three code tokens.
     let mut codes: Vec<forgels_syntax::Token> = Vec::new();
@@ -329,7 +334,10 @@ fn check_member_write(
     }
 }
 
-fn next_code_after(tokens: &[forgels_syntax::Token], end: u32) -> Option<forgels_syntax::Token> {
+pub(crate) fn next_code_after(
+    tokens: &[forgels_syntax::Token],
+    end: u32,
+) -> Option<forgels_syntax::Token> {
     let comment = SolidityKind::Comment.as_u16();
     for token in tokens {
         if token.kind == comment {
@@ -348,7 +356,7 @@ fn next_code_after(tokens: &[forgels_syntax::Token], end: u32) -> Option<forgels
 /// an assign family. Longer chains stay false so they keep the token
 /// path. Lets member diagnostics own the root and avoids a double
 /// read plus write in pure functions.
-fn root_has_member_write(tokens: &[forgels_syntax::Token], index: usize) -> bool {
+pub(crate) fn root_has_member_write(tokens: &[forgels_syntax::Token], index: usize) -> bool {
     let comment = SolidityKind::Comment.as_u16();
     let mut dot_pos: Option<usize> = None;
     let mut at = index + 1;
