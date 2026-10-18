@@ -238,7 +238,7 @@ pub(crate) fn decl_spans(file: &SolidityFile) -> Vec<Span> {
                 }
             }
             if let Some(body) = function.body() {
-                for local in body.locals() {
+                for local in body.all_locals() {
                     if let Some(span) = local.name_span() {
                         out.push(span);
                     }
@@ -269,7 +269,7 @@ pub(crate) fn emit_spans(file: &SolidityFile) -> Vec<Span> {
             let Some(body) = function.body() else {
                 continue;
             };
-            for emit in body.emits() {
+            for emit in body.all_emits() {
                 if let Some(span) = emit.name_span() {
                     out.push(span);
                 }
@@ -287,7 +287,7 @@ pub(crate) fn member_spans(file: &SolidityFile) -> Vec<Span> {
             let Some(body) = function.body() else {
                 continue;
             };
-            for member in body.members() {
+            for member in body.all_members() {
                 if let Some(span) = member.member_span() {
                     out.push(span);
                 }
@@ -305,12 +305,12 @@ pub(crate) fn options_spans(file: &SolidityFile) -> Vec<Span> {
             let Some(body) = function.body() else {
                 continue;
             };
-            for call in body.calls() {
+            for call in body.all_calls() {
                 if let Some(span) = call.options_span() {
                     out.push(span);
                 }
             }
-            for member in body.members() {
+            for member in body.all_members() {
                 if let Some(span) = member.options_span() {
                     out.push(span);
                 }

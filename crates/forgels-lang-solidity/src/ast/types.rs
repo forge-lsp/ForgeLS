@@ -64,8 +64,12 @@ fn join_type_text(parts: &[&str]) -> String {
     out
 }
 
-/// Function or lone block body. Children hold LocalVar, Call, Emit, and
-/// Member nodes; other statements are skipped but stay inside the span.
+/// Function or lone block body. Children hold LocalVar, Call, Emit,
+/// Member, and nested Block nodes; other statements are skipped but stay
+/// inside the span. Nested blocks come from bare `{ ... }` groups and
+/// from `if`, `for`, `while`, `unchecked`, and `try` bodies, so scopes
+/// and diagnostics recurse with `all_*` while `locals`, `calls`,
+/// `members`, and `emits` stay direct children only.
 #[derive(Debug, Clone)]
 pub struct BlockNode {
     syntax: SyntaxNode,
@@ -83,6 +87,56 @@ impl BlockNode {
                 _ => None,
             })
             .collect()
+    }
+
+    /// Direct nested blocks: bare groups plus control bodies.
+    pub fn child_blocks(&self) -> Vec<BlockNode> {
+        self.syntax
+            .children
+            .iter()
+            .filter_map(|element| match element {
+                SyntaxElement::Node(node) if node.kind == SolidityNode::Block.as_u16() => {
+                    BlockNode::cast(node.clone())
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// All locals in this block plus nested blocks, depth first.
+    pub fn all_locals(&self) -> Vec<LocalVar> {
+        let mut out = self.locals();
+        for child in self.child_blocks() {
+            out.extend(child.all_locals());
+        }
+        out
+    }
+
+    /// All plain calls in this block plus nested blocks, depth first.
+    pub fn all_calls(&self) -> Vec<CallStmt> {
+        let mut out = self.calls();
+        for child in self.child_blocks() {
+            out.extend(child.all_calls());
+        }
+        out
+    }
+
+    /// All member accesses in this block plus nested blocks, depth first.
+    pub fn all_members(&self) -> Vec<MemberExpr> {
+        let mut out = self.members();
+        for child in self.child_blocks() {
+            out.extend(child.all_members());
+        }
+        out
+    }
+
+    /// All emit statements in this block plus nested blocks, depth first.
+    pub fn all_emits(&self) -> Vec<EmitStmt> {
+        let mut out = self.emits();
+        for child in self.child_blocks() {
+            out.extend(child.all_emits());
+        }
+        out
     }
 
     pub fn calls(&self) -> Vec<CallStmt> {

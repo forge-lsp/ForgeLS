@@ -211,6 +211,10 @@ fn function_symbol(function: &FunctionDef) -> Option<DocumentSymbolData> {
 }
 
 fn function_children(function: &FunctionDef) -> Vec<DocumentSymbolData> {
+    // Outline keeps params only by design: locals (including nested
+    // block and tuple decls) resolve through scopes for hover, goto,
+    // and completion, but never outline. V1 keeps the function shape
+    // to its signature.
     let mut out = Vec::new();
     for param in function.params() {
         if let Some(symbol) = param_symbol(&param) {

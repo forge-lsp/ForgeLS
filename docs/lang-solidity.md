@@ -241,6 +241,45 @@ Status: token kinds defined. Real lexer and parser are planned.
 - Error: `unresolved identifier '{name}'` with the token span. Unknown plain callees error, unknown member names stay silent, emit names never double.
 - Limits: reserved words used as names stay silent (`Ident` only), return param names are not tracked, free functions are out of scope.
 
+## Block scopes
+
+- Scope: `ast::BlockNode` plus `parser::parse_block` and
+  `analysis::{mod::block_scope, unknown, calls, emits}`. No new
+  `SolidityNode` kind, no new `SymbolKind`: nested blocks reuse `Block`,
+  decls reuse `LocalVar`.
+- Shape: `BlockNode::child_blocks` returns direct nested blocks.
+  `all_locals`, `all_calls`, `all_members`, and `all_emits` recurse
+  depth first. `locals`, `calls`, `members`, and `emits` stay direct
+  children only.
+- Parse: bare `{ ... }` groups recurse into `parse_block` as child
+  blocks. `if`, `for`, `while`, `unchecked`, and `try` bodies recurse
+  the same way. `assembly` bodies stay skipped with no nodes.
+- Bodies: brace bodies become child blocks. Non-brace bodies fall back
+  to skipping one statement with no node; a nested control in that
+  slot still recurses. `else` binds to its `if` in the same call.
+- For header: `parse_for` wraps the whole `for` statement in one child
+  `Block` from `for` to body end. A `Type name [= init];` init becomes
+  one `LocalVar` inside that wrapper so bodies see it, but uses after
+  the loop miss. Empty inits, assignments, and broken headers stop
+  silently past `)`.
+- Tuple: `(T a, U b) = rhs;` expands to one `LocalVar` per named
+  element. Bare `(a, b) = rhs;` is a pure assignment with no symbols.
+  Rows must close with `)` then `=` and end with `;`; anything else
+  rewinds so the caller recovers one statement.
+- Scopes: `function_scope` holds params, then one `block_scope` child
+  per body. `block_scope` holds direct locals plus one child scope per
+  nested block, so the deepest decl wins for hover, completion, goto,
+  references, and rename.
+- Diagnostics: `unknown` decl, emit, member, and option spans plus
+  plain, member, and emit arity all use `all_*`, so nested rows lint
+  the same as top-level rows.
+- Outline: `function_children` stays params only by design. Locals
+  never outline; the comment on the function states why.
+- Limits: `catch` params are skipped with no symbols, `do` bodies
+  fall back to statement skips, single-statement bodies hold no decls.
+  Type mismatch, inlay, payable, visibility, and call hierarchy still
+  read direct children only.
+
 ## Document symbols
 
 - Scope: `analysis::symbols` plus `Analyzer::document_symbols` and the

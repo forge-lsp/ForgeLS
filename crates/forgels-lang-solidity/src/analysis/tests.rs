@@ -4375,3 +4375,99 @@ fn getter_wrong_call_reports_arity() {
         "this function 'total' takes 0 arguments but 1 supplied"
     );
 }
+
+#[test]
+fn nested_block_shadowing_resolves_inner() {
+    let text = "contract C {\nuint x;\nfunction f() public {\nuint x = 1;\nif (true) {\nuint x = 2;\nx;\n}\n}\n}";
+    let (_, scope) = collect(text);
+    let at_use = text.rfind("\nx;\n").expect("use") as u32 + 1;
+    let found = scope.resolve("x", at_use).expect("found");
+    assert_eq!(found.kind, SymbolKind::LocalVar);
+    let at_decl = text.rfind("uint x = 2").expect("inner decl") as u32 + 5;
+    assert!(found.span.contains(at_decl));
+}
+
+#[test]
+fn nested_goto_prefers_inner_block() {
+    let text =
+        "contract C {\nuint x;\nfunction f() public {\nif (true) {\nuint x = 1;\nx;\n}\n}\n}";
+    let at_use = text.rfind("\nx;\n").expect("use") as u32 + 1;
+    let at_inner = text.find("x = 1").expect("inner") as u32;
+    let target = goto_target(text, at_use);
+    assert!(target.start <= at_inner && at_inner < target.end);
+}
+
+#[test]
+fn for_header_local_visible_in_body() {
+    let text = "contract C {\nfunction f() public {\nfor (uint i = 0; i < 10; i++) {\ni;\n}\n}\n}";
+    let (_, scope) = collect(text);
+    let at_use = text.rfind("\ni;\n").expect("use") as u32 + 1;
+    let found = scope.resolve("i", at_use).expect("found");
+    assert_eq!(found.kind, SymbolKind::LocalVar);
+    assert_eq!(found.detail, "uint i");
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn for_header_local_misses_after_loop() {
+    let text = "contract C {\nfunction f() public {\nfor (uint i = 0; i < 10; i++) {\n}\ni;\n}\n}";
+    let (_, scope) = collect(text);
+    let at_use = text.rfind("\ni;\n").expect("use") as u32 + 1;
+    assert!(scope.resolve("i", at_use).is_none());
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(found[0].message, "unresolved identifier 'i'");
+}
+
+#[test]
+fn tuple_names_resolve_and_stay_silent() {
+    let text =
+        "contract C {\nfunction f(uint pair) public {\n(uint a, uint b) = pair;\na;\nb;\n}\n}";
+    let (_, scope) = collect(text);
+    let at_a = text.rfind("\na;\n").expect("use a") as u32 + 1;
+    let found = scope.resolve("a", at_a).expect("found");
+    assert_eq!(found.kind, SymbolKind::LocalVar);
+    assert_eq!(found.detail, "uint a");
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn nested_call_arity_reports() {
+    let text = "contract C {\nfunction greet(uint a, uint b) public {}\nfunction f() public {\nif (true) {\ngreet(1);\n}\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "this function 'greet' takes 2 arguments but 1 supplied"
+    );
+}
+
+#[test]
+fn nested_member_arity_reports() {
+    let text = "contract Hello {\nfunction greet(uint a, uint b) public {}\n}\ncontract C {\nfunction f() public {\nHello h;\nwhile (true) {\nh.greet(1);\n}\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "this function 'greet' takes 2 arguments but 1 supplied"
+    );
+}
+
+#[test]
+fn nested_missing_identifier_reports() {
+    let text = "contract C {\nfunction f() public {\nif (true) {\nmissing;\n}\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(found[0].message, "unresolved identifier 'missing'");
+}
+
+#[test]
+fn nested_emit_arity_reports() {
+    let text = "contract C {\nevent Transfer(address a, uint b);\nfunction f() public {\nif (true) {\nemit Transfer(1);\n}\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "this event 'Transfer' takes 2 arguments but 1 supplied"
+    );
+}
