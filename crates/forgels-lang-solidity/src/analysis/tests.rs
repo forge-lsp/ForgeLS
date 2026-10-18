@@ -801,7 +801,21 @@ fn broken_dep_goto_still_works() {
 }
 
 fn diagnostics_of(text: &str) -> Vec<forgels_core::DiagnosticData> {
-    SolidityAnalyzer.diagnostics(text)
+    // Correctness focus: style batch 2 has its own tests in style.rs,
+    // so filter its warn-only rules here to keep this file small.
+    SolidityAnalyzer
+        .diagnostics(text)
+        .into_iter()
+        .filter(|diag| {
+            !matches!(
+                diag.rule,
+                forgels_lint::RuleId::BLANK_LINES
+                    | forgels_lint::RuleId::NATSPEC_MISSING
+                    | forgels_lint::RuleId::NATSPEC_PARAM
+                    | forgels_lint::RuleId::LINE_LENGTH
+            )
+        })
+        .collect()
 }
 
 #[test]
@@ -2482,7 +2496,20 @@ fn diagnostics_multi(
     let owned = text.to_string();
     let buf = PathBuf::from(path);
     let ctx = ProjectContext::new(buf.as_path(), &owned, 0, workspace);
-    SolidityAnalyzer.diagnostics_ctx(&ctx)
+    // Same batch 2 filter as diagnostics_of: correctness only here.
+    SolidityAnalyzer
+        .diagnostics_ctx(&ctx)
+        .into_iter()
+        .filter(|diag| {
+            !matches!(
+                diag.rule,
+                forgels_lint::RuleId::BLANK_LINES
+                    | forgels_lint::RuleId::NATSPEC_MISSING
+                    | forgels_lint::RuleId::NATSPEC_PARAM
+                    | forgels_lint::RuleId::LINE_LENGTH
+            )
+        })
+        .collect()
 }
 
 #[test]

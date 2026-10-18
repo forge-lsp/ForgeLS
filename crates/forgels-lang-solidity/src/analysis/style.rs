@@ -6,7 +6,8 @@ use crate::{
     Mutability, SolidityFile, SolidityLexer, SolidityNode, Visibility, lexer::SolidityKind,
 };
 
-// Style batch 1: warn-only naming, ordering, and glue checks.
+// Style batch 1 plus batch 2: warn-only naming, ordering, glue,
+// blank lines, natspec, and line length checks.
 // Every push is a warning; config overrides via the lint runner.
 pub fn style_diagnostics(file: &SolidityFile, text: &str) -> Vec<DiagnosticData> {
     let mut out = Vec::new();
@@ -17,6 +18,10 @@ pub fn style_diagnostics(file: &SolidityFile, text: &str) -> Vec<DiagnosticData>
     out.extend(import_position_diagnostics(file));
     out.extend(mapping_glue_diagnostics(text));
     out.extend(array_glue_diagnostics(text));
+    out.extend(blank_lines_diagnostics(file, text));
+    out.extend(natspec_missing_diagnostics(file, text));
+    out.extend(natspec_param_diagnostics(file, text));
+    out.extend(line_length_diagnostics(text));
     out
 }
 
@@ -696,6 +701,257 @@ fn array_glue_diagnostics(text: &str) -> Vec<DiagnosticData> {
     out
 }
 
+fn function_name_span(function: &crate::FunctionDef) -> Span {
+    if let Some(span) = function.name_span() {
+        return span;
+    }
+    for element in &function.syntax().children {
+        if let SyntaxElement::Token(token) = element
+            && is_word_text(&token.text)
+        {
+            return token.span;
+        }
+    }
+    function.syntax().span
+}
+
+fn is_public_or_external(function: &crate::FunctionDef) -> bool {
+    matches!(
+        function.visibility(),
+        Some(Visibility::Public) | Some(Visibility::External)
+    )
+}
+
+fn natspec_target(function: &crate::FunctionDef) -> Option<String> {
+    let name = function.name()?;
+    if name.is_empty() || name == "constructor" {
+        return None;
+    }
+    if !is_public_or_external(function) {
+        return None;
+    }
+    Some(name)
+}
+
+fn natspec_missing_diagnostics(file: &SolidityFile, text: &str) -> Vec<DiagnosticData> {
+    let mut out = Vec::new();
+    for contract in file.contracts() {
+        for function in contract.functions() {
+            let Some(name) = natspec_target(&function) else {
+                continue;
+            };
+            let start = function.syntax().span.start;
+            if super::natspec::natspec_for(text, start).is_none() {
+                out.push(DiagnosticData::warning(
+                    function_name_span(&function),
+                    format!("function '{name}' is missing NatSpec documentation"),
+                    RuleId::NATSPEC_MISSING,
+                ));
+            }
+        }
+    }
+    out
+}
+
+fn natspec_tag_names(docs: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for line in docs.lines() {
+        let clean = line.trim_start().trim_start_matches('*').trim_start();
+        let Some(rest) = clean.strip_prefix("@param") else {
+            continue;
+        };
+        let rest = rest.trim_start();
+        if rest.is_empty() {
+            continue;
+        }
+        let raw = rest.split_whitespace().next().unwrap_or("");
+        let name: String = raw
+            .chars()
+            .take_while(|mark| mark.is_ascii_alphanumeric() || *mark == '_' || *mark == '$')
+            .collect();
+        if name.is_empty() {
+            continue;
+        }
+        out.push(name);
+    }
+    out
+}
+
+fn natspec_param_diagnostics(file: &SolidityFile, text: &str) -> Vec<DiagnosticData> {
+    let mut out = Vec::new();
+    for contract in file.contracts() {
+        for function in contract.functions() {
+            if natspec_target(&function).is_none() {
+                continue;
+            };
+            let start = function.syntax().span.start;
+            let tags = super::natspec::natspec_for(text, start)
+                .map(|docs| natspec_tag_names(&docs))
+                .unwrap_or_default();
+            let params = function.params();
+            for param in &params {
+                let Some(param_name) = param.name() else {
+                    continue;
+                };
+                if param_name.is_empty() {
+                    continue;
+                }
+                if !tags.iter().any(|tag| tag == &param_name) {
+                    out.push(DiagnosticData::warning(
+                        function_name_span(&function),
+                        format!("parameter '{param_name}' is missing NatSpec @param"),
+                        RuleId::NATSPEC_PARAM,
+                    ));
+                }
+            }
+            for tag in &tags {
+                if !params
+                    .iter()
+                    .any(|param| param.name().as_deref() == Some(tag))
+                {
+                    out.push(DiagnosticData::warning(
+                        function_name_span(&function),
+                        format!("NatSpec @param '{tag}' does not match any parameter"),
+                        RuleId::NATSPEC_PARAM,
+                    ));
+                }
+            }
+        }
+    }
+    out
+}
+
+fn element_span(element: &SyntaxElement) -> Span {
+    match element {
+        SyntaxElement::Node(node) => node.span,
+        SyntaxElement::Token(token) => token.span,
+    }
+}
+
+fn blank_count(gap: &str) -> usize {
+    let parts: Vec<&str> = gap.split('\n').collect();
+    if parts.len() < 3 {
+        return 0;
+    }
+    parts[1..parts.len() - 1]
+        .iter()
+        .filter(|line| line.trim().is_empty())
+        .count()
+}
+
+fn next_top_span(node: &forgels_syntax::SyntaxNode) -> Option<Span> {
+    let (_, span) = file_item_name(node);
+    span
+}
+
+fn next_member_span(node: &forgels_syntax::SyntaxNode) -> Option<Span> {
+    let (_, span) = member_item_name(node);
+    span
+}
+
+fn blank_lines_diagnostics(file: &SolidityFile, text: &str) -> Vec<DiagnosticData> {
+    let mut out = Vec::new();
+    let top = &file.syntax().children;
+    for pair in top.windows(2) {
+        let prev = element_span(&pair[0]);
+        let next = element_span(&pair[1]);
+        if next.start < prev.end {
+            continue;
+        }
+        let (prev_end, next_start) = (prev.end as usize, next.start as usize);
+        if prev_end > next_start {
+            continue;
+        }
+        let Some(gap) = text.get(prev_end..next_start) else {
+            continue;
+        };
+        if blank_count(gap) >= 2 {
+            continue;
+        }
+        let fallback = Span::new(next.start, next.start);
+        let span = match &pair[1] {
+            SyntaxElement::Node(node) => next_top_span(node).unwrap_or(fallback),
+            SyntaxElement::Token(token) => token.span,
+        };
+        let found = blank_count(gap);
+        out.push(DiagnosticData::warning(
+            span,
+            format!("expected 2 blank lines between top-level declarations, found {found}"),
+            RuleId::BLANK_LINES,
+        ));
+    }
+    for contract in file.contracts() {
+        let members: Vec<forgels_syntax::SyntaxNode> = contract
+            .syntax()
+            .children
+            .iter()
+            .filter_map(|element| match element {
+                SyntaxElement::Node(node) => Some(node.clone()),
+                _ => None,
+            })
+            .collect();
+        for pair in members.windows(2) {
+            if pair[0].kind != SolidityNode::Function.as_u16()
+                || pair[1].kind != SolidityNode::Function.as_u16()
+            {
+                continue;
+            }
+            let prev_span = pair[0].span;
+            let next_span = pair[1].span;
+            if next_span.start < prev_span.end {
+                continue;
+            }
+            let (prev_end, next_start) = (prev_span.end as usize, next_span.start as usize);
+            if prev_end > next_start {
+                continue;
+            }
+            let Some(gap) = text.get(prev_end..next_start) else {
+                continue;
+            };
+            if blank_count(gap) >= 1 {
+                continue;
+            }
+            let Some(prev_src) = text.get(prev_span.start as usize..prev_span.end as usize) else {
+                continue;
+            };
+            let Some(next_src) = text.get(next_span.start as usize..next_span.end as usize) else {
+                continue;
+            };
+            if !prev_src.contains('\n') && !next_src.contains('\n') {
+                continue;
+            }
+            let fallback = Span::new(next_span.start, next_span.start);
+            let span = next_member_span(&pair[1]).unwrap_or(fallback);
+            let found = blank_count(gap);
+            out.push(DiagnosticData::warning(
+                span,
+                format!("expected 1 blank line between functions, found {found}"),
+                RuleId::BLANK_LINES,
+            ));
+        }
+    }
+    out
+}
+
+fn line_length_diagnostics(text: &str) -> Vec<DiagnosticData> {
+    let mut out = Vec::new();
+    let mut offset: u32 = 0;
+    for line in text.split('\n') {
+        let clean = line.strip_suffix('\r').unwrap_or(line);
+        let count = clean.chars().count();
+        if count > 120 {
+            let span = Span::new(offset, offset.saturating_add(clean.len() as u32));
+            out.push(DiagnosticData::warning(
+                span,
+                format!("line exceeds 120 characters ({count} found)"),
+                RuleId::LINE_LENGTH,
+            ));
+        }
+        offset = offset.saturating_add(line.len() as u32 + 1);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -717,13 +973,13 @@ mod tests {
 
     #[test]
     fn naming_good_shapes_stay_silent() {
-        let text = "contract MyToken {\nuint256 public totalSupply;\nfunction transfer(address to) public {}\n}";
+        let text = "contract MyToken {\nuint256 public totalSupply;\n/// @notice Transfers.\n/// @param to Recipient.\nfunction transfer(address to) public {}\n}";
         assert!(style_of(text).is_empty(), "diags: {:?}", style_of(text));
     }
 
     #[test]
     fn naming_bad_shapes_warn_with_convention() {
-        let text = "contract mytoken {\nuint256 public TotalSupply;\nfunction Transfer(address to) public {}\n}";
+        let text = "contract mytoken {\nuint256 public TotalSupply;\n/// @notice Does work.\n/// @param to Recipient.\nfunction Transfer(address to) public {}\n}";
         let found = style_of(text);
         assert_eq!(found.len(), 3, "diags: {found:?}");
         for diag in &found {
@@ -755,13 +1011,15 @@ mod tests {
 
     #[test]
     fn modifier_order_canonical_stays_silent() {
-        let text = "contract C {\nfunction f() public view override onlyOwner {}\n}";
+        let text =
+            "contract C {\n/// @notice Does f.\nfunction f() public view override onlyOwner {}\n}";
         assert!(style_of(text).is_empty(), "diags: {:?}", style_of(text));
     }
 
     #[test]
     fn modifier_order_shuffled_warns() {
-        let text = "contract C {\nfunction f() public override view onlyOwner {}\n}";
+        let text =
+            "contract C {\n/// @notice Does f.\nfunction f() public override view onlyOwner {}\n}";
         let found = style_of(text);
         assert_eq!(found.len(), 1, "diags: {found:?}");
         assert_eq!(found[0].rule, RuleId::MODIFIER_ORDER);
@@ -771,7 +1029,7 @@ mod tests {
 
     #[test]
     fn function_order_canonical_stays_silent() {
-        let text = "contract C {\nconstructor() {}\nfunction ext() external {}\nfunction pubf() public {}\nfunction inter() internal {}\nfunction priv() private {}\n}";
+        let text = "contract C {\nconstructor() {}\n/// @notice External.\nfunction ext() external {}\n/// @notice Public.\nfunction pubf() public {}\nfunction inter() internal {}\nfunction priv() private {}\n}";
         assert!(style_of(text).is_empty(), "diags: {:?}", style_of(text));
     }
 
@@ -787,13 +1045,13 @@ mod tests {
 
     #[test]
     fn function_order_plain_before_view_stays_silent() {
-        let text = "contract C {\nfunction b() public {}\nfunction a() public view {}\n}";
+        let text = "contract C {\n/// @notice Does b.\nfunction b() public {}\n/// @notice Does a.\nfunction a() public view {}\n}";
         assert!(style_of(text).is_empty(), "diags: {:?}", style_of(text));
     }
 
     #[test]
     fn function_order_view_before_plain_warns() {
-        let text = "contract C {\nfunction a() public view {}\nfunction b() public {}\n}";
+        let text = "contract C {\n/// @notice Does a.\nfunction a() public view {}\n/// @notice Does b.\nfunction b() public {}\n}";
         let found = style_of(text);
         assert_eq!(found.len(), 1, "diags: {found:?}");
         assert_eq!(found[0].rule, RuleId::FUNCTION_ORDER);
@@ -802,13 +1060,13 @@ mod tests {
 
     #[test]
     fn layout_order_canonical_stays_silent() {
-        let text = "pragma solidity ^0.8.0;\nimport \"./B.sol\";\nevent E();\nerror Err();\ncontract C {\nuint256 x;\nevent F();\nfunction g() public {}\n}";
+        let text = "pragma solidity ^0.8.0;\n\n\nimport \"./B.sol\";\n\n\nevent E();\n\n\nerror Err();\n\n\ncontract C {\nuint256 x;\nevent F();\n/// @notice Does g.\nfunction g() public {}\n}";
         assert!(style_of(text).is_empty(), "diags: {:?}", style_of(text));
     }
 
     #[test]
     fn layout_order_var_after_function_warns() {
-        let text = "contract C {\nfunction g() public {}\nuint256 x;\n}";
+        let text = "contract C {\n/// @notice Does g.\nfunction g() public {}\nuint256 x;\n}";
         let found = style_of(text);
         assert_eq!(found.len(), 1, "diags: {found:?}");
         assert_eq!(found[0].rule, RuleId::LAYOUT_ORDER);
@@ -818,13 +1076,13 @@ mod tests {
 
     #[test]
     fn import_position_top_stays_silent() {
-        let text = "pragma solidity ^0.8.0;\nimport \"./B.sol\";\ncontract C {\n}\n";
+        let text = "pragma solidity ^0.8.0;\n\n\nimport \"./B.sol\";\n\n\ncontract C {\n}\n";
         assert!(style_of(text).is_empty(), "diags: {:?}", style_of(text));
     }
 
     #[test]
     fn import_position_after_contract_fires_both_rules() {
-        let text = "contract C {\n}\nimport \"./B.sol\";\n";
+        let text = "contract C {\n}\n\n\nimport \"./B.sol\";\n";
         let found = style_of(text);
         let rules = rules_of(text);
         assert!(rules.contains(&"style/import-position"), "rules: {rules:?}");
@@ -890,5 +1148,145 @@ mod tests {
             "diags: {:?}",
             style_of(text)
         );
+    }
+
+    fn only_rule(text: &str, rule: RuleId) -> Vec<DiagnosticData> {
+        style_of(text)
+            .into_iter()
+            .filter(|diag| diag.rule == rule)
+            .collect()
+    }
+
+    #[test]
+    fn blank_lines_top_level_two_blanks_stay_silent() {
+        let text = "contract A {\n}\n\n\ncontract B {\n}\n";
+        assert!(
+            only_rule(text, RuleId::BLANK_LINES).is_empty(),
+            "diags: {:?}",
+            style_of(text)
+        );
+    }
+
+    #[test]
+    fn blank_lines_top_level_missing_warns() {
+        let text = "contract A {\n}\ncontract B {\n}\n";
+        let found = only_rule(text, RuleId::BLANK_LINES);
+        assert_eq!(found.len(), 1, "diags: {found:?}");
+        assert_eq!(found[0].rule, RuleId::BLANK_LINES);
+        assert_eq!(found[0].rule.as_str(), "style/blank-lines");
+        assert_eq!(found[0].severity, Severity::Warning);
+    }
+
+    #[test]
+    fn blank_lines_contract_one_blank_stays_silent() {
+        let text = "contract C {\nfunction a() internal {\nuint256 x;\n}\n\nfunction b() internal {\nuint256 y;\n}\n}";
+        assert!(
+            only_rule(text, RuleId::BLANK_LINES).is_empty(),
+            "diags: {:?}",
+            style_of(text)
+        );
+    }
+
+    #[test]
+    fn blank_lines_contract_missing_warns() {
+        let text = "contract C {\nfunction a() internal {\nuint256 x;\n}\nfunction b() internal {\nuint256 y;\n}\n}";
+        let found = only_rule(text, RuleId::BLANK_LINES);
+        assert_eq!(found.len(), 1, "diags: {found:?}");
+        assert_eq!(found[0].rule, RuleId::BLANK_LINES);
+        assert_eq!(found[0].severity, Severity::Warning);
+    }
+
+    #[test]
+    fn blank_lines_single_line_pair_stays_silent() {
+        let text = "contract C {\nfunction a() internal {}\nfunction b() internal {}\n}";
+        assert!(
+            only_rule(text, RuleId::BLANK_LINES).is_empty(),
+            "diags: {:?}",
+            style_of(text)
+        );
+    }
+
+    #[test]
+    fn natspec_missing_warns() {
+        let text = "contract C {\nfunction f() public {}\n}";
+        let found = only_rule(text, RuleId::NATSPEC_MISSING);
+        assert_eq!(found.len(), 1, "diags: {found:?}");
+        assert_eq!(found[0].rule.as_str(), "style/natspec-missing");
+        assert_eq!(found[0].severity, Severity::Warning);
+        assert_eq!(
+            found[0].message,
+            "function 'f' is missing NatSpec documentation"
+        );
+    }
+
+    #[test]
+    fn natspec_present_stays_silent() {
+        let text = "contract C {\n/// @notice Does f.\nfunction f() public {}\n}";
+        assert!(
+            only_rule(text, RuleId::NATSPEC_MISSING).is_empty(),
+            "diags: {:?}",
+            style_of(text)
+        );
+        assert!(
+            only_rule(text, RuleId::NATSPEC_PARAM).is_empty(),
+            "diags: {:?}",
+            style_of(text)
+        );
+    }
+
+    #[test]
+    fn natspec_param_missing_warns() {
+        let text = "contract C {\n/// @notice Does f.\nfunction f(uint256 amount) public {}\n}";
+        let found = only_rule(text, RuleId::NATSPEC_PARAM);
+        assert_eq!(found.len(), 1, "diags: {found:?}");
+        assert_eq!(found[0].rule.as_str(), "style/natspec-param");
+        assert_eq!(found[0].severity, Severity::Warning);
+        assert_eq!(
+            found[0].message,
+            "parameter 'amount' is missing NatSpec @param"
+        );
+    }
+
+    #[test]
+    fn natspec_param_extra_warns() {
+        let text =
+            "contract C {\n/// @notice Does f.\n/// @param wrong Does.\nfunction f() public {}\n}";
+        let found = only_rule(text, RuleId::NATSPEC_PARAM);
+        assert_eq!(found.len(), 1, "diags: {found:?}");
+        assert_eq!(found[0].rule, RuleId::NATSPEC_PARAM);
+        assert_eq!(found[0].severity, Severity::Warning);
+        assert_eq!(
+            found[0].message,
+            "NatSpec @param 'wrong' does not match any parameter"
+        );
+    }
+
+    #[test]
+    fn natspec_param_unnamed_skipped() {
+        let text = "contract C {\n/// @notice Does f.\nfunction f(uint256) public {}\n}";
+        assert!(
+            only_rule(text, RuleId::NATSPEC_PARAM).is_empty(),
+            "diags: {:?}",
+            style_of(text)
+        );
+    }
+
+    #[test]
+    fn line_length_120_ok_121_fires() {
+        let ok_line = format!("// {}", "a".repeat(117));
+        let long_line = format!("// {}", "a".repeat(118));
+        assert_eq!(ok_line.chars().count(), 120);
+        assert_eq!(long_line.chars().count(), 121);
+        assert!(
+            only_rule(&ok_line, RuleId::LINE_LENGTH).is_empty(),
+            "diags: {:?}",
+            style_of(&ok_line)
+        );
+        let found = only_rule(&long_line, RuleId::LINE_LENGTH);
+        assert_eq!(found.len(), 1, "diags: {found:?}");
+        assert_eq!(found[0].rule, RuleId::LINE_LENGTH);
+        assert_eq!(found[0].rule.as_str(), "style/line-length");
+        assert_eq!(found[0].severity, Severity::Warning);
+        assert_eq!(found[0].message, "line exceeds 120 characters (121 found)");
     }
 }

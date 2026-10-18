@@ -344,4 +344,23 @@ mod tests {
         let err = FlsConfig::parse_json("not json").expect_err("invalid json fails");
         assert!(matches!(err, LintConfigError::Parse(_)));
     }
+
+    #[test]
+    fn style_batch_two_rule_parses_off_warn_err() {
+        let text = "[lint.rules]\n\"style/blank-lines\" = \"off\"\n\"style/natspec-missing\" = \"warn\"\n\"style/line-length\" = \"err\"\n";
+        let config = LintConfig::parse_str(text).expect("parses");
+        assert_eq!(config.level_for(RuleId::BLANK_LINES), Some(RuleLevel::Off));
+        assert_eq!(
+            config.level_for(RuleId::NATSPEC_MISSING),
+            Some(RuleLevel::Warn)
+        );
+        assert_eq!(config.level_for(RuleId::LINE_LENGTH), Some(RuleLevel::Err));
+        assert_eq!(RuleId::BLANK_LINES.default_severity(), Severity::Warning);
+        assert_eq!(
+            RuleId::NATSPEC_MISSING.default_severity(),
+            Severity::Warning
+        );
+        assert_eq!(RuleId::NATSPEC_PARAM.default_severity(), Severity::Warning);
+        assert_eq!(RuleId::LINE_LENGTH.default_severity(), Severity::Warning);
+    }
 }

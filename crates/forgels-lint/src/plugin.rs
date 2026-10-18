@@ -59,6 +59,10 @@ impl LintPlugin for StylePlugin {
             RuleId::IMPORT_POSITION,
             RuleId::MAPPING_GLUE,
             RuleId::ARRAY_GLUE,
+            RuleId::BLANK_LINES,
+            RuleId::NATSPEC_MISSING,
+            RuleId::NATSPEC_PARAM,
+            RuleId::LINE_LENGTH,
         ]
         .iter()
         .map(|id| RuleMeta {
@@ -126,7 +130,7 @@ mod tests {
     #[test]
     fn style_plugin_lists_warn_defaults() {
         let rules = builtin_style_plugin();
-        assert_eq!(rules.len(), 7);
+        assert_eq!(rules.len(), 11);
         for meta in &rules {
             assert_eq!(meta.default, Severity::Warning);
         }
@@ -146,7 +150,7 @@ mod tests {
     #[test]
     fn register_covers_every_rule_id() {
         let registry = Registry::with_builtins();
-        assert_eq!(registry.len(), 29);
+        assert_eq!(registry.len(), 33);
         for id in RuleId::all() {
             assert!(registry.get(id.as_str()).is_some());
         }
