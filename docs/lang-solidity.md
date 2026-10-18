@@ -470,6 +470,26 @@ Status: token kinds defined. Real lexer and parser are planned.
 - Limits: nested mappings stay silent, no struct field getters, no
   visibility split, no cross file getter calls.
 
+## Hover values and NatSpec
+
+- Scope: `analysis::natspec` plus value suffix in `mod`, `members`,
+  and `inheritance`. Plaintext only, no markdown.
+- Values: state vars and locals with one literal initializer show
+  `T N = V` (for example `uint256 total = 42`). Complex forms
+  (`1 ether`, binops, calls, idents) show `T N` only. Params never
+  show values.
+- NatSpec: `///` line runs and `/** */` blocks directly above
+  Contract, Function, StateVar, Struct, Enum, Event, and Error attach
+  after a blank line. Markers are stripped, tags stay verbatim.
+- Gap: only whitespace with at most one blank line between docs and
+  decl, same between run lines. Plain `//` and `/* */` never attach.
+  Wide gaps drop docs.
+- Deps: dep docs insert before the ` - from ` origin suffix, so hover
+  reads detail plus docs plus origin.
+- Limits: immutable assignments inside constructors are follow-up, no
+  value shown. Modifier, UserType, Field, Param, and Local docs stay
+  out of scope.
+
 ## Inlay hints
 
 - Scope: `analysis::inlay` plus `Analyzer::inlay_hints` and the

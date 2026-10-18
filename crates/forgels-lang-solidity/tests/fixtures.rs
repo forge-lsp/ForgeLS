@@ -174,7 +174,7 @@ fn sbe_primitives_hover_bool() {
     assert!(vars.len() >= 8);
     let at = text.find("boo =").expect("decl") as u32;
     let hover = hover_at(&file, &text, at).expect("hover");
-    assert_eq!(hover.contents, "bool boo");
+    assert_eq!(hover.contents, "bool boo = true");
 }
 
 #[test]
@@ -322,7 +322,7 @@ fn sbe_loop_hover_j() {
     assert!(locals.contains(&"j".to_string()), "locals: {locals:?}");
     let at = text.find("uint j").expect("decl") as u32 + 5;
     let hover = hover_at(&file, &text, at).expect("hover");
-    assert_eq!(hover.contents, "uint j");
+    assert_eq!(hover.contents, "uint j = 0");
 }
 
 #[test]
@@ -521,7 +521,7 @@ fn sbe_view_pure_hover_x() {
     assert!(names.contains(&"add".to_string()));
     let at = text.find("uint public x").expect("decl") as u32 + 12;
     let hover = hover_at(&file, &text, at).expect("hover");
-    assert_eq!(hover.contents, "uint x");
+    assert_eq!(hover.contents, "uint x = 1");
 }
 
 #[test]

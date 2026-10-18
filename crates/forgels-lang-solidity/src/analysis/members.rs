@@ -142,8 +142,12 @@ fn is_single_word(text: &str) -> bool {
 }
 
 fn var_type_of_detail(detail: &str) -> Option<String> {
-    let index = detail.rfind(' ')?;
-    let left = detail.get(..index)?.trim();
+    let without_value = detail
+        .split_once(" = ")
+        .map(|pair| pair.0)
+        .unwrap_or(detail);
+    let index = without_value.rfind(' ')?;
+    let left = without_value.get(..index)?.trim();
     if left.is_empty() {
         return None;
     }
@@ -387,6 +391,10 @@ pub fn members_of(file: &SolidityFile, kind: &TypeKind) -> Vec<MemberInfo> {
                     .unwrap_or_default();
                 detail.push(' ');
                 detail.push_str(&var_name);
+                if let Some(init) = var.initializer() {
+                    detail.push_str(" = ");
+                    detail.push_str(&init.text);
+                }
                 out.push(MemberInfo {
                     name: var_name,
                     detail,
@@ -551,6 +559,10 @@ pub(crate) fn collect_cross_file_members(
                         var.type_node().map(|node| node.text()).unwrap_or_default();
                     base_detail.push(' ');
                     base_detail.push_str(&var_name);
+                    if let Some(init) = var.initializer() {
+                        base_detail.push_str(" = ");
+                        base_detail.push_str(&init.text);
+                    }
                     out.push((
                         own_member_info(
                             &base_name,
@@ -631,6 +643,10 @@ pub(crate) fn collect_cross_file_members(
                         var.type_node().map(|node| node.text()).unwrap_or_default();
                     base_detail.push(' ');
                     base_detail.push_str(&var_name);
+                    if let Some(init) = var.initializer() {
+                        base_detail.push_str(" = ");
+                        base_detail.push_str(&init.text);
+                    }
                     out.push((
                         own_member_info(
                             &base_name,
@@ -753,6 +769,10 @@ pub(crate) fn collect_cross_file_members(
                         var.type_node().map(|node| node.text()).unwrap_or_default();
                     base_detail.push(' ');
                     base_detail.push_str(&var_name);
+                    if let Some(init) = var.initializer() {
+                        base_detail.push_str(" = ");
+                        base_detail.push_str(&init.text);
+                    }
                     out.push((
                         own_member_info(
                             &base_name,
