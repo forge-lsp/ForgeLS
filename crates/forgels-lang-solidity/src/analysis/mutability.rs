@@ -42,13 +42,17 @@ fn receiver_before(text: &str, dot: usize) -> Option<String> {
     text.get(start..dot).map(|part| part.to_string())
 }
 
-/// Pure and view state access checks via token scan.
+/// Pure and view state access checks via token scan plus member writes.
 ///
 /// Every `Ident` in the body resolves through the scope; only `StateVar`
 /// hits count. Declaration names, imports, and assembly bodies are
 /// skipped. `this.x` counts as a read of `x`; `delete`, any assignment,
 /// and `++` or `--` around the usage count as a write. Pure errors on
-/// reads and writes, view errors on writes only.
+/// reads and writes, view errors on writes only. Member writes cover
+/// `arr.push` and `arr.pop` plus direct `s.field` on the left of an
+/// assign family with a `StateVar` root via `all_members`. Longer
+/// chains, mappings, assembly, cross-function, and call targets stay
+/// silent by design.
 pub fn mutability_diagnostics(
     file: &SolidityFile,
     text: &str,
@@ -117,6 +121,12 @@ pub fn mutability_diagnostics(
                 if symbol.kind != SymbolKind::StateVar {
                     continue;
                 }
+                // Member writes own their root: `arr.push` and `s.x =`
+                // report once via `all_members`, so the token read here
+                // stays silent and pure shows one write, not read+write.
+                if !after_dot && root_has_member_write(&tokens, index) {
+                    continue;
+                }
                 let prev = prev_code(&tokens, index);
                 let next = next_code_token(&tokens, index);
                 let mut is_write = false;
@@ -161,6 +171,18 @@ pub fn mutability_diagnostics(
                         ),
                     });
                 }
+            }
+            for member in body.all_members() {
+                check_member_write(
+                    &mut out,
+                    &tokens,
+                    &assemblies,
+                    scope,
+                    &member,
+                    func_name.as_str(),
+                    is_pure,
+                    is_view,
+                );
             }
         }
     }
@@ -226,4 +248,152 @@ fn delete_before_this(tokens: &[forgels_syntax::Token], x_index: usize) -> bool 
     codes[2].kind == SolidityKind::Delete.as_u16()
         || codes[2].kind == SolidityKind::PlusPlus.as_u16()
         || codes[2].kind == SolidityKind::MinusMinus.as_u16()
+}
+
+/// Member writes for view and pure: `arr.push`, `arr.pop`, and
+/// direct `s.field` on the left of an assign family.
+///
+/// Only two-segment chains count with a `StateVar` root. Assembly
+/// stays silent. Reads stay silent here: the token scan above owns
+/// them. Mappings, longer chains, and call targets stay silent.
+#[allow(clippy::too_many_arguments)]
+fn check_member_write(
+    out: &mut Vec<DiagnosticData>,
+    tokens: &[forgels_syntax::Token],
+    assemblies: &[forgels_syntax::Span],
+    scope: &Scope,
+    member: &crate::MemberExpr,
+    func_name: &str,
+    is_pure: bool,
+    is_view: bool,
+) {
+    if func_name.is_empty() {
+        return;
+    }
+    let chain = member.chain();
+    if chain.len() != 2 {
+        return;
+    }
+    let root = chain.first().cloned().unwrap_or_default();
+    if root.is_empty() || root == "this" || root == "super" {
+        return;
+    }
+    let Some(field) = member.final_member() else {
+        return;
+    };
+    if field.is_empty() {
+        return;
+    }
+    let span = member.syntax().span;
+    if unknown::inside_any(assemblies, span.start) {
+        return;
+    }
+    let offset = span.start;
+    let Some(symbol) = scope.resolve(&root, offset) else {
+        return;
+    };
+    if symbol.kind != SymbolKind::StateVar {
+        return;
+    }
+    let is_push_pop = member.is_call() && (field == "push" || field == "pop");
+    let mut is_write = is_push_pop;
+    if !is_write && !member.is_call() {
+        let Some(next) = next_code_after(tokens, span.end) else {
+            return;
+        };
+        if is_write_kind(next.kind) {
+            is_write = true;
+        }
+    }
+    if !is_write {
+        return;
+    }
+    if is_pure {
+        out.push(DiagnosticData {
+            span,
+            message: format!("pure function '{func_name}' cannot write to state variable '{root}'"),
+        });
+        return;
+    }
+    if is_view {
+        out.push(DiagnosticData {
+            span,
+            message: format!("view function '{func_name}' cannot write to state variable '{root}'"),
+        });
+    }
+}
+
+fn next_code_after(tokens: &[forgels_syntax::Token], end: u32) -> Option<forgels_syntax::Token> {
+    let comment = SolidityKind::Comment.as_u16();
+    for token in tokens {
+        if token.kind == comment {
+            continue;
+        }
+        if token.span.start >= end {
+            return Some(token.clone());
+        }
+    }
+    None
+}
+
+/// True when `tokens[index]` is the root of a direct member write.
+///
+/// Covers `arr.push(...)`, `arr.pop(...)`, and `s.field` followed by
+/// an assign family. Longer chains stay false so they keep the token
+/// path. Lets member diagnostics own the root and avoids a double
+/// read plus write in pure functions.
+fn root_has_member_write(tokens: &[forgels_syntax::Token], index: usize) -> bool {
+    let comment = SolidityKind::Comment.as_u16();
+    let mut dot_pos: Option<usize> = None;
+    let mut at = index + 1;
+    while let Some(token) = tokens.get(at) {
+        if token.kind == comment {
+            at += 1;
+            continue;
+        }
+        if token.kind == SolidityKind::Dot.as_u16() {
+            dot_pos = Some(at);
+        }
+        break;
+    }
+    let Some(dot) = dot_pos else {
+        return false;
+    };
+    let mut field_pos: Option<usize> = None;
+    let mut cursor = dot + 1;
+    while let Some(token) = tokens.get(cursor) {
+        if token.kind == comment {
+            cursor += 1;
+            continue;
+        }
+        if token.kind == SolidityKind::Ident.as_u16() {
+            field_pos = Some(cursor);
+        }
+        break;
+    }
+    let Some(field_at) = field_pos else {
+        return false;
+    };
+    let field = tokens[field_at].text.as_str();
+    if field == "push" || field == "pop" {
+        let mut after = field_at + 1;
+        while let Some(token) = tokens.get(after) {
+            if token.kind == comment {
+                after += 1;
+                continue;
+            }
+            return token.kind == SolidityKind::LParen.as_u16()
+                || token.kind == SolidityKind::LBrace.as_u16();
+        }
+        return false;
+    }
+    let mut after = field_at + 1;
+    while let Some(token) = tokens.get(after) {
+        if token.kind == comment {
+            after += 1;
+            continue;
+        }
+        return is_write_kind(token.kind);
+    }
+    false
 }
