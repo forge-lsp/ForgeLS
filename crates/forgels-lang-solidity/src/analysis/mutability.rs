@@ -149,27 +149,27 @@ pub fn mutability_diagnostics(
                 }
                 if is_pure {
                     if is_write {
-                        out.push(DiagnosticData {
+                        out.push(DiagnosticData::error(
                             span,
-                            message: format!(
+                            format!(
                                 "pure function '{func_name}' cannot write to state variable '{name}'"
                             ),
-                        });
+                        ));
                     } else {
-                        out.push(DiagnosticData {
+                        out.push(DiagnosticData::error(
                             span,
-                            message: format!(
+                            format!(
                                 "pure function '{func_name}' cannot read state variable '{name}'"
                             ),
-                        });
+                        ));
                     }
                 } else if is_write {
-                    out.push(DiagnosticData {
+                    out.push(DiagnosticData::error(
                         span,
-                        message: format!(
+                        format!(
                             "view function '{func_name}' cannot write to state variable '{name}'"
                         ),
-                    });
+                    ));
                 }
             }
             for member in body.all_members() {
@@ -309,17 +309,17 @@ fn check_member_write(
         return;
     }
     if is_pure {
-        out.push(DiagnosticData {
+        out.push(DiagnosticData::error(
             span,
-            message: format!("pure function '{func_name}' cannot write to state variable '{root}'"),
-        });
+            format!("pure function '{func_name}' cannot write to state variable '{root}'"),
+        ));
         return;
     }
     if is_view {
-        out.push(DiagnosticData {
+        out.push(DiagnosticData::error(
             span,
-            message: format!("view function '{func_name}' cannot write to state variable '{root}'"),
-        });
+            format!("view function '{func_name}' cannot write to state variable '{root}'"),
+        ));
     }
 }
 

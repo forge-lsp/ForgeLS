@@ -2,7 +2,8 @@ use super::{
     PublishGate, offset_to_position, parse_error_to_diagnostic, parse_errors_to_diagnostics,
     position_to_offset, span_to_range,
 };
-use forgels_protocol::{DiagnosticSeverity, Position, Range};
+use crate::analyzer::DiagnosticData;
+use forgels_protocol::{Diagnostic, DiagnosticSeverity, Position, Range};
 use forgels_syntax::{ParseError, Span};
 use std::time::{Duration, Instant};
 
@@ -308,4 +309,24 @@ fn two_errors_become_two_diagnostics() {
 fn no_errors_means_no_diagnostics() {
     let diagnostics = parse_errors_to_diagnostics("contract A {}", &[]);
     assert!(diagnostics.is_empty());
+}
+
+#[test]
+fn warning_constructors_carry_warning_severity() {
+    let range = Range {
+        start: Position {
+            line: 0,
+            character: 0,
+        },
+        end: Position {
+            line: 0,
+            character: 1,
+        },
+    };
+    let diagnostic = Diagnostic::warning(range, "caution");
+    assert_eq!(diagnostic.severity, Some(DiagnosticSeverity::Warning));
+    let item = DiagnosticData::warning(Span::new(0, 1), "caution".to_string());
+    assert_eq!(item.severity, crate::Severity::Warning);
+    assert_eq!(item.severity.to_protocol(), DiagnosticSeverity::Warning);
+    assert_eq!(item.severity.to_number(), 2);
 }

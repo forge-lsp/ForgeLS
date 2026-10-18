@@ -1,0 +1,11 @@
+[package]
+name = "forgels-lint"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Shared lint severity taxonomy reused by all crates"
+
+[dependencies]
+forgels-protocol.workspace = true
+forgels-syntax.workspace = true
+forgels-common.workspace = true

@@ -655,10 +655,10 @@ pub(crate) fn linearization_diagnostics(
         let span = contract
             .name_span()
             .unwrap_or_else(|| contract.syntax().span);
-        out.push(DiagnosticData {
+        out.push(DiagnosticData::error(
             span,
-            message: format!("inconsistent linearization for '{name}'"),
-        });
+            format!("inconsistent linearization for '{name}'"),
+        ));
     }
     out
 }

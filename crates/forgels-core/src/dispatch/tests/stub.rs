@@ -56,10 +56,10 @@ impl crate::analyzer::Analyzer for StubAnalyzer {
 
     fn diagnostics(&self, text: &str) -> Vec<crate::analyzer::DiagnosticData> {
         if text.contains("broken") {
-            vec![crate::analyzer::DiagnosticData {
-                span: forgels_syntax::Span::new(0, 6),
-                message: "stub broken".to_string(),
-            }]
+            vec![crate::analyzer::DiagnosticData::error(
+                forgels_syntax::Span::new(0, 6),
+                "stub broken".to_string(),
+            )]
         } else {
             Vec::new()
         }

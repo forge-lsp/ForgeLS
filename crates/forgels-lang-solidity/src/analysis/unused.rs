@@ -54,10 +54,10 @@ fn push_unused(
         return;
     }
     let kind = if is_param { "parameter" } else { "variable" };
-    out.push(DiagnosticData {
+    out.push(DiagnosticData::error(
         span,
-        message: format!("unused {kind} '{name}'"),
-    });
+        format!("unused {kind} '{name}'"),
+    ));
 }
 
 /// Unused locals, params, and imports.
@@ -171,10 +171,10 @@ fn unused_imports(file: &SolidityFile, text: &str) -> Vec<DiagnosticData> {
             continue;
         }
         let raw = item.path().unwrap_or_default();
-        out.push(DiagnosticData {
+        out.push(DiagnosticData::error(
             span,
-            message: format!("unused import '{raw}'"),
-        });
+            format!("unused import '{raw}'"),
+        ));
     }
     out
 }

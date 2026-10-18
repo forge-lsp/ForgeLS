@@ -7,7 +7,7 @@ use super::sync::{resolve_root_for, uri_to_path};
 use super::{Session, Workspace};
 use crate::analyzer::ProjectContext;
 use crate::diagnostics::{span_to_range, unresolved_import_to_diagnostic};
-use forgels_protocol::{Diagnostic, DiagnosticSeverity};
+use forgels_protocol::Diagnostic;
 use forgels_syntax::Span;
 
 /// Immediate notifications for one message body: open publishes current
@@ -94,7 +94,7 @@ fn publish_for_uri(
         .map(|item| {
             let diagnostic = Diagnostic {
                 range: span_to_range(&doc.text, item.span),
-                severity: Some(DiagnosticSeverity::Error),
+                severity: Some(item.severity.to_protocol()),
                 message: item.message.clone(),
             };
             (item.span, diagnostic)
@@ -129,12 +129,13 @@ fn publish_for_uri(
     let items: Vec<Value> = diagnostics
         .iter()
         .map(|diagnostic| {
+            let severity = diagnostic.severity.map(|kind| kind as u8).unwrap_or(1);
             serde_json::json!({
                 "range": {
                     "start": { "line": diagnostic.range.start.line, "character": diagnostic.range.start.character },
                     "end": { "line": diagnostic.range.end.line, "character": diagnostic.range.end.character },
                 },
-                "severity": 1,
+                "severity": severity,
                 "message": diagnostic.message,
             })
         })

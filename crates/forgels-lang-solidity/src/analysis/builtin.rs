@@ -67,12 +67,12 @@ pub fn builtin_arity_diagnostics(file: &SolidityFile, scope: &Scope) -> Vec<Diag
                 };
                 let actual = call.arg_count();
                 if expected != actual {
-                    out.push(DiagnosticData {
-                        span: call.syntax().span,
-                        message: format!(
+                    out.push(DiagnosticData::error(
+                        call.syntax().span,
+                        format!(
                             "this function '{callee}' takes {expected} arguments but {actual} supplied"
                         ),
-                    });
+                    ));
                 }
             }
         }

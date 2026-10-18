@@ -178,10 +178,10 @@ pub fn unknown_identifier_diagnostics(
         if is_typing_prefix(scope, deps, name, span.start) {
             continue;
         }
-        out.push(DiagnosticData {
+        out.push(DiagnosticData::error(
             span,
-            message: format!("unresolved identifier '{name}'"),
-        });
+            format!("unresolved identifier '{name}'"),
+        ));
     }
     out
 }

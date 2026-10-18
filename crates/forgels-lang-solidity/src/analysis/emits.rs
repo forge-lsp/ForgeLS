@@ -367,10 +367,10 @@ pub fn unknown_emit_diagnostics(
                 if found {
                     continue;
                 }
-                out.push(DiagnosticData {
-                    span: name_span,
-                    message: format!("unresolved event '{name}'"),
-                });
+                out.push(DiagnosticData::error(
+                    name_span,
+                    format!("unresolved event '{name}'"),
+                ));
             }
         }
     }
@@ -441,12 +441,12 @@ pub fn emit_arity_diagnostics(file: &SolidityFile) -> Vec<DiagnosticData> {
                 };
                 let actual = emit.arg_count();
                 if *expected != actual {
-                    out.push(DiagnosticData {
-                        span: emit.syntax().span,
-                        message: format!(
+                    out.push(DiagnosticData::error(
+                        emit.syntax().span,
+                        format!(
                             "this event '{name}' takes {expected} arguments but {actual} supplied"
                         ),
-                    });
+                    ));
                 }
             }
         }

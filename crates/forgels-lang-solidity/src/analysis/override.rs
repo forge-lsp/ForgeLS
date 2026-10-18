@@ -114,25 +114,21 @@ pub fn override_diagnostics(file: &SolidityFile) -> Vec<DiagnosticData> {
                     if has_any_same_name_base(file, &contract_name, &func_name) {
                         continue;
                     }
-                    out.push(DiagnosticData {
-                        span: name_span_or_full(&function),
-                        message: format!(
-                            "function '{func_name}' has 'override' but no base function"
-                        ),
-                    });
+                    out.push(DiagnosticData::error(
+                        name_span_or_full(&function),
+                        format!("function '{func_name}' has 'override' but no base function"),
+                    ));
                 } else if !has_virtual_base {
-                    out.push(DiagnosticData {
-                        span: name_span_or_full(&function),
-                        message: format!("function '{func_name}' overrides non-virtual base"),
-                    });
+                    out.push(DiagnosticData::error(
+                        name_span_or_full(&function),
+                        format!("function '{func_name}' overrides non-virtual base"),
+                    ));
                 }
             } else if has_virtual_base {
-                out.push(DiagnosticData {
-                    span: name_span_or_full(&function),
-                    message: format!(
-                        "function '{func_name}' overrides virtual base but missing 'override'"
-                    ),
-                });
+                out.push(DiagnosticData::error(
+                    name_span_or_full(&function),
+                    format!("function '{func_name}' overrides virtual base but missing 'override'"),
+                ));
             }
         }
     }

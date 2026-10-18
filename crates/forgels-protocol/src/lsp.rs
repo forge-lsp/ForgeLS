@@ -45,6 +45,14 @@ impl Diagnostic {
             message: message.into(),
         }
     }
+
+    pub fn warning(range: Range, message: impl Into<String>) -> Self {
+        Self {
+            range,
+            severity: Some(DiagnosticSeverity::Warning),
+            message: message.into(),
+        }
+    }
 }
 
 /// Severity levels from the LSP specification.

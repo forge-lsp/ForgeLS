@@ -5,6 +5,7 @@ members = [
   "crates/forgels-protocol",
   "crates/forgels-syntax",
   "crates/forgels-common",
+  "crates/forgels-lint",
   "crates/forgels-lang-solidity",
   "crates/forgels-lang-noir",
 ]
@@ -22,6 +23,7 @@ forgels-core = { path = "crates/forgels-core" }
 forgels-protocol = { path = "crates/forgels-protocol" }
 forgels-syntax = { path = "crates/forgels-syntax" }
 forgels-common = { path = "crates/forgels-common" }
+forgels-lint = { path = "crates/forgels-lint" }
 forgels-lang-solidity = { path = "crates/forgels-lang-solidity" }
 forgels-lang-noir = { path = "crates/forgels-lang-noir" }
 serde_json = "1"
