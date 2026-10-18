@@ -13,7 +13,12 @@ fn is_sol_file(path: &Path) -> bool {
     path.extension().and_then(|ext| ext.to_str()) == Some("sol")
 }
 
-fn push_explicit(path: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
+fn push_explicit(
+    path: &Path,
+    excludes: &[String],
+    out: &mut Vec<PathBuf>,
+    truncated: &mut bool,
+) -> Result<(), String> {
     let Ok(meta) = std::fs::symlink_metadata(path) else {
         return Err(format!("fls: cannot read {}", path.display()));
     };
@@ -31,7 +36,11 @@ fn push_explicit(path: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
         return Ok(());
     }
     if meta.is_dir() {
-        let mut found = list_files_with_extension(path, "sol", WALK_CAPS);
+        let outcome = list_files_with_extension(path, "sol", WALK_CAPS, excludes);
+        if outcome.truncated {
+            *truncated = true;
+        }
+        let mut found = outcome.files;
         // Probe readability: unreadable subtrees stay silent in the
         // walker, so a failed root read is the only hard error here.
         if found.is_empty() && std::fs::read_dir(path).is_err() {
@@ -46,18 +55,26 @@ fn push_explicit(path: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
 /// Collect *.sol files for check.
 ///
 /// Empty input scans cwd recursively. Explicit paths accept files or
-/// dirs. Output is sorted and deduped. Any unreadable explicit path
-/// is an operational failure for the caller to report as exit 2.
-pub fn collect_files(paths: &[PathBuf], cwd: &Path) -> Result<Vec<PathBuf>, String> {
+/// dirs. Output is sorted and deduped plus a truncated flag OR-ed
+/// across walks. Any unreadable explicit path is an operational
+/// failure for the caller to report as exit 2.
+pub fn collect_files(
+    paths: &[PathBuf],
+    cwd: &Path,
+    excludes: &[String],
+) -> Result<(Vec<PathBuf>, bool), String> {
     let mut out: Vec<PathBuf> = Vec::new();
+    let mut truncated = false;
     if paths.is_empty() {
-        out = list_files_with_extension(cwd, "sol", WALK_CAPS);
+        let outcome = list_files_with_extension(cwd, "sol", WALK_CAPS, excludes);
+        out = outcome.files;
+        truncated = outcome.truncated;
     } else {
         for path in paths {
-            push_explicit(path, &mut out)?;
+            push_explicit(path, excludes, &mut out, &mut truncated)?;
         }
     }
     out.sort();
     out.dedup();
-    Ok(out)
+    Ok((out, truncated))
 }

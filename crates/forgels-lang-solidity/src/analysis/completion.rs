@@ -442,7 +442,7 @@ pub fn complete_import_paths(
     let keep = forgels_common::fs::WalkCaps::default().max_matches;
     let mut candidates: Vec<PathBuf> = Vec::new();
     for dir in &search {
-        for found in forgels_common::fs::list_files_with_extension(dir, "sol", walk) {
+        for found in forgels_common::fs::list_files_with_extension(dir, "sol", walk, &[]).files {
             if !candidates.contains(&found) {
                 candidates.push(found);
             }
@@ -667,7 +667,7 @@ fn bare_package_files(
     // runs before any truncation. Caller caps the sorted result at 32.
     let visit = forgels_common::fs::WalkCaps::default().max_visited;
     let caps = forgels_common::fs::WalkCaps::new(visit, visit);
-    for found in forgels_common::fs::list_files_with_extension(&base, "sol", caps) {
+    for found in forgels_common::fs::list_files_with_extension(&base, "sol", caps, &[]).files {
         let Ok(rel) = found.strip_prefix(&base) else {
             continue;
         };

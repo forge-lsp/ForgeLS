@@ -13,6 +13,11 @@ fls init [--force]
 - `lsp` runs the LSP server on stdio with Solidity wired in.
 - `check` lints Solidity files. No path scans cwd recursively for `*.sol`.
 - Explicit check paths accept files or dirs. Output is sorted and deduped.
+- Walk skips `node_modules`, `out`, `cache`, `artifacts`, `coverage` at any depth.
+- Skip applies to every scan including explicit dirs; explicit files are always honored.
+- Raw excludes prune a dir when the pattern equals its walker-relative posix path or that path plus `/**`.
+- Truncated walks print `fls: walk truncated, results may be incomplete` on stderr.
+- Closed stdout pipes exit quiet with the computed code; other write failures are exit 2.
 - `--write` applies safe fixes in place.
 - `--json` emits the engine JSON report as-is.
 - Only files with warn/err findings appear; clean files stay silent.

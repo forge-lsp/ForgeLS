@@ -15,13 +15,16 @@ use crate::cli::CheckArgs;
 /// Config warnings go to stderr. Exit is 0 for clean or warn-only,
 /// 1 for any error, 2 for operational failures.
 pub fn run(args: &CheckArgs, cwd: &Path, config: &LoadedConfig) -> i32 {
-    let files = match collect_files(&args.paths, cwd) {
-        Ok(files) => files,
+    let (files, truncated) = match collect_files(&args.paths, cwd, &config.lint.excludes) {
+        Ok(found) => found,
         Err(message) => {
             eprintln!("{message}");
             return 2;
         }
     };
+    if truncated {
+        eprintln!("fls: walk truncated, results may be incomplete");
+    }
     for warning in &config.warnings {
         eprintln!("{warning}");
     }
@@ -95,11 +98,32 @@ pub fn run(args: &CheckArgs, cwd: &Path, config: &LoadedConfig) -> i32 {
         reports.push(FileReport::new(display, text.clone(), diagnostics));
     }
     if args.json {
-        println!("{}", report_json(&reports));
-    } else {
-        print!("{}", report(&reports));
+        let text = format!("{}\n", report_json(&reports));
+        if write_report(&text).is_err() {
+            eprintln!("fls: cannot write output");
+            return 2;
+        }
+    } else if write_report(&report(&reports)).is_err() {
+        eprintln!("fls: cannot write output");
+        return 2;
     }
     if has_error { 1 } else { 0 }
+}
+
+/// Write report text to stdout.
+///
+/// Broken pipe stays silent so `check | head` keeps the computed exit
+/// code. Other IO failures surface as an operational error.
+fn write_report(text: &str) -> Result<(), String> {
+    write_to(&mut std::io::stdout(), text)
+}
+
+fn write_to(writer: &mut dyn std::io::Write, text: &str) -> Result<(), String> {
+    match writer.write_all(text.as_bytes()) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
+        Err(_) => Err(String::from("fls: cannot write output")),
+    }
 }
 
 fn path_display(cwd: &Path, path: &Path) -> String {
@@ -142,4 +166,41 @@ fn filter_files(
         }
     }
     (kept, warnings)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct FailWriter {
+        kind: std::io::ErrorKind,
+    }
+
+    impl std::io::Write for FailWriter {
+        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::new(self.kind, "fail"))
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn broken_pipe_stays_silent() {
+        let mut writer = FailWriter {
+            kind: std::io::ErrorKind::BrokenPipe,
+        };
+        assert!(write_to(&mut writer, "out").is_ok());
+    }
+
+    #[test]
+    fn other_write_errors_surface() {
+        let mut writer = FailWriter {
+            kind: std::io::ErrorKind::Other,
+        };
+        assert_eq!(
+            write_to(&mut writer, "out"),
+            Err(String::from("fls: cannot write output"))
+        );
+    }
 }

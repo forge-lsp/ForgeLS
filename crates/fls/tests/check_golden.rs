@@ -350,3 +350,50 @@ fn check_respects_lint_includes_and_excludes() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn bare_check_skips_build_dirs_and_finds_real_file() {
+    let dir = fresh_dir("big-build");
+    for skip in ["out", "cache", "artifacts", "coverage", "node_modules"] {
+        for index in 0..1100 {
+            write_file(&dir.join(format!("{skip}/junk{index:04}.sol")), CLEAN_SRC);
+        }
+    }
+    write_file(&dir.join("src/a.sol"), OVERRIDE_SRC);
+    let out = run_in(&dir, &["check", "--json"]);
+    assert_eq!(out.status.code(), Some(1));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let value: serde_json::Value = serde_json::from_str(&stdout).expect("valid json");
+    let files = value
+        .pointer("/files")
+        .expect("files")
+        .as_array()
+        .expect("array");
+    assert_eq!(files.len(), 1, "only real file reported: {stdout}");
+    assert!(
+        files[0]
+            .pointer("/path")
+            .expect("path")
+            .as_str()
+            .expect("str")
+            .ends_with("src/a.sol"),
+        "real file kept: {stdout}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn walk_truncation_warns_on_stderr() {
+    let dir = fresh_dir("truncated");
+    for index in 0..5100 {
+        write_file(&dir.join(format!("src/file{index:04}.sol")), CLEAN_SRC);
+    }
+    write_file(&dir.join("src/zz.sol"), OVERRIDE_SRC);
+    let out = run_in(&dir, &["check", "--json"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("fls: walk truncated, results may be incomplete"),
+        "truncation warning: {stderr}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

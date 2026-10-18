@@ -6,8 +6,9 @@ pub mod log;
 pub mod paths;
 
 pub use fs::{
-    WalkCaps, exists, is_trackable_file, list_dir_entries, list_dir_entries_matching,
-    list_files_with_extension, read_to_string, write_string,
+    DEFAULT_SKIP_DIRS, WalkCaps, WalkOutcome, exists, is_skipped_dir, is_trackable_file,
+    list_dir_entries, list_dir_entries_matching, list_files_with_extension, read_to_string,
+    write_string,
 };
 pub use paths::{
     MAX_NODE_MODULES_DEPTH, Remapping, node_module_candidates, node_modules_dirs, normalize,
