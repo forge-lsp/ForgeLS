@@ -43,8 +43,8 @@ pub(crate) const ALWAYS_OK: &[&str] = &[
 ///
 /// Resolve order is scope, dep exports, forge asserts, allowlists,
 /// then one way prefix escape for typing state. Member names after
-/// a dot stay silent so member arity owns them. Emit names stay
-/// silent so `unknown_emit` owns them without doubles.
+/// a dot stay silent so member arity owns them. Emit, revert, and
+/// new names stay silent so their owners report without doubles.
 pub fn unknown_identifier_diagnostics(
     file: &SolidityFile,
     text: &str,
@@ -57,6 +57,11 @@ pub fn unknown_identifier_diagnostics(
     let imports = import_spans(file);
     let emits = emit_spans(file);
     let emit_set: HashSet<(u32, u32)> = emits.iter().map(|span| (span.start, span.end)).collect();
+    let reverts = revert_spans(file);
+    let revert_set: HashSet<(u32, u32)> =
+        reverts.iter().map(|span| (span.start, span.end)).collect();
+    let news = new_spans(file);
+    let new_set: HashSet<(u32, u32)> = news.iter().map(|span| (span.start, span.end)).collect();
     let members = member_spans(file);
     let member_set: HashSet<(u32, u32)> =
         members.iter().map(|span| (span.start, span.end)).collect();
@@ -80,6 +85,12 @@ pub fn unknown_identifier_diagnostics(
             continue;
         }
         if emit_set.contains(&(span.start, span.end)) {
+            continue;
+        }
+        if revert_set.contains(&(span.start, span.end)) {
+            continue;
+        }
+        if new_set.contains(&(span.start, span.end)) {
             continue;
         }
         if member_set.contains(&(span.start, span.end)) {
@@ -162,6 +173,11 @@ pub(crate) fn decl_spans(file: &SolidityFile) -> Vec<Span> {
         if let Some(span) = item.name_span() {
             out.push(span);
         }
+        for param in item.params() {
+            if let Some(span) = param.name_span() {
+                out.push(span);
+            }
+        }
     }
     for item in file.user_types() {
         if let Some(span) = item.name_span() {
@@ -201,6 +217,11 @@ pub(crate) fn decl_spans(file: &SolidityFile) -> Vec<Span> {
         for item in contract.errors() {
             if let Some(span) = item.name_span() {
                 out.push(span);
+            }
+            for param in item.params() {
+                if let Some(span) = param.name_span() {
+                    out.push(span);
+                }
             }
         }
         for item in contract.user_types() {
@@ -279,6 +300,42 @@ pub(crate) fn emit_spans(file: &SolidityFile) -> Vec<Span> {
     out
 }
 
+/// Revert name spans: owned by `unknown_error`, never double here.
+pub(crate) fn revert_spans(file: &SolidityFile) -> Vec<Span> {
+    let mut out = Vec::new();
+    for contract in file.contracts() {
+        for function in contract.functions() {
+            let Some(body) = function.body() else {
+                continue;
+            };
+            for revert in body.all_reverts() {
+                if let Some(span) = revert.name_span() {
+                    out.push(span);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Deploy name spans: deploy arity owns them, never double here.
+pub(crate) fn new_spans(file: &SolidityFile) -> Vec<Span> {
+    let mut out = Vec::new();
+    for contract in file.contracts() {
+        for function in contract.functions() {
+            let Some(body) = function.body() else {
+                continue;
+            };
+            for deploy in body.all_news() {
+                if let Some(span) = deploy.name_span() {
+                    out.push(span);
+                }
+            }
+        }
+    }
+    out
+}
+
 /// Member name spans after the dot: arity and hover own them.
 pub(crate) fn member_spans(file: &SolidityFile) -> Vec<Span> {
     let mut out = Vec::new();
@@ -312,6 +369,11 @@ pub(crate) fn options_spans(file: &SolidityFile) -> Vec<Span> {
             }
             for member in body.all_members() {
                 if let Some(span) = member.options_span() {
+                    out.push(span);
+                }
+            }
+            for deploy in body.all_news() {
+                if let Some(span) = deploy.options_span() {
                     out.push(span);
                 }
             }

@@ -152,6 +152,18 @@ impl ContractDef {
             .filter_map(UsingDirective::cast)
             .collect()
     }
+
+    /// Constructor definitions: functions named `constructor`.
+    ///
+    /// Solidity allows at most one per contract. Empty when the
+    /// contract uses the implicit constructor. Callers use the first
+    /// entry for deploy arity.
+    pub fn constructors(&self) -> Vec<FunctionDef> {
+        self.functions()
+            .into_iter()
+            .filter(|function| function.name().as_deref() == Some("constructor"))
+            .collect()
+    }
 }
 
 impl AstNode for ContractDef {

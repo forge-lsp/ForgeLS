@@ -15,6 +15,7 @@ mod call_hierarchy;
 mod calls;
 mod completion;
 mod emits;
+mod errors;
 pub(crate) mod forge;
 pub(crate) mod function;
 pub(crate) mod getter;
@@ -673,9 +674,12 @@ impl SolidityAnalyzer {
             .collect();
         out.extend(calls::arity_diagnostics(file, scope));
         out.extend(calls::member_arity_diagnostics(file, scope, deps));
+        out.extend(calls::deploy_arity_diagnostics(file, deps));
         out.extend(forge::assert_arity_diagnostics(file, scope));
         out.extend(emits::emit_arity_diagnostics(file));
+        out.extend(errors::revert_arity_diagnostics(file));
         out.extend(emits::unknown_emit_diagnostics(file, deps));
+        out.extend(errors::unknown_error_diagnostics(file, deps));
         out.extend(visibility::visibility_diagnostics(file, scope));
         out.extend(mutability::mutability_diagnostics(file, text, scope));
         out.extend(payable::payable_diagnostics(file, text, scope, deps));
@@ -708,6 +712,22 @@ impl Analyzer for SolidityAnalyzer {
             let deps = Self::dep_files(ctx);
             for (path, dep_file) in &deps {
                 let Some(found) = emits::find_emit_in_dep(dep_file, &name) else {
+                    continue;
+                };
+                let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+                    continue;
+                };
+                return Some(HoverData {
+                    contents: format!("{} - from {}", found.detail, file_name),
+                    span,
+                });
+            }
+            return None;
+        }
+        if let Some((name, span)) = errors::revert_name_at(ctx.text, ctx.offset) {
+            let deps = Self::dep_files(ctx);
+            for (path, dep_file) in &deps {
+                let Some(found) = errors::find_error_in_dep(dep_file, &name) else {
                     continue;
                 };
                 let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
@@ -913,6 +933,15 @@ impl Analyzer for SolidityAnalyzer {
             let deps = Self::dep_files(ctx);
             for (path, dep_file) in &deps {
                 if let Some(found) = emits::find_emit_in_dep(dep_file, &name) {
+                    return Some(GotoTarget::new(path.clone(), found.span));
+                }
+            }
+            return None;
+        }
+        if let Some((name, _)) = errors::revert_name_at(ctx.text, ctx.offset) {
+            let deps = Self::dep_files(ctx);
+            for (path, dep_file) in &deps {
+                if let Some(found) = errors::find_error_in_dep(dep_file, &name) {
                     return Some(GotoTarget::new(path.clone(), found.span));
                 }
             }

@@ -141,10 +141,10 @@ impl AstNode for EnumDef {
     }
 }
 
-/// Custom error: name only, params skipped.
+/// Custom error: name plus params.
 ///
-/// Children hold the name token. Arity lives in the source text,
-/// not in the tree, so hover and goto use name plus span only.
+/// Children hold the name token first, then one Param node per arg.
+/// Hover and goto use name plus span, arity uses param count.
 #[derive(Debug, Clone)]
 pub struct ErrorDef {
     syntax: SyntaxNode,
@@ -161,6 +161,19 @@ impl ErrorDef {
                 }
                 _ => None,
             })
+    }
+
+    pub fn params(&self) -> Vec<Param> {
+        self.syntax
+            .children
+            .iter()
+            .filter_map(|element| match element {
+                SyntaxElement::Node(node) if node.kind == SolidityNode::Param.as_u16() => {
+                    Param::cast(node.clone())
+                }
+                _ => None,
+            })
+            .collect()
     }
 
     pub fn name_span(&self) -> Option<Span> {

@@ -9,7 +9,7 @@ mod types;
 mod user_types;
 mod using;
 
-pub use calls::CallStmt;
+pub use calls::{CallStmt, NewStmt, RevertStmt};
 pub use contract::ContractDef;
 pub use emits::EmitStmt;
 pub use file::{ImportDirective, PragmaDirective, SolidityFile};
@@ -46,6 +46,8 @@ pub enum SolidityNode {
     Modifier,
     Emit,
     Using,
+    Revert,
+    New,
 }
 
 impl SolidityNode {

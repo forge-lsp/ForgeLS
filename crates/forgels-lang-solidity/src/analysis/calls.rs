@@ -10,7 +10,8 @@ use std::path::PathBuf;
 /// Arity checks for plain calls: compare declared params with supplied args.
 ///
 /// Inherited functions count via heritage order linearization, derived
-/// wins and first base wins. Unknown names and non-function symbols stay
+/// wins and first base wins. Struct constructors count fields the same
+/// way, same file only. Unknown names and non-function symbols stay
 /// silent. Overloads use the first definition, matching scope order.
 pub fn arity_diagnostics(file: &SolidityFile, scope: &Scope) -> Vec<DiagnosticData> {
     let mut out = Vec::new();
@@ -40,6 +41,36 @@ pub fn arity_diagnostics(file: &SolidityFile, scope: &Scope) -> Vec<DiagnosticDa
                     .or_insert_with(|| function.params().len());
             }
         }
+        let mut struct_of: HashMap<String, usize> = HashMap::new();
+        for item in contract.structs() {
+            let Some(name) = item.name() else {
+                continue;
+            };
+            if name.is_empty() {
+                continue;
+            }
+            struct_of.entry(name).or_insert_with(|| item.fields().len());
+        }
+        for base in inheritance::linearize(file, &contract_name) {
+            for item in base.structs() {
+                let Some(name) = item.name() else {
+                    continue;
+                };
+                if name.is_empty() {
+                    continue;
+                }
+                struct_of.entry(name).or_insert_with(|| item.fields().len());
+            }
+        }
+        for item in file.structs() {
+            let Some(name) = item.name() else {
+                continue;
+            };
+            if name.is_empty() {
+                continue;
+            }
+            struct_of.entry(name).or_insert_with(|| item.fields().len());
+        }
         let mut getter_of: HashMap<String, usize> = HashMap::new();
         for getter in super::getter::contract_getters(&contract) {
             getter_of
@@ -58,6 +89,21 @@ pub fn arity_diagnostics(file: &SolidityFile, scope: &Scope) -> Vec<DiagnosticDa
                 let Some(symbol) = scope.resolve(&callee, span.start) else {
                     continue;
                 };
+                if symbol.kind == SymbolKind::Struct {
+                    let Some(expected) = struct_of.get(&callee) else {
+                        continue;
+                    };
+                    let actual = call.arg_count();
+                    if *expected != actual {
+                        out.push(DiagnosticData {
+                            span,
+                            message: format!(
+                                "this struct '{callee}' takes {expected} arguments but {actual} supplied"
+                            ),
+                        });
+                    }
+                    continue;
+                }
                 let expected = if symbol.kind == SymbolKind::Function {
                     params_of.get(&callee).or_else(|| getter_of.get(&callee))
                 } else if symbol.kind == SymbolKind::StateVar {
@@ -74,6 +120,53 @@ pub fn arity_diagnostics(file: &SolidityFile, scope: &Scope) -> Vec<DiagnosticDa
                         span,
                         message: format!(
                             "this function '{callee}' takes {expected} arguments but {actual} supplied"
+                        ),
+                    });
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Arity checks for deploys: `new Contract(args)` against constructors.
+///
+/// Target resolves across files with `find_contract_across`. Missing
+/// targets, `super`, and `constructor` stay silent. Contracts without
+/// an explicit constructor take zero args. Same message shape with
+/// the target name after `for`.
+pub fn deploy_arity_diagnostics(
+    file: &SolidityFile,
+    deps: &[(PathBuf, SolidityFile)],
+) -> Vec<DiagnosticData> {
+    let mut out = Vec::new();
+    for contract in file.contracts() {
+        for function in contract.functions() {
+            let Some(body) = function.body() else {
+                continue;
+            };
+            for deploy in body.all_news() {
+                let Some(target) = deploy.contract_name() else {
+                    continue;
+                };
+                if target.is_empty() || target == "super" || target == "constructor" {
+                    continue;
+                }
+                let Some((target_def, _)) = inheritance::find_contract_across(&target, file, deps)
+                else {
+                    continue;
+                };
+                let constructors = target_def.constructors();
+                let expected = constructors
+                    .first()
+                    .map(|ctor| ctor.params().len())
+                    .unwrap_or(0);
+                let actual = deploy.arg_count();
+                if expected != actual {
+                    out.push(DiagnosticData {
+                        span: deploy.syntax().span,
+                        message: format!(
+                            "this constructor for '{target}' takes {expected} arguments but {actual} supplied"
                         ),
                     });
                 }

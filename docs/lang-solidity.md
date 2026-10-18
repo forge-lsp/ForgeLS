@@ -236,20 +236,22 @@ Status: token kinds defined. Real lexer and parser are planned.
 ## Unknown identifiers
 
 - Source: `analysis::unknown::unknown_identifier_diagnostics` scans `Ident` tokens only, so comments and strings never lint.
-- Skips: declaration name spans, member names after a dot, emit names (owned by `unknown_emit`), import and pragma spans, assembly bodies.
+- Skips: declaration name spans, member names after a dot, emit names (owned by `unknown_emit`), revert names (owned by `unknown_error`), deploy names (owned by deploy arity), import and pragma spans, assembly bodies.
 - Resolve order: scope, dep exports, forge asserts, allowlists (`GLOBAL_RECEIVERS`, `ALWAYS_OK`), then one way prefix escape for typing (`tot` before `total` stays silent, `totalX` still errors).
-- Error: `unresolved identifier '{name}'` with the token span. Unknown plain callees error, unknown member names stay silent, emit names never double.
+- Error: `unresolved identifier '{name}'` with the token span. Unknown plain callees error, unknown member names stay silent, emit and revert names never double.
 - Limits: reserved words used as names stay silent (`Ident` only), return param names are not tracked, free functions are out of scope.
 
 ## Block scopes
 
 - Scope: `ast::BlockNode` plus `parser::parse_block` and
-  `analysis::{mod::block_scope, unknown, calls, emits}`. No new
-  `SolidityNode` kind, no new `SymbolKind`: nested blocks reuse `Block`,
-  decls reuse `LocalVar`.
+  `analysis::{mod::block_scope, unknown, calls, emits, errors}`.
+  New `SolidityNode` kinds `Revert` and `New` hold revert and deploy
+  rows, no new `SymbolKind`: nested blocks reuse `Block`, decls reuse
+  `LocalVar`.
 - Shape: `BlockNode::child_blocks` returns direct nested blocks.
-  `all_locals`, `all_calls`, `all_members`, and `all_emits` recurse
-  depth first. `locals`, `calls`, `members`, and `emits` stay direct
+  `all_locals`, `all_calls`, `all_members`, `all_emits`,
+  `all_reverts`, and `all_news` recurse depth first. `locals`,
+  `calls`, `members`, `emits`, `reverts`, and `news` stay direct
   children only.
 - Parse: bare `{ ... }` groups recurse into `parse_block` as child
   blocks. `if`, `for`, `while`, `unchecked`, and `try` bodies recurse
@@ -270,9 +272,9 @@ Status: token kinds defined. Real lexer and parser are planned.
   per body. `block_scope` holds direct locals plus one child scope per
   nested block, so the deepest decl wins for hover, completion, goto,
   references, and rename.
-- Diagnostics: `unknown` decl, emit, member, and option spans plus
-  plain, member, and emit arity all use `all_*`, so nested rows lint
-  the same as top-level rows.
+- Diagnostics: `unknown` decl, emit, revert, new, member, and option
+  spans plus plain, member, emit, revert, and deploy arity all use
+  `all_*`, so nested rows lint the same as top-level rows.
 - Outline: `function_children` stays params only by design. Locals
   never outline; the comment on the function states why.
 - Limits: `catch` params are skipped with no symbols, `do` bodies
@@ -493,6 +495,61 @@ Status: token kinds defined. Real lexer and parser are planned.
   member calls and resolves through scope and lineage. Cross file
   prepare answers, outgoing lists empty for dep targets in V1.
 - Noir: trait defaults return `None`, no noir grammar change.
+
+## Error arity
+
+- Scope: `ast::RevertStmt` plus `parser::try_parse_revert` and
+  `analysis::errors`. `BlockNode::reverts` lists direct rows,
+  `all_reverts` recurses. No new `SymbolKind`.
+- Parse: `revert Name(args)` stores the name plus `(` and `,` markers.
+  Bare `revert`, `revert Name`, and unclosed rows keep partial nodes.
+  String reasons (`revert("msg")`) keep keyword only so they stay
+  silent. Brace rows return `None` so named args never lint.
+- Defs: `parse_error` stores `Param` nodes, `ErrorDef::params` counts
+  them. Same shape as events.
+- Rules:
+  - Arity: `this error 'E' takes N arguments but M supplied` with the
+    full revert span. Own contract first, then same file bases, then
+    file level. Derived wins, first base wins. Unknown names stay
+    silent.
+  - Unknown: `unresolved error 'E'` with the name span. Bare reverts
+    stay silent. Deps resolve in index order, untracked still errors.
+- Hover and goto reuse the emit pattern: `resolve_local_error` and
+  `find_error_in_dep` with `error` detail. Unknown skips revert name
+  spans so names never double.
+- Limits: same file arity only, no completion, no signature help.
+
+## Struct constructors
+
+- Scope: `analysis::calls::arity_diagnostics` struct branch. Same file
+  only, no new node: struct calls already parse as `CallStmt`.
+- Rule: `this struct 'S' takes N arguments but M supplied` with the
+  full call span. Fields count via `StructDef::fields`.
+- Lookup: own contract structs first, then same file bases in linear
+  order, then file level structs. First hit wins. Unrelated contracts
+  stay silent via scope miss, unknown structs report as
+  `unresolved identifier` once.
+- Limits: no dep structs, no named args, initializers stay skipped so
+  only top-level calls lint.
+
+## Constructor args
+
+- Scope: `ast::NewStmt` plus `parser::try_parse_new` and
+  `analysis::calls::deploy_arity_diagnostics`. `BlockNode::news`
+  lists direct rows, `all_news` recurses. `ContractDef::constructors`
+  lists `constructor` functions.
+- Parse: `new C(args)` stores the name plus `(` and `,` markers.
+  Option rows (`new C{value: 1}(...)`) keep `{` and `}` markers so
+  unknown skips `value`. Named args (`new C({a: 1})`), `super`, and
+  `constructor` return `None` so they stay silent.
+- Rule: `this constructor for 'C' takes N arguments but M supplied`
+  with the full deploy span. Target resolves across files with
+  `find_contract_across`. Missing targets stay silent. No explicit
+  constructor means zero args.
+- Unknown: deploy name spans are skipped so unknown never doubles.
+  Unknown targets stay silent by design, like unknown members.
+- Limits: top-level deploys only, initializers stay skipped, no
+  heritage args, no payable checks for deploys.
 
 ## V1 limits
 

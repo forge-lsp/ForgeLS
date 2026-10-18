@@ -1014,3 +1014,49 @@ fn non_brace_body_falls_back_without_node() {
         .collect();
     assert_eq!(names, vec!["x"]);
 }
+
+#[test]
+fn error_params_are_stored() {
+    let text = "contract C {\nerror Insufficient(uint a, uint b);\n}";
+    let file = parse_ok(text);
+    let errors = file.contracts()[0].errors();
+    assert_eq!(errors.len(), 1);
+    assert_eq!(errors[0].name().as_deref(), Some("Insufficient"));
+    assert_eq!(errors[0].params().len(), 2);
+}
+
+#[test]
+fn constructors_are_listed_with_params() {
+    let text = "contract C {\nconstructor(uint a) {}\nfunction f() public {}\n}";
+    let file = parse_ok(text);
+    let constructors = file.contracts()[0].constructors();
+    assert_eq!(constructors.len(), 1);
+    assert_eq!(constructors[0].params().len(), 1);
+    let empty = "contract C {\nfunction f() public {}\n}";
+    let plain = parse_ok(empty);
+    assert!(plain.contracts()[0].constructors().is_empty());
+}
+
+#[test]
+fn revert_parses_with_name_and_args() {
+    let text = "contract C {\nfunction f() public {\nrevert Insufficient(1, 2);\n}\n}";
+    let file = parse_ok(text);
+    let body = file.contracts()[0].functions()[0].body().expect("body");
+    let reverts = body.reverts();
+    assert_eq!(reverts.len(), 1);
+    assert_eq!(reverts[0].name().as_deref(), Some("Insufficient"));
+    assert_eq!(reverts[0].arg_count(), 2);
+    assert_eq!(body.all_reverts().len(), 1);
+}
+
+#[test]
+fn new_parses_with_contract_and_args() {
+    let text = "contract C {\nfunction f() public {\nnew Vault(1, 2);\n}\n}";
+    let file = parse_ok(text);
+    let body = file.contracts()[0].functions()[0].body().expect("body");
+    let news = body.news();
+    assert_eq!(news.len(), 1);
+    assert_eq!(news[0].contract_name().as_deref(), Some("Vault"));
+    assert_eq!(news[0].arg_count(), 2);
+    assert_eq!(body.all_news().len(), 1);
+}

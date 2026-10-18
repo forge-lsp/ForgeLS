@@ -218,10 +218,10 @@ fn recover_field(cursor: &mut Cursor) {
     }
 }
 
-/// Parse `error Name(uint a);`, keeping the name only.
+/// Parse `error Name(params);`, keeping name plus params.
 ///
-/// Params are skipped with paren balance so malformed rows still
-/// yield the name for hover and goto. Missing `;` is one error.
+/// Params reuse param parsing so arity checks count them. Missing
+/// `;` is one error with the node kept for hover and goto.
 pub(crate) fn parse_error(cursor: &mut Cursor, errors: &mut Vec<ParseError>) -> Option<SyntaxNode> {
     let Some(head) = cursor.bump() else {
         errors.push(ParseError::new(cursor.peek_span(), "expected error name"));
@@ -239,8 +239,29 @@ pub(crate) fn parse_error(cursor: &mut Cursor, errors: &mut Vec<ParseError>) -> 
             return None;
         }
     };
+    let mut node_children = vec![token_element(name.clone())];
     if cursor.peek_kind() == Some(SolidityKind::LParen.as_u16()) {
-        skip_parens(cursor);
+        cursor.bump();
+        if cursor.peek_kind() != Some(SolidityKind::RParen.as_u16()) {
+            loop {
+                match parse_param(cursor) {
+                    Ok(param) => node_children.push(SyntaxElement::Node(param)),
+                    Err(error) => {
+                        errors.push(error);
+                        return None;
+                    }
+                }
+                if cursor.peek_kind() == Some(SolidityKind::Comma.as_u16()) {
+                    cursor.bump();
+                } else {
+                    break;
+                }
+            }
+        }
+        if cursor.expect(SolidityKind::RParen, "`)`").is_err() {
+            errors.push(ParseError::new(cursor.peek_span(), "expected `)`"));
+            return None;
+        }
     }
     let end = match cursor.expect(SolidityKind::Semicolon, "`;`") {
         Ok(semi) => semi.span.end,
@@ -249,7 +270,6 @@ pub(crate) fn parse_error(cursor: &mut Cursor, errors: &mut Vec<ParseError>) -> 
             name.span.end
         }
     };
-    let node_children = vec![token_element(name)];
     Some(SyntaxNode::with_children(
         SolidityNode::Error.as_u16(),
         Span::new(start, end),
