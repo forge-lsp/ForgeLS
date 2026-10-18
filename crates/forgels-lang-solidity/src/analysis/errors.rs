@@ -223,9 +223,14 @@ pub fn unknown_error_diagnostics(
 /// Arity checks for revert statements: declared error params against
 /// supplied args.
 ///
-/// File level errors plus own contract plus same file bases in linear
-/// order. Derived wins, first base wins. Unknown names stay silent.
-pub fn revert_arity_diagnostics(file: &SolidityFile) -> Vec<DiagnosticData> {
+/// File level errors plus own contract plus bases in linear order, same
+/// file and across deps. Derived wins, first base wins. Dep file level
+/// and dep contract errors fill in as fallback, matching unknown error
+/// resolution over transitive `dep_texts`. Unknown names stay silent.
+pub fn revert_arity_diagnostics(
+    file: &SolidityFile,
+    deps: &[(PathBuf, SolidityFile)],
+) -> Vec<DiagnosticData> {
     let mut out = Vec::new();
     let mut file_params: HashMap<String, usize> = HashMap::new();
     for item in file.errors() {
@@ -236,6 +241,29 @@ pub fn revert_arity_diagnostics(file: &SolidityFile) -> Vec<DiagnosticData> {
             continue;
         }
         file_params.entry(name).or_insert(item.params().len());
+    }
+    let mut dep_params: HashMap<String, usize> = HashMap::new();
+    for (_, dep_file) in deps {
+        for item in dep_file.errors() {
+            let Some(name) = item.name() else {
+                continue;
+            };
+            if name.is_empty() {
+                continue;
+            }
+            dep_params.entry(name).or_insert(item.params().len());
+        }
+        for contract in dep_file.contracts() {
+            for item in contract.errors() {
+                let Some(name) = item.name() else {
+                    continue;
+                };
+                if name.is_empty() {
+                    continue;
+                }
+                dep_params.entry(name).or_insert(item.params().len());
+            }
+        }
     }
     for contract in file.contracts() {
         let Some(contract_name) = contract.name() else {
@@ -265,7 +293,21 @@ pub fn revert_arity_diagnostics(file: &SolidityFile) -> Vec<DiagnosticData> {
                 params_of.entry(name).or_insert(item.params().len());
             }
         }
+        for (base, _) in inheritance::linearize_across(file, &contract_name, deps) {
+            for item in base.errors() {
+                let Some(name) = item.name() else {
+                    continue;
+                };
+                if name.is_empty() {
+                    continue;
+                }
+                params_of.entry(name).or_insert(item.params().len());
+            }
+        }
         for (name, count) in &file_params {
+            params_of.entry(name.clone()).or_insert(*count);
+        }
+        for (name, count) in &dep_params {
             params_of.entry(name.clone()).or_insert(*count);
         }
         for function in contract.functions() {

@@ -90,6 +90,7 @@ pub enum SymbolKind {
     Function,
     Struct,
     Enum,
+    EnumMember,
     Error,
     Event,
     Modifier,
@@ -681,7 +682,7 @@ impl SolidityAnalyzer {
         out.extend(calls::deploy_arity_diagnostics(file, deps));
         out.extend(forge::assert_arity_diagnostics(file, scope));
         out.extend(emits::emit_arity_diagnostics(file));
-        out.extend(errors::revert_arity_diagnostics(file));
+        out.extend(errors::revert_arity_diagnostics(file, deps));
         out.extend(emits::unknown_emit_diagnostics(file, deps));
         out.extend(errors::unknown_error_diagnostics(file, deps));
         out.extend(visibility::visibility_diagnostics(file, scope));
@@ -776,6 +777,20 @@ impl Analyzer for SolidityAnalyzer {
                 &member.receiver,
                 &deps,
             );
+            // User type entries are synthetic: dep matches still show
+            // the cursor member span, never the 0,0 detail span.
+            if matches!(kind, members::TypeKind::UserType(_)) {
+                let found = members::collect_cross_file_members(&file, &kind, &deps)
+                    .into_iter()
+                    .map(|(info, _)| info)
+                    .find(|info| info.name == member.member);
+                if let Some(found) = found {
+                    return Some(HoverData {
+                        contents: found.detail,
+                        span: member.member_span,
+                    });
+                }
+            }
             if let Some((info, _)) =
                 members::resolve_member_cross_file(&file, &kind, &member.member, &deps)
             {
@@ -983,6 +998,11 @@ impl Analyzer for SolidityAnalyzer {
                 &member.receiver,
                 &deps,
             );
+            // User type entries are synthetic with no declaration:
+            // never leak a 0,0 span and never fall through to word lookup.
+            if matches!(kind, members::TypeKind::UserType(_)) {
+                return None;
+            }
             if let Some((info, path)) =
                 members::resolve_member_cross_file(&file, &kind, &member.member, &deps)
             {

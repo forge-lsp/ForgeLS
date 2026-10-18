@@ -113,6 +113,19 @@ fn member_param_names(
         return None;
     }
     let kind = super::members::receiver_type_with_deps(file, scope, anchor, receiver, deps);
+    if let super::members::TypeKind::Super { enclosing } = kind {
+        if enclosing.is_empty() {
+            return None;
+        }
+        let mut out: Vec<Vec<String>> = Vec::new();
+        for base in super::inheritance::linearize(file, &enclosing) {
+            push_plain_functions(&base, name, &mut out);
+        }
+        for (base, _) in super::inheritance::linearize_across(file, &enclosing, deps) {
+            push_plain_functions(&base, name, &mut out);
+        }
+        return out.into_iter().next();
+    }
     let super::members::TypeKind::Contract(target) = kind else {
         return None;
     };
@@ -514,6 +527,15 @@ mod tests {
     #[test]
     fn member_call_shows_param_names() {
         let text = "contract H {\nfunction greet(uint to, uint amount) public {}\n}\ncontract C {\nfunction f() public {\nH h;\nh.greet(1, 2);\n}\n}";
+        let found = hints(text);
+        assert_eq!(found.len(), 2);
+        assert_eq!(found[0].label, "to:");
+        assert_eq!(found[1].label, "amount:");
+    }
+
+    #[test]
+    fn super_call_shows_base_param_names() {
+        let text = "contract B {\nfunction greet(uint to, uint amount) public {}\n}\ncontract D is B {\nfunction f() public {\nsuper.greet(1, 2);\n}\n}";
         let found = hints(text);
         assert_eq!(found.len(), 2);
         assert_eq!(found[0].label, "to:");

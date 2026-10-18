@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use forgels_syntax::AstNode;
 
-use crate::{ContractDef, SolidityFile, StructDef};
+use crate::{ContractDef, EnumDef, SolidityFile, StructDef, UserTypeDef};
 
 use super::members::MemberInfo;
 use super::{Symbol, SymbolKind};
@@ -24,6 +24,40 @@ pub(crate) fn find_struct(file: &SolidityFile, name: &str) -> Option<StructDef> 
     }
     for contract in file.contracts() {
         for item in contract.structs() {
+            if item.name().as_deref() == Some(name) {
+                return Some(item);
+            }
+        }
+    }
+    None
+}
+
+/// Find an enum by name: file level first, then inside contracts.
+pub(crate) fn find_enum(file: &SolidityFile, name: &str) -> Option<EnumDef> {
+    for item in file.enums() {
+        if item.name().as_deref() == Some(name) {
+            return Some(item);
+        }
+    }
+    for contract in file.contracts() {
+        for item in contract.enums() {
+            if item.name().as_deref() == Some(name) {
+                return Some(item);
+            }
+        }
+    }
+    None
+}
+
+/// Find a user defined value type: file level first, then contracts.
+pub(crate) fn find_user_type(file: &SolidityFile, name: &str) -> Option<UserTypeDef> {
+    for item in file.user_types() {
+        if item.name().as_deref() == Some(name) {
+            return Some(item);
+        }
+    }
+    for contract in file.contracts() {
+        for item in contract.user_types() {
             if item.name().as_deref() == Some(name) {
                 return Some(item);
             }
@@ -111,8 +145,9 @@ fn function_parts(contract: &ContractDef, index: usize) -> Option<(String, Strin
 
 /// Same file inherited symbols with ` - from Base` origin.
 ///
-/// Deduped among bases in linear order: first base wins. Caller filters
-/// own names so the derived contract wins.
+/// Covers structs, enums, errors, user types, events, modifiers, state
+/// vars, and functions. Deduped among bases in linear order: first base
+/// wins. Caller filters own names so the derived contract wins.
 pub(crate) fn inherited_symbols(file: &SolidityFile, contract: &ContractDef) -> Vec<Symbol> {
     let Some(name) = contract.name() else {
         return Vec::new();
@@ -178,6 +213,40 @@ pub(crate) fn inherited_symbols(file: &SolidityFile, contract: &ContractDef) -> 
             out.push(Symbol {
                 name: item_name,
                 kind: SymbolKind::Event,
+                span: item.syntax().span,
+                detail,
+            });
+        }
+        for item in base.errors() {
+            let Some(item_name) = item.name() else {
+                continue;
+            };
+            if item_name.is_empty() || !seen.insert(item_name.clone()) {
+                continue;
+            }
+            let mut detail = String::from("error ");
+            detail.push_str(&item_name);
+            detail.push_str(&suffix);
+            out.push(Symbol {
+                name: item_name,
+                kind: SymbolKind::Error,
+                span: item.syntax().span,
+                detail,
+            });
+        }
+        for item in base.user_types() {
+            let Some(item_name) = item.name() else {
+                continue;
+            };
+            if item_name.is_empty() || !seen.insert(item_name.clone()) {
+                continue;
+            }
+            let mut detail = String::from("type ");
+            detail.push_str(&item_name);
+            detail.push_str(&suffix);
+            out.push(Symbol {
+                name: item_name,
+                kind: SymbolKind::UserType,
                 span: item.syntax().span,
                 detail,
             });
@@ -327,6 +396,40 @@ pub(crate) fn find_struct_across(
     }
     for (path, file) in deps {
         if let Some(found) = find_struct(file, name) {
+            return Some((found, Some(path.clone())));
+        }
+    }
+    None
+}
+
+/// Find an enum in the primary file first, then deps in order.
+pub(crate) fn find_enum_across(
+    name: &str,
+    primary: &SolidityFile,
+    deps: &[(PathBuf, SolidityFile)],
+) -> Option<(EnumDef, Option<PathBuf>)> {
+    if let Some(found) = find_enum(primary, name) {
+        return Some((found, None));
+    }
+    for (path, file) in deps {
+        if let Some(found) = find_enum(file, name) {
+            return Some((found, Some(path.clone())));
+        }
+    }
+    None
+}
+
+/// Find a user defined value type in primary first, then deps.
+pub(crate) fn find_user_type_across(
+    name: &str,
+    primary: &SolidityFile,
+    deps: &[(PathBuf, SolidityFile)],
+) -> Option<(UserTypeDef, Option<PathBuf>)> {
+    if let Some(found) = find_user_type(primary, name) {
+        return Some((found, None));
+    }
+    for (path, file) in deps {
+        if let Some(found) = find_user_type(file, name) {
             return Some((found, Some(path.clone())));
         }
     }

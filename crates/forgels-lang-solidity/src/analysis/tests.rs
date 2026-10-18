@@ -413,6 +413,7 @@ fn completion_kind_maps_to_lsp_numbers() {
         (CompletionKind::Symbol(Kind::Field), 5),
         (CompletionKind::Symbol(Kind::Struct), 22),
         (CompletionKind::Symbol(Kind::Enum), 13),
+        (CompletionKind::Symbol(Kind::EnumMember), 20),
         (CompletionKind::Keyword, 14),
         (CompletionKind::Path, 17),
         (CompletionKind::Package, 19),
@@ -420,11 +421,6 @@ fn completion_kind_maps_to_lsp_numbers() {
     for (kind, want) in cases {
         assert_eq!(completion_item_kind(kind).value(), want);
     }
-    // Follow-up: wire EnumMember to 20 once SymbolKind gains it.
-    assert_eq!(
-        forgels_protocol::CompletionItemKind::ENUM_MEMBER.value(),
-        20
-    );
 }
 
 #[test]
@@ -4854,4 +4850,346 @@ fn data_location_calldata_local_errors() {
 fn data_location_user_type_stays_silent() {
     let text = "struct S {\nuint a;\n}\ncontract C {\nfunction f(S s) public {\ns;\n}\n}";
     assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn super_completion_lists_base_members_only() {
+    let text = "contract B {\nuint total;\nfunction settle() public {}\n}\ncontract D is B {\nfunction own() public {}\nfunction f() public {\nsuper.\n}\n}";
+    let at = text.rfind("super.").expect("dot") as u32 + 6;
+    let labels = complete_labels(text, at);
+    assert!(labels.contains(&"total".to_string()), "labels: {labels:?}");
+    assert!(labels.contains(&"settle".to_string()), "labels: {labels:?}");
+    assert!(!labels.contains(&"own".to_string()), "labels: {labels:?}");
+    assert!(!labels.contains(&"f".to_string()), "labels: {labels:?}");
+}
+
+#[test]
+fn super_hover_shows_base_origin() {
+    let text = "contract B {\nfunction settle() public {}\n}\ncontract D is B {\nfunction f() public {\nsuper.settle;\n}\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let at = text.rfind("settle;").expect("use") as u32;
+    let hover = hover_at(&file, text, at).expect("hover");
+    assert!(
+        hover.contents.contains("function settle"),
+        "contents: {}",
+        hover.contents
+    );
+    assert!(
+        hover.contents.contains("from B"),
+        "contents: {}",
+        hover.contents
+    );
+}
+
+#[test]
+fn super_goto_jumps_to_base_declaration() {
+    let text = "contract B {\nfunction settle() public {}\n}\ncontract D is B {\nfunction f() public {\nsuper.settle;\n}\n}";
+    let at_use = text.rfind("settle;").expect("use") as u32;
+    let at_decl = text.find("settle").expect("decl") as u32;
+    let target = goto_target(text, at_use);
+    assert!(target.start <= at_decl && at_decl < target.end);
+}
+
+#[test]
+fn super_derived_member_stays_unresolved() {
+    let text = "contract B {\nfunction settle() public {}\n}\ncontract D is B {\nfunction own() public {}\nfunction f() public {\nsuper.own;\n}\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let at = text.rfind("own;").expect("use") as u32;
+    assert!(hover_at(&file, text, at).is_none());
+    assert!(goto_definition(&file, text, at).is_none());
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn super_arity_uses_base_signature() {
+    let text = "contract B {\nfunction greet(uint a, uint b) public { a; b; }\n}\ncontract D is B {\nfunction f() public {\nsuper.greet(1);\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "this function 'greet' takes 2 arguments but 1 supplied"
+    );
+}
+
+#[test]
+fn super_arity_shadow_uses_base_not_derived() {
+    let text = "contract B {\nfunction greet(uint a) public { a; }\n}\ncontract D is B {\nfunction greet(uint a, uint b) public { a; b; }\nfunction f() public {\nsuper.greet(1, 2);\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "this function 'greet' takes 1 arguments but 2 supplied"
+    );
+}
+
+#[test]
+fn super_payable_base_non_payable_errors() {
+    let text = "contract B {\nfunction f() public {}\n}\ncontract D is B {\nfunction g() public {\nsuper.f{value: 1}();\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "non-payable function 'f' cannot receive 'value'"
+    );
+}
+
+#[test]
+fn super_payable_base_payable_stays_silent() {
+    let text = "contract B {\nfunction f() payable {}\n}\ncontract D is B {\nfunction g() public {\nsuper.f{value: 1}();\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn super_signature_shows_base_params() {
+    let text = "contract B {\nfunction greet(uint a) public { a; }\n}\ncontract D is B {\nfunction f() public {\nsuper.greet(\n}\n}";
+    let workspace = open_workspace(&[("/repo/C.sol", text)]);
+    let found = signature_multi(&workspace, "/repo/C.sol", text, "super.greet(").expect("help");
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].label, "function greet(uint a)");
+}
+
+#[test]
+fn super_dep_completion_and_goto() {
+    let dep = "contract B {\nfunction settle() public {}\n}";
+    let cur = "import \"./B.sol\";\ncontract D is B {\nfunction f() public {\nsuper.settle;\nsuper.\n}\n}";
+    let mut workspace = open_workspace(&[("/B.sol", dep), ("/D.sol", cur)]);
+    workspace.set_file_deps(PathBuf::from("/D.sol"), vec![PathBuf::from("/B.sol")]);
+    let found = member_complete_multi(&workspace, "/D.sol", cur, "super.");
+    let hit = found
+        .iter()
+        .find(|(label, _)| label == "settle")
+        .expect("settle hit");
+    assert!(hit.1.contains("from B in B.sol"), "detail: {}", hit.1);
+    let goto_hit = goto_multi(&workspace, "/D.sol", cur, "settle").expect("goto");
+    assert_eq!(goto_hit.path, PathBuf::from("/B.sol"));
+    let want = dep.find("settle").expect("decl") as u32;
+    assert!(goto_hit.span.contains(want));
+}
+
+#[test]
+fn super_dep_arity_and_payable_follow_base() {
+    let dep = "contract B {\nfunction greet(uint a, uint b) public { a; b; }\nfunction fund() public {}\n}";
+    let cur = "import \"./B.sol\";\ncontract D is B {\nfunction f() public {\nsuper.greet(1);\nsuper.fund{value: 1}();\n}\n}";
+    let mut workspace = open_workspace(&[("/B.sol", dep), ("/D.sol", cur)]);
+    workspace.set_file_deps(PathBuf::from("/D.sol"), vec![PathBuf::from("/B.sol")]);
+    let found = diagnostics_multi(&workspace, "/D.sol", cur);
+    assert_eq!(found.len(), 2, "diags: {found:?}");
+    assert!(
+        found
+            .iter()
+            .any(|item| item.message == "this function 'greet' takes 2 arguments but 1 supplied"),
+        "diags: {found:?}"
+    );
+    assert!(
+        found
+            .iter()
+            .any(|item| item.message == "non-payable function 'fund' cannot receive 'value'"),
+        "diags: {found:?}"
+    );
+}
+
+#[test]
+fn enum_variant_completion_lists_variants() {
+    let text =
+        "enum Status {\nActive,\nClosed\n}\ncontract C {\nfunction f() public {\nStatus.\n}\n}";
+    let at = text.rfind("Status.").expect("dot") as u32 + 7;
+    let labels = complete_labels(text, at);
+    assert!(labels.contains(&"Active".to_string()), "labels: {labels:?}");
+    assert!(labels.contains(&"Closed".to_string()), "labels: {labels:?}");
+}
+
+#[test]
+fn enum_variant_hover_and_goto() {
+    let text = "enum Status {\nActive,\nClosed\n}\ncontract C {\nfunction f() public {\nStatus.Active;\n}\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let at_use = text.rfind("Active;").expect("use") as u32;
+    let hover = hover_at(&file, text, at_use).expect("hover");
+    assert_eq!(hover.contents, "Status.Active");
+    let at_decl = text.find("Active").expect("decl") as u32;
+    let target = goto_target(text, at_use);
+    assert!(target.start <= at_decl && at_decl < target.end);
+}
+
+#[test]
+fn enum_unknown_variant_stays_silent() {
+    let text =
+        "enum Status {\nActive\n}\ncontract C {\nfunction f() public {\nStatus.Missing;\n}\n}";
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn enum_dep_completion_and_goto() {
+    let dep = "enum Status {\nActive,\nClosed\n}";
+    let cur =
+        "import \"./S.sol\";\ncontract C {\nfunction f() public {\nStatus.Active;\nStatus.\n}\n}";
+    let mut workspace = open_workspace(&[("/S.sol", dep), ("/C.sol", cur)]);
+    workspace.set_file_deps(PathBuf::from("/C.sol"), vec![PathBuf::from("/S.sol")]);
+    let found = member_complete_multi(&workspace, "/C.sol", cur, "Status.");
+    let hit = found
+        .iter()
+        .find(|(label, _)| label == "Closed")
+        .expect("variant hit");
+    assert!(hit.1.contains("from S.sol"), "detail: {}", hit.1);
+    let goto_hit = goto_multi(&workspace, "/C.sol", cur, "Active").expect("goto");
+    assert_eq!(goto_hit.path, PathBuf::from("/S.sol"));
+    let want = dep.find("Active").expect("decl") as u32;
+    assert!(goto_hit.span.contains(want));
+}
+
+#[test]
+fn user_type_wrap_unwrap_completion() {
+    let text = "type MyNumber is uint256;\ncontract C {\nfunction f() public {\nMyNumber.\n}\n}";
+    let at = text.rfind("MyNumber.").expect("dot") as u32 + 9;
+    let labels = complete_labels(text, at);
+    assert!(labels.contains(&"wrap".to_string()), "labels: {labels:?}");
+    assert!(labels.contains(&"unwrap".to_string()), "labels: {labels:?}");
+}
+
+#[test]
+fn user_type_wrap_hover_shows_detail() {
+    let text =
+        "type MyNumber is uint256;\ncontract C {\nfunction f() public {\nMyNumber.wrap;\n}\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let at = text.rfind("wrap;").expect("use") as u32;
+    let hover = hover_at(&file, text, at).expect("hover");
+    assert_eq!(
+        hover.contents,
+        "function wrap(uint256 value) returns (MyNumber)"
+    );
+    assert!(hover.span.contains(at));
+}
+
+#[test]
+fn user_type_wrap_goto_returns_none() {
+    let text =
+        "type MyNumber is uint256;\ncontract C {\nfunction f() public {\nMyNumber.wrap;\n}\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.is_empty(), "errors: {errors:?}");
+    let at = text.rfind("wrap;").expect("use") as u32;
+    assert!(goto_definition(&file, text, at).is_none());
+    let workspace = open_workspace(&[("/A.sol", text)]);
+    let buf = PathBuf::from("/A.sol");
+    let ctx = ProjectContext::new(buf.as_path(), text, at, &workspace);
+    assert!(SolidityAnalyzer.goto_location(&ctx).is_none());
+}
+
+#[test]
+fn user_type_wrap_arity_checks_one_arg() {
+    let text = "type MyNumber is uint256;\ncontract C {\nfunction f() public {\nMyNumber.wrap(1, 2);\nMyNumber.unwrap(1);\nMyNumber.bad(1);\n}\n}";
+    let found = diagnostics_of(text);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "this function 'wrap' takes 1 arguments but 2 supplied"
+    );
+}
+
+#[test]
+fn user_type_signature_shows_wrap() {
+    let text =
+        "type MyNumber is uint256;\ncontract C {\nfunction f() public {\nMyNumber.wrap(\n}\n}";
+    let workspace = open_workspace(&[("/repo/C.sol", text)]);
+    let found = signature_multi(&workspace, "/repo/C.sol", text, "MyNumber.wrap(").expect("help");
+    assert_eq!(found.len(), 1);
+    assert_eq!(
+        found[0].label,
+        "function wrap(uint256 value) returns (MyNumber)"
+    );
+}
+
+#[test]
+fn user_type_dep_hover_uses_member_span() {
+    let dep = "type MyNumber is uint256;";
+    let cur = "import \"./T.sol\";\ncontract C {\nfunction f() public {\nMyNumber.wrap;\n}\n}";
+    let mut workspace = open_workspace(&[("/T.sol", dep), ("/C.sol", cur)]);
+    workspace.set_file_deps(PathBuf::from("/C.sol"), vec![PathBuf::from("/T.sol")]);
+    let hit = hover_multi(&workspace, "/C.sol", cur, "wrap").expect("hover");
+    assert!(
+        hit.contents.contains("function wrap(uint256 value)"),
+        "contents: {}",
+        hit.contents
+    );
+    let at = cur.rfind("wrap").expect("use") as u32;
+    assert!(hit.span.contains(at));
+}
+
+#[test]
+fn inherited_error_resolves_in_derived_scope() {
+    let text = "contract B {\nerror Insufficient(uint a);\n}\ncontract D is B {\nfunction f() public {\nInsufficient;\n}\n}";
+    let (_, scope) = collect(text);
+    let at = text.rfind("Insufficient;").expect("use") as u32;
+    let found = scope.resolve("Insufficient", at).expect("found");
+    assert_eq!(found.kind, SymbolKind::Error);
+    assert!(found.detail.contains("from B"), "detail: {}", found.detail);
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn inherited_user_type_resolves_in_derived_scope() {
+    let text = "contract B {\ntype MyNumber is uint256;\n}\ncontract D is B {\nfunction f() public {\nMyNumber m;\nm;\n}\n}";
+    let (_, scope) = collect(text);
+    let at = text.rfind("MyNumber m;").expect("decl") as u32;
+    let found = scope.resolve("MyNumber", at).expect("found");
+    assert_eq!(found.kind, SymbolKind::UserType);
+    assert!(diagnostics_of(text).is_empty());
+}
+
+#[test]
+fn inherited_members_stay_vars_and_funcs() {
+    let text = "contract B {\nerror Insufficient(uint a);\ntype MyNumber is uint256;\nevent Transfer(address a);\nuint total;\nfunction settle() public {}\n}\ncontract D is B {\nfunction f() public {\nthis.\n}\n}";
+    let at = text.rfind("this.").expect("dot") as u32 + 5;
+    let labels = complete_labels(text, at);
+    assert!(labels.contains(&"total".to_string()), "labels: {labels:?}");
+    assert!(labels.contains(&"settle".to_string()), "labels: {labels:?}");
+    assert!(
+        !labels.contains(&"Insufficient".to_string()),
+        "labels: {labels:?}"
+    );
+    assert!(
+        !labels.contains(&"MyNumber".to_string()),
+        "labels: {labels:?}"
+    );
+    assert!(
+        !labels.contains(&"Transfer".to_string()),
+        "labels: {labels:?}"
+    );
+}
+
+#[test]
+fn error_arity_follows_dep_heritage() {
+    let base = "contract Base {\nerror Insufficient(uint a, uint b);\n}";
+    let mid = "import \"./Base.sol\";\ncontract Mid is Base {\n}";
+    let cur = "import \"./Mid.sol\";\ncontract D is Mid {\nfunction f() public {\nrevert Insufficient(1);\n}\n}";
+    let mut workspace = open_workspace(&[("/Base.sol", base), ("/Mid.sol", mid), ("/D.sol", cur)]);
+    workspace.set_file_deps(PathBuf::from("/Mid.sol"), vec![PathBuf::from("/Base.sol")]);
+    workspace.set_file_deps(PathBuf::from("/D.sol"), vec![PathBuf::from("/Mid.sol")]);
+    let found = diagnostics_multi(&workspace, "/D.sol", cur);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "this error 'Insufficient' takes 2 arguments but 1 supplied"
+    );
+}
+
+#[test]
+fn error_arity_uses_dep_contract_fallback() {
+    let dep = "contract B {\nerror Insufficient(uint a);\n}";
+    let cur = "import \"./B.sol\";\ncontract A {\nfunction f() public {\nrevert Insufficient(1, 2);\n}\n}";
+    let mut workspace = open_workspace(&[("/B.sol", dep), ("/A.sol", cur)]);
+    workspace.set_file_deps(PathBuf::from("/A.sol"), vec![PathBuf::from("/B.sol")]);
+    let found = diagnostics_multi(&workspace, "/A.sol", cur);
+    assert_eq!(found.len(), 1, "diags: {found:?}");
+    assert_eq!(
+        found[0].message,
+        "this error 'Insufficient' takes 1 arguments but 2 supplied"
+    );
 }

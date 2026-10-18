@@ -51,14 +51,35 @@ Status: token kinds defined. Real lexer and parser are planned.
 - Hover: local `hover_at` first. Else scan `exports_of` for the word at cursor and show `<detail> - from <file>`.
 - Goto: `goto_definition` for same file. `goto_location` falls back to `resolve_in_dep` over `dep_texts(ctx, 16)` and returns `GotoTarget { path, span }`.
 - Exports: `Scope::export_symbols` returns contracts plus their functions only.
-- Members: `this` plus inherited members resolve across `dep_texts(ctx, 16)` with ` - from <Base> in <file>` origin and correct `GotoTarget` path. Receiver types in deps resolve the same way.
+- Members: `this`, `super`, enum names, and user type names resolve
+  across `dep_texts(ctx, 16)` with ` - from <Base> in <file>` origin and
+  correct `GotoTarget` path. Receiver types in deps resolve the same way.
 
 ## Inheritance
 
 - Scope: eager merge into `contract_scope` and `members_of`, no `Symbol` schema change. Origin uses detail suffix ` - from <Base>` same file and ` - from <Base> in <file>` cross file.
 - Order: heritage order DFS with visited set, transitive bases before direct ones. Derived wins, first base wins. This is not C3.
-- Arity: `calls::arity_diagnostics` follows the same chain, derived wins.
+- Symbols: inherited scope covers structs, enums, errors, user types, events, modifiers, state vars, and functions. Member lookup (`members_of`) stays vars plus funcs.
+- Arity: `calls::arity_diagnostics` follows the same chain, derived wins. `errors::revert_arity_diagnostics` follows the chain across deps with dep file and contract errors as fallback.
 - Exports: `exports_of` stays own members only, no flatten.
+
+## Super members
+
+- Scope: `TypeKind::Super { enclosing }` in `members`, plus thin wiring in `hover`, `goto`, `calls`, `signature`, `inlay`, `payable`, `mod`.
+- Shape: `super` resolves to the enclosing contract bases only, derived bypassed. Outside a contract it stays unknown.
+- Members: base state vars plus base functions with ` - from <Base>` origin. Same file via `inherited_members`, deps via `linearize_across` with ` - from <Base> in <file>` origin.
+- Hover and goto: base declarations, same rules as inherited `this` members.
+- Arity, signature, inlay, payable: base signatures across files, derived excluded. Getters excluded.
+- Limits: unknown `super` names stay silent everywhere.
+
+## Enum and user type members
+
+- Scope: `TypeKind::Enum(name)` and `TypeKind::UserType(name)` in `members`, plus thin wiring in `hover`, `goto`, `calls`, `signature`, `mod`. New `SymbolKind::EnumMember` maps to LSP 20.
+- Receivers: enum and user type names resolve via scope, same file first then dep files. Contract level and file level both work.
+- Enum members: variants with `<Enum>.<Variant>` detail and real variant spans. Hover and goto jump to the variant token. Cross file adds ` - from <file>`.
+- User type members: `wrap` and `unwrap`, each 1 arg. Details read `function wrap(<Underlying> value) returns (<Name>)` and `function unwrap(<Name> value) returns (<Underlying>)`.
+- Synthetic spans: `wrap` and `unwrap` use `0,0` spans that never leak. Hover shows the cursor member span, goto returns `None` by design with a dep guard.
+- Limits: enum variant calls and unknown member names stay silent. Value receivers of enum or user type stay unknown.
 
 ## Forge-std cheatcodes
 

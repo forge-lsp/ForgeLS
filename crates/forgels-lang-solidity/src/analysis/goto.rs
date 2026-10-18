@@ -8,8 +8,10 @@ use forgels_syntax::{Lexer, Span};
 /// Array members (`length`, `push`, `pop`), address members
 /// (`balance`, `transfer`, and rest), bytes (`length`), function
 /// (`selector`, `gas`, `value`), globals (`msg.*`, `block.*`, `tx.*`,
-/// `abi.*`), and `type()` metadata return `None` by design: their
-/// spans are synthetic with no declaration in the workspace. Emit name
+/// `abi.*`), user type `wrap` and `unwrap`, and `type()` metadata return
+/// `None` by design: their spans are synthetic with no declaration in
+/// the workspace. Super members jump to the base declaration, enum
+/// members jump to the variant token. Emit name
 /// slots jump to the event declaration only. Positions on whitespace,
 /// operators, or undeclared words return `None`.
 /// Forge builtins (`vm.*`, `console.*`, `Test` asserts) return `None` by
@@ -36,6 +38,7 @@ pub fn goto_definition(file: &SolidityFile, text: &str, offset: u32) -> Option<S
                 | super::members::TypeKind::Function
                 | super::members::TypeKind::Meta(_)
                 | super::members::TypeKind::Global(_)
+                | super::members::TypeKind::UserType(_)
         ) {
             return None;
         }
