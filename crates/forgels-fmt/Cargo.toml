@@ -1,0 +1,10 @@
+[package]
+name = "forgels-fmt"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Solidity-only formatter core for fls (P0 trim)"
+
+[dependencies]
+forgels-syntax.workspace = true
+forgels-common.workspace = true

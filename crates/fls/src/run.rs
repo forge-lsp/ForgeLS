@@ -118,7 +118,7 @@ fn write_report(text: &str) -> Result<(), String> {
     write_to(&mut std::io::stdout(), text)
 }
 
-fn write_to(writer: &mut dyn std::io::Write, text: &str) -> Result<(), String> {
+pub(crate) fn write_to(writer: &mut dyn std::io::Write, text: &str) -> Result<(), String> {
     match writer.write_all(text.as_bytes()) {
         Ok(()) => Ok(()),
         Err(err) if err.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
@@ -126,7 +126,7 @@ fn write_to(writer: &mut dyn std::io::Write, text: &str) -> Result<(), String> {
     }
 }
 
-fn path_display(cwd: &Path, path: &Path) -> String {
+pub(crate) fn path_display(cwd: &Path, path: &Path) -> String {
     if let Ok(rel) = path.strip_prefix(cwd)
         && !rel.as_os_str().is_empty()
     {

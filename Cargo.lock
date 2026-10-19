@@ -117,6 +117,7 @@ dependencies = [
  "clap",
  "forgels-common",
  "forgels-core",
+ "forgels-fmt",
  "forgels-lang-solidity",
  "forgels-lint",
  "forgels-syntax",
@@ -141,6 +142,14 @@ dependencies = [
  "forgels-syntax",
  "serde_json",
  "toml",
+]
+
+[[package]]
+name = "forgels-fmt"
+version = "0.2.0-beta"
+dependencies = [
+ "forgels-common",
+ "forgels-syntax",
 ]
 
 [[package]]
