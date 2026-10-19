@@ -10,6 +10,7 @@ mod contract;
 mod cursor;
 mod items;
 mod members;
+mod statements;
 mod types;
 mod user_types;
 

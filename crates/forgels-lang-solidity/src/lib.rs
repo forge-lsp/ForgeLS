@@ -16,9 +16,10 @@ pub use analysis::{
 };
 
 pub use ast::{
-    BlockNode, CallStmt, ContractDef, DataLocation, EmitStmt, EnumDef, ErrorDef, EventDef,
-    FunctionDef, ImportDirective, LocalVar, MAX_CHAIN_TAILS, MemberExpr, ModifierDef, Mutability,
-    NewStmt, Param, PragmaDirective, Returns, RevertStmt, SolidityFile, SolidityNode, StateVar,
+    BlockNode, BreakStmt, CallStmt, ContinueStmt, ContractDef, DataLocation, DeleteStmt,
+    DoWhileStmt, EmitStmt, EnumDef, ErrorDef, EventDef, ExprStmt, FunctionDef, ImportDirective,
+    LocalVar, MAX_CHAIN_TAILS, MemberExpr, ModifierDef, Mutability, NewStmt, Param,
+    PragmaDirective, ReturnStmt, Returns, RevertStmt, SolidityFile, SolidityNode, StateVar,
     StructDef, TypeNode, UserTypeDef, UsingDirective, Visibility,
 };
 pub use lexer::{KEYWORDS, SolidityKind, SolidityLexer, builtin_types, keyword_kind, symbol_kind};

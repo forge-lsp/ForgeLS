@@ -5,6 +5,7 @@ mod contract;
 mod emits;
 mod file;
 mod members;
+mod statements;
 mod types;
 mod user_types;
 mod using;
@@ -17,6 +18,7 @@ pub use members::{
     DataLocation, FunctionDef, LocalVar, MAX_CHAIN_TAILS, MemberExpr, Mutability, Param, Returns,
     StateVar, Visibility, is_data_location_kind,
 };
+pub use statements::{BreakStmt, ContinueStmt, DeleteStmt, DoWhileStmt, ExprStmt, ReturnStmt};
 pub use types::{BlockNode, TypeNode};
 pub use user_types::{EnumDef, ErrorDef, EventDef, ModifierDef, StructDef, UserTypeDef};
 pub use using::UsingDirective;
@@ -49,6 +51,12 @@ pub enum SolidityNode {
     Using,
     Revert,
     New,
+    Return,
+    Break,
+    Continue,
+    Delete,
+    DoWhile,
+    ExprStmt,
 }
 
 impl SolidityNode {

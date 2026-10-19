@@ -1367,3 +1367,223 @@ fn function_definition_still_parses_after_function_types() {
         Some("add")
     );
 }
+
+#[test]
+fn return_stmt_has_exact_span() {
+    use crate::{ReturnStmt, SolidityNode};
+    use forgels_syntax::AstNode;
+    let text = "contract C {\nfunction f() public {\nreturn a;\n}\n}";
+    let file = parse_ok(text);
+    let body = file.contracts()[0].functions()[0].body().expect("body");
+    let stmts = body.statements();
+    assert_eq!(stmts.len(), 1);
+    assert_eq!(stmts[0].kind, SolidityNode::Return.as_u16());
+    let ret = ReturnStmt::cast(stmts[0].clone()).expect("return");
+    let covered = &text[ret.syntax().span.start as usize..ret.syntax().span.end as usize];
+    assert_eq!(covered, "return a;");
+}
+
+#[test]
+fn break_continue_delete_have_exact_spans() {
+    use crate::{BreakStmt, ContinueStmt, DeleteStmt, SolidityNode};
+    use forgels_syntax::AstNode;
+    let text = "contract C {\nfunction f() public {\nfor (uint i = 0; i < 10; i++) {\nbreak;\ncontinue;\n}\ndelete x;\n}\n}";
+    let file = parse_ok(text);
+    let body = file.contracts()[0].functions()[0].body().expect("body");
+    assert_eq!(body.child_blocks().len(), 1);
+    let wrapper = body.child_blocks()[0].clone();
+    let inner = wrapper.all_statements();
+    assert_eq!(inner.len(), 2);
+    assert_eq!(inner[0].kind, SolidityNode::Break.as_u16());
+    assert_eq!(inner[1].kind, SolidityNode::Continue.as_u16());
+    let brk = BreakStmt::cast(inner[0].clone()).expect("break");
+    let covered = &text[brk.syntax().span.start as usize..brk.syntax().span.end as usize];
+    assert_eq!(covered, "break;");
+    let cont = ContinueStmt::cast(inner[1].clone()).expect("continue");
+    let covered = &text[cont.syntax().span.start as usize..cont.syntax().span.end as usize];
+    assert_eq!(covered, "continue;");
+    let direct = body.statements();
+    assert_eq!(direct.len(), 1);
+    assert_eq!(direct[0].kind, SolidityNode::Delete.as_u16());
+    let del = DeleteStmt::cast(direct[0].clone()).expect("delete");
+    let covered = &text[del.syntax().span.start as usize..del.syntax().span.end as usize];
+    assert_eq!(covered, "delete x;");
+}
+
+#[test]
+fn do_while_and_expr_have_exact_spans() {
+    use crate::{DoWhileStmt, ExprStmt, SolidityNode};
+    use forgels_syntax::AstNode;
+    let text =
+        "contract C {\nfunction f() public {\ndo {\nx = 1;\n} while (x < 10);\nx = x + 1;\n}\n}";
+    let file = parse_ok(text);
+    let body = file.contracts()[0].functions()[0].body().expect("body");
+    let stmts = body.statements();
+    assert_eq!(stmts.len(), 2);
+    assert_eq!(stmts[0].kind, SolidityNode::DoWhile.as_u16());
+    assert_eq!(stmts[1].kind, SolidityNode::ExprStmt.as_u16());
+    let dw = DoWhileStmt::cast(stmts[0].clone()).expect("dowhile");
+    let covered = &text[dw.syntax().span.start as usize..dw.syntax().span.end as usize];
+    assert!(covered.starts_with("do {"));
+    assert!(covered.ends_with("while (x < 10);"));
+    let expr = ExprStmt::cast(stmts[1].clone()).expect("expr");
+    let covered = &text[expr.syntax().span.start as usize..expr.syntax().span.end as usize];
+    assert_eq!(covered, "x = x + 1;");
+}
+
+#[test]
+fn statements_nest_via_all_depth_first() {
+    use crate::SolidityNode;
+    let text =
+        "contract C {\nfunction f() public {\nuint a = 1;\nif (true) {\nreturn a;\n}\nx = 1;\n}\n}";
+    let file = parse_ok(text);
+    let body = file.contracts()[0].functions()[0].body().expect("body");
+    let direct = body.statements();
+    assert_eq!(direct.len(), 1);
+    assert_eq!(direct[0].kind, SolidityNode::ExprStmt.as_u16());
+    assert_eq!(body.child_blocks().len(), 1);
+    let all = body.all_statements();
+    assert_eq!(all.len(), 2);
+    assert_eq!(all[0].kind, SolidityNode::ExprStmt.as_u16());
+    assert_eq!(all[1].kind, SolidityNode::Return.as_u16());
+}
+
+#[test]
+fn empty_block_stays_zero_child() {
+    let text = "contract C {\nfunction f() public {}\n}";
+    let file = parse_ok(text);
+    let body = file.contracts()[0].functions()[0].body().expect("body");
+    assert!(body.statements().is_empty());
+    assert!(body.all_statements().is_empty());
+    assert!(body.child_blocks().is_empty());
+    assert!(body.locals().is_empty());
+    assert!(body.calls().is_empty());
+    assert!(body.members().is_empty());
+}
+
+#[test]
+fn single_statement_control_body_yields_expr_without_block() {
+    use crate::SolidityNode;
+    let text = "contract C {\nfunction f() public {\nif (true)\nx = 1;\nuint y = 2;\n}\n}";
+    let file = parse_ok(text);
+    let body = file.contracts()[0].functions()[0].body().expect("body");
+    assert!(body.child_blocks().is_empty());
+    let stmts = body.statements();
+    assert_eq!(stmts.len(), 1);
+    assert_eq!(stmts[0].kind, SolidityNode::ExprStmt.as_u16());
+    let names: Vec<String> = body
+        .all_locals()
+        .iter()
+        .filter_map(|local| local.name())
+        .collect();
+    assert_eq!(names, vec!["y"]);
+}
+
+#[test]
+fn unclosed_brace_keeps_valid_siblings() {
+    let text = "contract C {\nfunction f() public {\nuint x = 1;\nreturn x;";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(errors.iter().any(|error| error.message == "unclosed `{`"));
+    let body = file.contracts()[0].functions()[0].body().expect("body");
+    let names: Vec<String> = body
+        .locals()
+        .iter()
+        .filter_map(|local| local.name())
+        .collect();
+    assert_eq!(names, vec!["x"]);
+    assert_eq!(body.statements().len(), 1);
+}
+
+#[test]
+fn missing_return_semi_errors_without_node() {
+    let text = "contract C {\nfunction f() public {\nuint x = 1;\nreturn x\n}\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(
+        errors.iter().any(|error| error.message == "expected `;`"),
+        "errors: {errors:?}"
+    );
+    let body = file.contracts()[0].functions()[0].body().expect("body");
+    assert!(body.statements().is_empty());
+    let names: Vec<String> = body
+        .locals()
+        .iter()
+        .filter_map(|local| local.name())
+        .collect();
+    assert_eq!(names, vec!["x"]);
+}
+
+#[test]
+fn broken_do_while_tail_keeps_next_sibling() {
+    let text = "contract C {\nfunction f() public {\ndo {\nuint x = 1;\n}\nuint y = 2;\n}\n}";
+    let tokens = SolidityLexer.tokenize(text);
+    let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message == "expected `while`"),
+        "errors: {errors:?}"
+    );
+    let body = file.contracts()[0].functions()[0].body().expect("body");
+    assert!(body.statements().is_empty());
+    let names: Vec<String> = body
+        .all_locals()
+        .iter()
+        .filter_map(|local| local.name())
+        .collect();
+    assert_eq!(names, vec!["y"]);
+}
+
+#[test]
+fn unbalanced_paren_bracket_keeps_sibling() {
+    let cases = [
+        "contract C {\nfunction f() public {\nfoo(bar;\nuint y = 2;\n}\n}",
+        "contract C {\nfunction f() public {\nreturn (x;\nuint y = 2;\n}\n}",
+        "contract C {\nfunction f() public {\nx = arr[1;\nuint y = 2;\n}\n}",
+    ];
+    for text in cases {
+        let tokens = SolidityLexer.tokenize(text);
+        let (file, errors) = SolidityParser.parse_with_errors(&tokens);
+        assert!(
+            !errors
+                .iter()
+                .any(|error| error.message.contains("unclosed")),
+            "errors: {errors:?} for {text}"
+        );
+        let body = file.contracts()[0].functions()[0].body().expect("body");
+        let names: Vec<String> = body
+            .all_locals()
+            .iter()
+            .filter_map(|local| local.name())
+            .collect();
+        assert_eq!(names, vec!["y"], "for {text}");
+    }
+}
+
+#[test]
+fn new_statements_leave_accessor_counts_unchanged() {
+    let text = "contract C {\nfunction f() public {\nuint x = 1;\ngreet(x);\nobj.greet(1);\nemit Transfer(x);\nrevert Insufficient(x);\nnew Vault(x);\nreturn x;\nbreak;\ncontinue;\ndelete x;\ndo {\nx = 1;\n} while (x < 10);\nx = 2;\n}\n}";
+    let file = parse_ok(text);
+    let body = file.contracts()[0].functions()[0].body().expect("body");
+    let local_names: Vec<String> = body
+        .locals()
+        .iter()
+        .filter_map(|local| local.name())
+        .collect();
+    assert_eq!(local_names, vec!["x"]);
+    assert_eq!(body.calls().len(), 1);
+    assert_eq!(body.all_calls().len(), 1);
+    assert_eq!(body.members().len(), 1);
+    assert_eq!(body.all_members().len(), 1);
+    assert_eq!(body.emits().len(), 1);
+    assert_eq!(body.all_emits().len(), 1);
+    assert_eq!(body.reverts().len(), 1);
+    assert_eq!(body.all_reverts().len(), 1);
+    assert_eq!(body.news().len(), 1);
+    assert_eq!(body.all_news().len(), 1);
+    assert!(body.params().is_empty());
+    assert!(body.all_params().is_empty());
+    assert_eq!(body.statements().len(), 6);
+    assert_eq!(body.all_statements().len(), 6);
+}
