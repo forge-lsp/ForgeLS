@@ -2,6 +2,7 @@ mod bridge;
 mod cli;
 mod config;
 mod fix;
+mod format;
 mod init;
 mod lsp;
 mod run;
@@ -28,6 +29,18 @@ fn main() {
                 }
             };
             let code = run::run(&args, &root, &config);
+            std::process::exit(code);
+        }
+        Command::Format(args) => {
+            let root = cwd();
+            let config = match config::load(&root) {
+                Ok(config) => config,
+                Err(message) => {
+                    eprintln!("{message}");
+                    std::process::exit(2);
+                }
+            };
+            let code = format::run(&args, &root, &config);
             std::process::exit(code);
         }
         Command::Lsp(args) => {

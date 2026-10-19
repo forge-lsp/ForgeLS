@@ -11,6 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 forgels-core.workspace = true
+forgels-fmt.workspace = true
 forgels-lint.workspace = true
 forgels-common.workspace = true
 forgels-syntax.workspace = true

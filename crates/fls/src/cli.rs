@@ -19,6 +19,8 @@ pub enum Command {
     Lsp(LspArgs),
     /// Lint Solidity files.
     Check(CheckArgs),
+    /// Format Solidity files (P0: trim trailing whitespace plus EOF newline only, full rules P1-P3).
+    Format(FormatArgs),
     /// Scaffold ./fls.json with default lint levels.
     Init(InitArgs),
 }
@@ -41,6 +43,19 @@ pub struct CheckArgs {
     /// Emit JSON report.
     #[arg(long)]
     pub json: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct FormatArgs {
+    /// Files or dirs to format. Empty means scan cwd for *.sol.
+    #[arg(value_name = "PATH")]
+    pub paths: Vec<PathBuf>,
+    /// Write formatted text back in place.
+    #[arg(long)]
+    pub write: bool,
+    /// List files that would change, no writes.
+    #[arg(long)]
+    pub check: bool,
 }
 
 #[derive(Debug, Args)]

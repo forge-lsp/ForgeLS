@@ -2,11 +2,15 @@ use std::path::{Path, PathBuf};
 
 use forgels_common::paths::Remapping;
 use forgels_core::Config;
-use forgels_lint::{FlsConfig, LintConfig, LintConfigError};
+use forgels_lint::{FlsConfig, FormatConfig, LintConfig, LintConfigError};
 
 /// Loaded lint setup plus import resolution base.
 pub struct LoadedConfig {
     pub lint: LintConfig,
+    // Unconsumed in P0: the formatter reads plain text only.
+    // Validation of rule keys lands in P3.
+    #[allow(dead_code)]
+    pub format: FormatConfig,
     pub root: PathBuf,
     pub remappings: Vec<Remapping>,
     pub warnings: Vec<String>,
@@ -40,6 +44,7 @@ fn load_fls_json(cwd: &Path, path: &Path) -> Result<LoadedConfig, String> {
             warnings.push(format!("fls: cannot read {}: {err}", path.display()));
             return Ok(LoadedConfig {
                 lint: LintConfig::default(),
+                format: FormatConfig::default(),
                 root,
                 remappings,
                 warnings,
@@ -49,6 +54,7 @@ fn load_fls_json(cwd: &Path, path: &Path) -> Result<LoadedConfig, String> {
     match FlsConfig::parse_json(&text) {
         Ok(config) => Ok(LoadedConfig {
             lint: config.lint,
+            format: config.format,
             root,
             remappings,
             warnings,
@@ -58,6 +64,7 @@ fn load_fls_json(cwd: &Path, path: &Path) -> Result<LoadedConfig, String> {
             warnings.push(format!("fls: {other}"));
             Ok(LoadedConfig {
                 lint: LintConfig::default(),
+                format: FormatConfig::default(),
                 root,
                 remappings,
                 warnings,
@@ -73,6 +80,7 @@ fn load_legacy_toml(cwd: &Path) -> Result<LoadedConfig, String> {
         Err(_) => {
             return Ok(LoadedConfig {
                 lint: LintConfig::default(),
+                format: FormatConfig::default(),
                 root: cwd.to_path_buf(),
                 remappings: Vec::new(),
                 warnings: Vec::new(),
@@ -94,6 +102,7 @@ fn load_legacy_toml(cwd: &Path) -> Result<LoadedConfig, String> {
     };
     Ok(LoadedConfig {
         lint,
+        format: FormatConfig::default(),
         root,
         remappings,
         warnings,
