@@ -25,9 +25,9 @@ fn overlaps(left: Span, right: Span) -> bool {
     left.start <= right.end && left.end >= right.start
 }
 
-// Apply edits to text. Sorts by span, keeps the first of any
-// overlapping pair (touching edges count), skips out-of-range edits
-// via `str::get`. Pure: input text is never mutated.
+// Apply edits to text. Sorts outermost first (start asc, end desc),
+// keeps the first of any overlapping pair (touching edges count),
+// skips out-of-range edits via `str::get`. Pure: input never mutates.
 pub fn apply(text: &str, edits: &[FormatEdit]) -> FormatOutcome {
     if text.is_empty() || edits.is_empty() {
         return FormatOutcome {
@@ -41,7 +41,7 @@ pub fn apply(text: &str, edits: &[FormatEdit]) -> FormatOutcome {
         left.span
             .start
             .cmp(&right.span.start)
-            .then(left.span.end.cmp(&right.span.end))
+            .then(right.span.end.cmp(&left.span.end))
     });
     let mut out = String::with_capacity(text.len());
     let mut cursor = 0usize;

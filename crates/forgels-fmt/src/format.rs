@@ -2,9 +2,14 @@ use forgels_syntax::Span;
 
 use super::edit::{FormatOutcome, apply};
 use super::trim::trim_edits;
+use super::whitespace::space_edits;
+use super::wrap::wrap_edits;
 
 // Solidity-only V1 entry point. Noir stays out: no second grammar is
-// wired until the formatter rules settle.
+// wired until the formatter rules settle. Pipeline loops comment guard,
+// whitespace edits, wrap edits, trim edits to fixpoint (cap 4) so one
+// call yields spaced plus wrapped text. Width 120 and indent 4 are
+// fixed with no config keys.
 pub fn format_text(text: &str) -> FormatOutcome {
     if text.is_empty() {
         return FormatOutcome {
@@ -13,9 +18,34 @@ pub fn format_text(text: &str) -> FormatOutcome {
             skipped: 0,
         };
     }
-    let guard = comment_spans(text);
-    let edits = trim_edits(text, &guard);
-    apply(text, &edits)
+    let mut current = text.to_string();
+    let mut applied_total = 0usize;
+    let mut skipped_total = 0usize;
+    for _ in 0..4 {
+        let guard = comment_spans(&current);
+        let mut edits = space_edits(&current, &guard);
+        edits.extend(wrap_edits(&current, &guard));
+        edits.extend(trim_edits(&current, &guard));
+        if edits.is_empty() {
+            break;
+        }
+        let outcome = apply(&current, &edits);
+        if outcome.applied == 0 {
+            skipped_total += outcome.skipped;
+            break;
+        }
+        applied_total += outcome.applied;
+        skipped_total += outcome.skipped;
+        if outcome.text == current {
+            break;
+        }
+        current = outcome.text;
+    }
+    FormatOutcome {
+        text: current,
+        applied: applied_total,
+        skipped: skipped_total,
+    }
 }
 
 // Minimal comment spans (`//` to newline, `/*` to close or EOF).
@@ -125,5 +155,159 @@ mod tests {
     #[test]
     fn quoted_markers_are_not_comments() {
         assert!(comment_spans("\"//\";\n").is_empty());
+    }
+
+    fn golden(input: &str) -> String {
+        format_text(input).text
+    }
+
+    fn assert_golden_idempotent(input: &str) {
+        let once = golden(input);
+        let twice = golden(&once);
+        assert_eq!(once, twice, "format idempotent for {input:?}");
+    }
+
+    #[test]
+    fn pipeline_trims_and_spaces_simple_call() {
+        let out = golden("contract C { function f() public { greet(a,b); } }   \n");
+        assert_eq!(out, "contract C { function f() public { greet(a, b); } }\n");
+        assert_golden_idempotent("contract C { function f() public { greet(a,b); } }   \n");
+    }
+
+    #[test]
+    fn pipeline_wraps_long_plain_call() {
+        let input = "contract C { function f() public { greet(aaaa, bbbb, cccc, dddd, eeee, ffff, gggg, hhhh, iiii, jjjj, kkkk, llll, mmmm, nnnn, oooo, pppp); } }\n";
+        let out = golden(input);
+        assert!(out.contains("greet(\n"), "out: {out}");
+        assert_golden_idempotent(input);
+        assert_golden_idempotent(&out);
+    }
+
+    #[test]
+    fn pipeline_wraps_long_member_call() {
+        let input = "contract C { function f() public { obj.greet(aaaa, bbbb, cccc, dddd, eeee, ffff, gggg, hhhh, iiii, jjjj, kkkk, llll, mmmm, nnnn, oooo, pppp); } }\n";
+        let out = golden(input);
+        assert!(out.contains("obj.greet(\n"), "out: {out}");
+        assert_golden_idempotent(input);
+    }
+
+    #[test]
+    fn pipeline_wraps_emit_revert_new() {
+        for input in [
+            "contract C { function f() public { emit Transfer(aaaa, bbbb, cccc, dddd, eeee, ffff, gggg, hhhh, iiii, jjjj, kkkk, llll, mmmm, nnnn, oooo); } }\n",
+            "contract C { function f() public { revert Insufficient(aaaa, bbbb, cccc, dddd, eeee, ffff, gggg, hhhh, iiii, jjjj, kkkk, llll, mmmm); } }\n",
+            "contract C { function f() public { new Vault(aaaa, bbbb, cccc, dddd, eeee, ffff, gggg, hhhh, iiii, jjjj, kkkk, llll, mmmm, nnnn); } }\n",
+        ] {
+            let out = golden(input);
+            assert!(out.contains("(\n"), "out: {out}");
+            assert_golden_idempotent(input);
+        }
+    }
+
+    #[test]
+    fn pipeline_wraps_params_and_returns() {
+        for input in [
+            "contract C { function add(uint256 aaaa, uint256 bbbb, uint256 cccc, uint256 dddd, uint256 eeee, uint256 ffff, uint256 gggg) public {} }\n",
+            "contract C { event Transfer(address aaaa, address bbbb, address cccc, address dddd, address eeee, address ffff, address gggg, address hhhh); }\n",
+            "contract C { error Insufficient(uint256 aaaa, uint256 bbbb, uint256 cccc, uint256 dddd, uint256 eeee, uint256 ffff, uint256 gggg); }\n",
+            "contract C { function f() public returns (uint256 aaaa, uint256 bbbb, uint256 cccc, uint256 dddd, uint256 eeee, uint256 ffff, uint256 gggg) {} }\n",
+        ] {
+            let out = golden(input);
+            assert!(out.contains("(\n"), "out: {out}");
+            assert_golden_idempotent(input);
+        }
+    }
+
+    #[test]
+    fn pipeline_single_arg_short_stays() {
+        let input = "contract C { function f() public { greet(a); } }\n";
+        assert_eq!(golden(input), input);
+        assert_golden_idempotent(input);
+    }
+
+    #[test]
+    fn pipeline_comment_blocks_wrap() {
+        let input = "contract C { function f() public { greet(aaaa, /* note */ bbbb, cccc, dddd, eeee, ffff, gggg, hhhh, iiii, jjjj, kkkk, llll, mmmm, nnnn); } }\n";
+        assert_eq!(golden(input), input);
+        assert_golden_idempotent(input);
+    }
+
+    #[test]
+    fn pipeline_whitespace_rules_apply() {
+        assert_eq!(golden("uint a=1;\n"), "uint a = 1;\n");
+        assert_eq!(golden("a ** b;\n"), "a**b;\n");
+        assert_eq!(golden("if(a){}\n"), "if (a) {}\n");
+        assert_eq!(
+            golden("mapping (address => uint) m;\n"),
+            "mapping(address => uint) m;\n"
+        );
+        assert_eq!(golden("receive () {}\n"), "receive() {}\n");
+        for sample in [
+            "uint a=1;\n",
+            "a ** b;\n",
+            "if(a){}\n",
+            "mapping (address => uint) m;\n",
+            "receive () {}\n",
+        ] {
+            assert_golden_idempotent(sample);
+        }
+    }
+
+    #[test]
+    fn pipeline_format_is_idempotent_on_all_variants() {
+        for sample in [
+            "contract C { function f() public { greet(a, b); } }\n",
+            "contract C { function f() public { greet(aaaa, bbbb, cccc, dddd, eeee, ffff, gggg, hhhh, iiii, jjjj, kkkk, llll, mmmm, nnnn, oooo, pppp); } }\n",
+            "contract C { function f() public { obj.greet(a, b); } }\n",
+            "contract C { function f() public { emit Transfer(a, b); } }\n",
+            "contract C { function f() public { revert Insufficient(a, b); } }\n",
+            "contract C { function f() public { new Vault(a, b); } }\n",
+            "uint a=1;\n",
+            "a ** b;\n",
+            "if(a){}\n",
+            "}else {\n",
+            "receive () {}\n",
+            "mapping (address => uint) m;\n",
+        ] {
+            assert_golden_idempotent(sample);
+        }
+    }
+
+    #[test]
+    fn pipeline_spacing_inside_wrap_is_stable_in_one_call() {
+        let input = "contract C { function f() public { greet(a=1, b=2, cccc, dddd, eeee, ffff, gggg, hhhh, iiii, jjjj, kkkk, llll, mmmm, nnnn, oooo, pppp); } }\n";
+        let once = golden(input);
+        assert!(once.contains("greet(\n"), "out: {once}");
+        assert!(once.contains("a = 1,"), "out: {once}");
+        assert!(once.contains("b = 2,"), "out: {once}");
+        let twice = golden(&once);
+        assert_eq!(once, twice, "one call converges for {input:?}");
+    }
+
+    #[test]
+    fn pipeline_single_arg_boundary_120_stays_121_wraps() {
+        let prefix = "contract C { function f() public { greet(";
+        let suffix = "); } }";
+        let at_120 = format!("{prefix}{}{suffix}\n", "a".repeat(73));
+        let over_120 = format!("{prefix}{}{suffix}\n", "a".repeat(74));
+        assert_eq!(at_120.lines().next().unwrap_or("").chars().count(), 120);
+        assert_eq!(over_120.lines().next().unwrap_or("").chars().count(), 121);
+        assert_eq!(golden(&at_120), at_120);
+        let wrapped = golden(&over_120);
+        assert!(wrapped.contains("greet(\n"), "out: {wrapped}");
+        assert_golden_idempotent(&at_120);
+        assert_golden_idempotent(&over_120);
+    }
+
+    #[test]
+    fn pipeline_heritage_and_modifier_wrap_as_plain_calls() {
+        let heritage = "contract C is Base(aaaa, bbbb, cccc, dddd, eeee, ffff, gggg, hhhh, iiii, jjjj, kkkk, llll, mmmm, nnnn, oooo, pppp, qqqq, rrrr) {}\n";
+        let modifier_def = "contract C { modifier myMod(aaaa, bbbb, cccc, dddd, eeee, ffff, gggg, hhhh, iiii, jjjj, kkkk, llll, mmmm, nnnn, oooo, pppp, qqqq) {} }\n";
+        let heritage_out = golden(heritage);
+        assert!(heritage_out.contains("Base(\n"), "out: {heritage_out}");
+        let modifier_out = golden(modifier_def);
+        assert!(modifier_out.contains("myMod(\n"), "out: {modifier_out}");
+        assert_golden_idempotent(heritage);
+        assert_golden_idempotent(modifier_def);
     }
 }

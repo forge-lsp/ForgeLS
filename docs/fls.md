@@ -14,7 +14,7 @@ fls init [--force]
 - `lsp` runs the LSP server on stdio with Solidity wired in.
 - `check` lints Solidity files. No path scans cwd recursively for `*.sol`.
 - `format` formats Solidity files. No flag prints formatted text to stdout without writing.
-- `format` P0 scope is trim only: trailing spaces and tabs removed, file ends with exactly one `\n`. Full layout rules land in P1-P3.
+- `format` V1 scope is trim plus spacing plus 120-column call wrap. See `docs/formatter.md`.
 - Explicit format paths accept files or dirs. Output is sorted and deduped.
 - Walk skips `node_modules`, `out`, `cache`, `artifacts`, `coverage` at any depth.
 - Skip applies to every scan including explicit dirs; explicit files are always honored.
