@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use forgels_fmt::format_text;
 
-use super::config::LoadedConfig;
+use super::config::{LoadedConfig, format_options_from};
 use super::run::{path_display, write_to};
 use super::walk::collect_files;
 use crate::cli::FormatArgs;
@@ -31,6 +31,7 @@ pub fn run(args: &FormatArgs, cwd: &Path, config: &LoadedConfig) -> i32 {
     for warning in &config.warnings {
         eprintln!("{warning}");
     }
+    let options = format_options_from(&config.format);
     for path in &args.paths {
         if path.is_file() && path.extension().and_then(|ext| ext.to_str()) == Some("sol") {
             continue;
@@ -56,7 +57,7 @@ pub fn run(args: &FormatArgs, cwd: &Path, config: &LoadedConfig) -> i32 {
     if args.check {
         let mut changed: Vec<String> = Vec::new();
         for (path, text) in &texts {
-            if format_text(text).text != *text {
+            if format_text(text, &options).text != *text {
                 changed.push(path_display(cwd, path));
             }
         }
@@ -76,7 +77,7 @@ pub fn run(args: &FormatArgs, cwd: &Path, config: &LoadedConfig) -> i32 {
     }
     if args.write {
         for (path, text) in &texts {
-            let formatted = format_text(text).text;
+            let formatted = format_text(text, &options).text;
             if formatted == *text {
                 continue;
             }
@@ -89,7 +90,7 @@ pub fn run(args: &FormatArgs, cwd: &Path, config: &LoadedConfig) -> i32 {
     }
     let mut out = String::new();
     for (_, text) in &texts {
-        out.push_str(&format_text(text).text);
+        out.push_str(&format_text(text, &options).text);
     }
     if write_to(&mut std::io::stdout(), &out).is_err() {
         eprintln!("fls: cannot write output");

@@ -96,7 +96,7 @@ fn write_change_trims_and_adds_eof() {
     assert_eq!(out.status.code(), Some(0));
     assert_eq!(
         std::fs::read_to_string(&file).expect("read"),
-        "pragma solidity ^0.8.0;\ncontract A {}\n"
+        "pragma solidity ^0.8.0;\n\n\ncontract A {}\n"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -151,7 +151,7 @@ fn default_prints_formatted_stdout_without_writing() {
     assert_eq!(out.status.code(), Some(0));
     assert_eq!(
         String::from_utf8_lossy(&out.stdout),
-        "pragma solidity ^0.8.0;\ncontract A {}\n"
+        "pragma solidity ^0.8.0;\n\n\ncontract A {}\n"
     );
     assert_eq!(
         std::fs::read_to_string(&file).expect("read"),
@@ -177,5 +177,90 @@ fn format_is_idempotent_on_fixtures() {
         let check = run_in(&dir, &["format", "--check", file.to_str().expect("utf8")]);
         assert_eq!(check.status.code(), Some(0), "stable for {name}");
     }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+const MESSY_SRC: &str = "contract A {}\ncontract C {\nfunction f() public {\ngreet(a,b);\n}\nfunction g() public {\ngreet(aaaa, bbbb, cccc, dddd, eeee, ffff, gggg, hhhh, iiii, jjjj, kkkk, llll, mmmm, nnnn, oooo, pppp, qqqq, rrrr, ssss, tttt);\n}\n}\n";
+
+const MESSY_EXPECTED: &str = "contract A {}\n\n\ncontract C {\n    function f() public {\n        greet(a, b);\n    }\n\n    function g() public {\n        greet(\n            aaaa,\n            bbbb,\n            cccc,\n            dddd,\n            eeee,\n            ffff,\n            gggg,\n            hhhh,\n            iiii,\n            jjjj,\n            kkkk,\n            llll,\n            mmmm,\n            nnnn,\n            oooo,\n            pppp,\n            qqqq,\n            rrrr,\n            ssss,\n            tttt\n        );\n    }\n}\n";
+
+#[test]
+fn messy_fixture_formats_and_stays_stable() {
+    let dir = fresh_dir("fmt-messy");
+    let file = dir.join("messy.sol");
+    write_file(&file, MESSY_SRC);
+    let first = run_in(&dir, &["format", "--write", file.to_str().expect("utf8")]);
+    assert_eq!(first.status.code(), Some(0));
+    assert_eq!(
+        std::fs::read_to_string(&file).expect("read once"),
+        MESSY_EXPECTED
+    );
+    let second = run_in(&dir, &["format", "--write", file.to_str().expect("utf8")]);
+    assert_eq!(second.status.code(), Some(0));
+    assert_eq!(
+        std::fs::read_to_string(&file).expect("read twice"),
+        MESSY_EXPECTED,
+        "second write byte-identical"
+    );
+    let check = run_in(&dir, &["format", "--check", file.to_str().expect("utf8")]);
+    assert_eq!(check.status.code(), Some(0));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn crlf_tab_style_fixture_formats_and_stays_stable() {
+    let dir = fresh_dir("fmt-crlf-tab");
+    write_file(
+        &dir.join("fls.json"),
+        "{\"lint\":{\"includes\":[],\"excludes\":[],\"rules\":{}},\"format\":{\"includes\":[],\"excludes\":[],\"line_length\":120,\"tab_width\":4,\"style\":\"tab\",\"rules\":{}}}",
+    );
+    let file = dir.join("messy.sol");
+    write_file(
+        &file,
+        "contract A {}\r\ncontract C {\r\nfunction f() public {\r\ngreet(a,b);\r\n}\r\n}\r\n",
+    );
+    let expected = "contract A {}\r\n\r\n\r\ncontract C {\r\n\tfunction f() public {\r\n\t\tgreet(a, b);\r\n\t}\r\n}\n";
+    let first = run_in(&dir, &["format", "--write", file.to_str().expect("utf8")]);
+    assert_eq!(first.status.code(), Some(0));
+    assert_eq!(std::fs::read_to_string(&file).expect("read once"), expected);
+    let second = run_in(&dir, &["format", "--write", file.to_str().expect("utf8")]);
+    assert_eq!(second.status.code(), Some(0));
+    assert_eq!(
+        std::fs::read_to_string(&file).expect("read twice"),
+        expected,
+        "second write byte-identical"
+    );
+    let check = run_in(&dir, &["format", "--check", file.to_str().expect("utf8")]);
+    assert_eq!(check.status.code(), Some(0));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn formatted_messy_has_no_blank_or_length_warns() {
+    // Dep-safe cross check via CLI JSON output: no new API, no new deps.
+    let dir = fresh_dir("fmt-cross");
+    let file = dir.join("messy.sol");
+    write_file(&file, MESSY_SRC);
+    let formatted = run_in(&dir, &["format", "--write", file.to_str().expect("utf8")]);
+    assert_eq!(formatted.status.code(), Some(0));
+    let checked = run_in(&dir, &["check", "--json", file.to_str().expect("utf8")]);
+    let stdout = String::from_utf8_lossy(&checked.stdout);
+    let value: serde_json::Value = serde_json::from_str(&stdout).expect("valid json");
+    let diags = value
+        .pointer("/files/0/diagnostics")
+        .and_then(|list| list.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let hits: Vec<&serde_json::Value> = diags
+        .iter()
+        .filter(|item| {
+            item.pointer("/rule") == Some(&serde_json::json!("style/blank-lines"))
+                || item.pointer("/rule") == Some(&serde_json::json!("style/line-length"))
+        })
+        .collect();
+    assert!(
+        hits.is_empty(),
+        "formatted output keeps no blank or length warns: {hits:?}"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }

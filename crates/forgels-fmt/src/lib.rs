@@ -1,16 +1,20 @@
-//! forgels-fmt: Solidity-only formatter core (V1 trim plus space plus wrap).
+//! forgels-fmt: Solidity-only formatter core.
 //!
-//! V1 owns trim plus token-gap spacing plus 120-column call wrapping.
-//! No blank or indent engine and no config keys: width 120 and indent
-//! 4 are fixed. Format config lives in `forgels-lint::FormatConfig`;
-//! this crate defines no config type and takes plain text so the core
-//! stays dependency light.
+//! Owns trim plus token-gap spacing plus call wrapping plus blank
+//! lines plus brace-depth indent. Width and indent come from
+//! `FormatOptions` (default 120 and 4 spaces). Format config lives in
+//! `forgels-lint::FormatConfig`; this crate takes plain options so
+//! the core stays dependency light.
 
+pub mod blank;
 pub mod edit;
 pub mod format;
+pub mod indent;
+pub mod options;
 pub mod trim;
 pub mod whitespace;
 pub mod wrap;
 
 pub use edit::{FormatEdit, FormatOutcome, apply};
-pub use format::format_text;
+pub use format::{comment_spans, format_text};
+pub use options::{FormatOptions, IndentStyle};

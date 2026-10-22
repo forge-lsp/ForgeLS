@@ -14,7 +14,7 @@ fls init [--force]
 - `lsp` runs the LSP server on stdio with Solidity wired in.
 - `check` lints Solidity files. No path scans cwd recursively for `*.sol`.
 - `format` formats Solidity files. No flag prints formatted text to stdout without writing.
-- `format` V1 scope is trim plus spacing plus 120-column call wrap. See `docs/formatter.md`.
+- `format` scope is trim plus spacing plus wrap plus blank plus indent. See `docs/formatter.md`.
 - Explicit format paths accept files or dirs. Output is sorted and deduped.
 - Walk skips `node_modules`, `out`, `cache`, `artifacts`, `coverage` at any depth.
 - Skip applies to every scan including explicit dirs; explicit files are always honored.
@@ -46,8 +46,17 @@ fls init [--force]
 ## Config
 
 - Precedence is `./fls.json` wins, else `./forgels.toml` lint text, else defaults.
-- `init` writes grouped `lint` plus reserved `format` via `serde_json::to_string_pretty`.
-- Lint group holds `includes`, `excludes`, and `rules`. Format group is parsed and stored only.
+- `init` writes grouped `lint` plus explicit `format` via `serde_json::to_string_pretty`.
+- Lint group holds `includes`, `excludes`, and `rules`.
+- Format group holds `includes`, `excludes`, `line_length`, `tab_width`,
+  `style`, and `rules`. Defaults are 120, 4, space. Missing keys fall back.
+- `quote_style` and `bracket_spacing` parse and store but stay unused.
+  Follow-up adds their rules.
+- Legacy `forgels.toml` yields default format only. Use `fls.json` for keys.
+- Tab style emits one `\t` per indent level; width counts tabs as `tab_width`.
+- CRLF bodies keep `\r\n`; EOF newline stays LF.
+- Unknown format keys fail fast: bad top-level keys warn plus defaults,
+  bad lint rule IDs stay operational failures.
 - Empty lint `includes` matches all files. `excludes` remove after include.
 - `check` filters scanned files by cwd-relative posix path before analysis.
 - Invalid glob patterns warn once on stderr and are ignored.

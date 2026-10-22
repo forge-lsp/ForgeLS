@@ -1,9 +1,36 @@
 use forgels_syntax::Span;
 
 use super::edit::FormatEdit;
+use super::options::FormatOptions;
 
 pub const MAX_LINE_LEN: usize = 120;
 pub const CONTINUATION_INDENT: usize = 4;
+
+// Byte spans of calls that wrap this pass. Indent skips inner lines
+// of these spans and reindents only their first lines.
+#[derive(Debug, Clone, Default)]
+pub struct WrapRegions {
+    pub spans: Vec<Span>,
+}
+
+impl WrapRegions {
+    pub fn is_empty(&self) -> bool {
+        self.spans.is_empty()
+    }
+
+    // True when a line starting at `line_start` sits inside a wrapped
+    // call but does not hold its opening paren.
+    pub fn skips_line(&self, line_start: usize) -> bool {
+        if self.spans.is_empty() {
+            return false;
+        }
+        self.spans.iter().any(|span| {
+            let start = span.start as usize;
+            let end = span.end as usize;
+            start < line_start && line_start < end
+        })
+    }
+}
 
 #[derive(Debug, Clone)]
 struct WrapTarget {
@@ -12,14 +39,20 @@ struct WrapTarget {
     args: Vec<(usize, usize)>,
 }
 
-// Collect canonical wrap edits. Textual scan only: no AST import keeps
-// `forgels-fmt` dependency light. AST marker nodes store no per-arg
-// spans today, so text slices give exact args without grammar churn.
-// Contract heritage and modifier params wrap as plain calls: the scan
-// classifies by name shape only.
-pub fn wrap_edits(text: &str, guard: &[Span]) -> Vec<FormatEdit> {
+// Collect canonical wrap edits plus wrapped regions. Textual scan
+// only: no AST import keeps `forgels-fmt` dependency light. AST
+// marker nodes store no per-arg spans today, so text slices give
+// exact args without grammar churn. Contract heritage and modifier
+// params wrap as plain calls: the scan classifies by name shape
+// only. Width uses options line length with tab-aware counting;
+// continuation uses options indent unit.
+pub fn wrap_edits(
+    text: &str,
+    guard: &[Span],
+    options: &FormatOptions,
+) -> (Vec<FormatEdit>, WrapRegions) {
     if text.is_empty() {
-        return Vec::new();
+        return (Vec::new(), WrapRegions::default());
     }
     let newline = if text.contains("\r\n") { "\r\n" } else { "\n" };
     let mut targets = Vec::new();
@@ -51,13 +84,21 @@ pub fn wrap_edits(text: &str, guard: &[Span]) -> Vec<FormatEdit> {
         kept.push(target);
     }
     let mut edits = Vec::new();
+    let mut regions = WrapRegions::default();
     for target in &kept {
-        let Some(edit) = build_edit(text, target, guard, newline) else {
+        let Some(edit) = build_edit(text, target, guard, newline, options) else {
             continue;
         };
+        let close_end = target.close + 1;
+        if target.open < close_end && close_end <= text.len() {
+            regions.spans.push(Span::new(
+                target.open as u32,
+                close_end.min(u32::MAX as usize) as u32,
+            ));
+        }
         edits.push(edit);
     }
-    edits
+    (edits, regions)
 }
 
 fn overlaps(kept: &WrapTarget, next: &WrapTarget) -> bool {
@@ -86,6 +127,7 @@ fn build_edit(
     target: &WrapTarget,
     guard: &[Span],
     newline: &str,
+    options: &FormatOptions,
 ) -> Option<FormatEdit> {
     let close_end = target.close + 1;
     if target.open >= close_end || close_end > text.len() {
@@ -97,8 +139,8 @@ fn build_edit(
     }
     let slice = text.get(target.open..close_end)?;
     let multiline = slice.contains('\n');
-    let line_len = line_len_at(text, target.open);
-    let overlong = line_len > MAX_LINE_LEN;
+    let line_len = line_len_at(text, target.open, options);
+    let overlong = line_len > options.line_length;
     let single = target.args.len() == 1;
     let trigger = if single {
         overlong
@@ -109,7 +151,7 @@ fn build_edit(
         return None;
     }
     let indent = line_indent(text, target.open);
-    let cont = format!("{indent}{}", " ".repeat(CONTINUATION_INDENT));
+    let cont = format!("{indent}{}", options.indent_unit());
     let mut arg_texts = Vec::new();
     for (start, end) in &target.args {
         let raw = text.get(*start..*end)?;
@@ -148,7 +190,7 @@ fn spans_overlap(left: Span, right: Span) -> bool {
     left.start <= right.end && left.end >= right.start
 }
 
-fn line_len_at(text: &str, offset: usize) -> usize {
+fn line_len_at(text: &str, offset: usize, options: &FormatOptions) -> usize {
     let start = text[..offset.min(text.len())]
         .rfind('\n')
         .map(|pos| pos + 1)
@@ -159,7 +201,7 @@ fn line_len_at(text: &str, offset: usize) -> usize {
         .unwrap_or(text.len());
     let line = text.get(start..end).unwrap_or("");
     let trimmed = line.strip_suffix('\r').unwrap_or(line);
-    trimmed.chars().count()
+    options.line_width(trimmed)
 }
 
 fn line_indent(text: &str, offset: usize) -> String {
@@ -507,8 +549,15 @@ mod tests {
 
     fn wrap_one(text: &str) -> String {
         let guard = comment_spans(text);
-        let edits = wrap_edits(text, &guard);
+        let opts = FormatOptions::default();
+        let (edits, _) = wrap_edits(text, &guard, &opts);
         crate::edit::apply(text, &edits).text
+    }
+
+    fn wrap_with(text: &str, opts: &FormatOptions) -> (String, WrapRegions) {
+        let guard = comment_spans(text);
+        let (edits, regions) = wrap_edits(text, &guard, opts);
+        (crate::edit::apply(text, &edits).text, regions)
     }
 
     fn long_call() -> String {
@@ -670,8 +719,66 @@ mod tests {
     fn outer_wins_over_inner() {
         let text = "contract C { function f() public { greet(bar(aaaa, bbbb, cccc, dddd, eeee, ffff, gggg, hhhh, iiii), cccc, dddd, eeee, ffff, gggg, hhhh, iiii, jjjj, kkkk, llll, mmmm); } }\n";
         let guard = comment_spans(text);
-        let edits = wrap_edits(text, &guard);
+        let opts = FormatOptions::default();
+        let (edits, regions) = wrap_edits(text, &guard, &opts);
         assert_eq!(edits.len(), 1, "outer only: {edits:?}");
+        assert_eq!(regions.spans.len(), 1);
         assert_idempotent(text);
+    }
+
+    #[test]
+    fn custom_threshold_wraps_early() {
+        let opts = FormatOptions {
+            line_length: 40,
+            ..Default::default()
+        };
+        let text = "contract C { greet(aaaa, bbbb, cccc, dddd); }\n";
+        assert!(text.chars().count() > 40);
+        let (out, regions) = wrap_with(text, &opts);
+        assert!(out.contains("greet(\n"), "out: {out}");
+        assert!(!regions.is_empty());
+        let once = wrap_with(&out, &opts).0;
+        assert_eq!(out, once);
+    }
+
+    #[test]
+    fn custom_threshold_leaves_short_lines() {
+        let opts = FormatOptions {
+            line_length: 200,
+            ..Default::default()
+        };
+        let text = "contract C { function f() public { greet(aaaa, bbbb); } }\n";
+        let (out, regions) = wrap_with(text, &opts);
+        assert_eq!(out, text);
+        assert!(regions.is_empty());
+    }
+
+    #[test]
+    fn tab_style_uses_tab_continuation() {
+        let opts = FormatOptions {
+            style: crate::options::IndentStyle::Tab,
+            ..Default::default()
+        };
+        let text = "contract C { function f() public { greet(aaaa, bbbb, cccc, dddd, eeee, ffff, gggg, hhhh, iiii, jjjj, kkkk, llll, mmmm, nnnn, oooo, pppp); } }\n";
+        let (out, _) = wrap_with(text, &opts);
+        assert!(out.contains("greet(\n"), "out: {out}");
+        assert!(out.contains("\n\taaaa,"), "out: {out}");
+        let twice = wrap_with(&out, &opts).0;
+        assert_eq!(out, twice);
+    }
+
+    #[test]
+    fn wrap_regions_skip_inner_lines() {
+        let opts = FormatOptions::default();
+        let text = "contract C { function f() public { greet(a, b,\n c); } }\n";
+        let (_, regions) = wrap_with(text, &opts);
+        assert!(!regions.is_empty());
+        let lines: Vec<usize> = crate::whitespace::split_lines(text)
+            .iter()
+            .map(|line| line.start)
+            .collect();
+        assert!(lines.len() >= 2);
+        assert!(!regions.skips_line(lines[0]));
+        assert!(regions.skips_line(lines[1]));
     }
 }

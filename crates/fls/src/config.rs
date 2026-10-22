@@ -2,18 +2,42 @@ use std::path::{Path, PathBuf};
 
 use forgels_common::paths::Remapping;
 use forgels_core::Config;
+use forgels_fmt::{FormatOptions, IndentStyle};
 use forgels_lint::{FlsConfig, FormatConfig, LintConfig, LintConfigError};
 
 /// Loaded lint setup plus import resolution base.
 pub struct LoadedConfig {
     pub lint: LintConfig,
-    // Unconsumed in P0: the formatter reads plain text only.
-    // Validation of rule keys lands in P3.
-    #[allow(dead_code)]
     pub format: FormatConfig,
     pub root: PathBuf,
     pub remappings: Vec<Remapping>,
     pub warnings: Vec<String>,
+}
+
+/// Map typed format config to engine options. Missing keys fall back
+/// to engine defaults (120 columns, width 4, space indent).
+pub fn format_options_from(config: &FormatConfig) -> FormatOptions {
+    let base = FormatOptions::default();
+    let line_length = config.line_length.unwrap_or(base.line_length);
+    let indent_width = config.tab_width.unwrap_or(base.indent_width);
+    let style = config
+        .style
+        .as_deref()
+        .and_then(IndentStyle::parse)
+        .unwrap_or(base.style);
+    FormatOptions {
+        line_length: if line_length == 0 {
+            base.line_length
+        } else {
+            line_length
+        },
+        indent_width: if indent_width == 0 {
+            base.indent_width
+        } else {
+            indent_width
+        },
+        style,
+    }
 }
 
 /// Load grouped config with cwd-only discovery (no upward search).
@@ -74,6 +98,8 @@ fn load_fls_json(cwd: &Path, path: &Path) -> Result<LoadedConfig, String> {
 }
 
 fn load_legacy_toml(cwd: &Path) -> Result<LoadedConfig, String> {
+    // Legacy TOML carries lint only and always yields default format.
+    // Typed format keys live in fls.json going forward.
     let path = cwd.join("forgels.toml");
     let text = match std::fs::read_to_string(&path) {
         Ok(text) => text,
