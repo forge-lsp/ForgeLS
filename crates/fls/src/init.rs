@@ -5,7 +5,8 @@ use forgels_lint::RuleId;
 use crate::cli::InitArgs;
 
 // Scaffold ./fls.json with explicit defaults: all lint rules at err,
-// lint includes `**/*.sol`, empty excludes, plus an empty format group.
+// lint includes `**/*.sol`, empty excludes, plus an explicit format
+// group (line length 120, tab width 4, space style).
 pub fn scaffold(cwd: &Path, args: &InitArgs) -> i32 {
     let path = cwd.join("fls.json");
     if path.exists() && !args.force {
@@ -28,6 +29,9 @@ pub fn scaffold(cwd: &Path, args: &InitArgs) -> i32 {
         "format": {
             "includes": [],
             "excludes": [],
+            "line_length": 120,
+            "tab_width": 4,
+            "style": "space",
             "rules": {},
         },
     });

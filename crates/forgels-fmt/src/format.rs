@@ -1,16 +1,18 @@
 use forgels_syntax::Span;
 
+use super::blank::blank_edits;
 use super::edit::{FormatOutcome, apply};
+use super::indent::indent_edits;
+use super::options::FormatOptions;
 use super::trim::trim_edits;
 use super::whitespace::space_edits;
 use super::wrap::wrap_edits;
 
-// Solidity-only V1 entry point. Noir stays out: no second grammar is
-// wired until the formatter rules settle. Pipeline loops comment guard,
-// whitespace edits, wrap edits, trim edits to fixpoint (cap 4) so one
-// call yields spaced plus wrapped text. Width 120 and indent 4 are
-// fixed with no config keys.
-pub fn format_text(text: &str) -> FormatOutcome {
+// Solidity-only entry point. Noir stays out: no second grammar is
+// wired until the formatter rules settle. Each pass recomputes guard
+// spans then space, wrap (edits plus regions), blank, indent, trim
+// and applies once. Fixpoint caps at 4 with early breaks.
+pub fn format_text(text: &str, options: &FormatOptions) -> FormatOutcome {
     if text.is_empty() {
         return FormatOutcome {
             text: String::new(),
@@ -24,7 +26,10 @@ pub fn format_text(text: &str) -> FormatOutcome {
     for _ in 0..4 {
         let guard = comment_spans(&current);
         let mut edits = space_edits(&current, &guard);
-        edits.extend(wrap_edits(&current, &guard));
+        let (mut wrap, regions) = wrap_edits(&current, &guard, options);
+        edits.append(&mut wrap);
+        edits.extend(blank_edits(&current));
+        edits.extend(indent_edits(&current, &regions, options));
         edits.extend(trim_edits(&current, &guard));
         if edits.is_empty() {
             break;
@@ -51,7 +56,7 @@ pub fn format_text(text: &str) -> FormatOutcome {
 // Minimal comment spans (`//` to newline, `/*` to close or EOF).
 // Guards trim edits only; full re-lex stays P2. Strings are skipped
 // so quoted markers never count as comments.
-pub(crate) fn comment_spans(text: &str) -> Vec<Span> {
+pub fn comment_spans(text: &str) -> Vec<Span> {
     let bytes = text.as_bytes();
     let mut out = Vec::new();
     let mut index = 0usize;
@@ -103,28 +108,32 @@ pub(crate) fn comment_spans(text: &str) -> Vec<Span> {
 mod tests {
     use super::*;
 
+    fn opts() -> FormatOptions {
+        FormatOptions::default()
+    }
+
     #[test]
     fn clean_text_has_no_edits() {
-        let out = format_text("contract A {}\n");
+        let out = format_text("contract A {}\n", &opts());
         assert_eq!(out.text, "contract A {}\n");
         assert_eq!(out.applied, 0);
     }
 
     #[test]
     fn trims_and_ends_with_single_newline() {
-        let out = format_text("contract A {}   ");
+        let out = format_text("contract A {}   ", &opts());
         assert_eq!(out.text, "contract A {}\n");
     }
 
     #[test]
     fn comment_line_keeps_trailing_spaces() {
-        let out = format_text("// hi   \n");
+        let out = format_text("// hi   \n", &opts());
         assert_eq!(out.text, "// hi   \n");
     }
 
     #[test]
     fn code_line_still_trims() {
-        let out = format_text("uint x;   \n");
+        let out = format_text("uint x;   \n", &opts());
         assert_eq!(out.text, "uint x;\n");
     }
 
@@ -139,8 +148,8 @@ mod tests {
             "// hi   \n",
             "uint x;\t\n",
         ] {
-            let once = format_text(sample).text;
-            let twice = format_text(&once).text;
+            let once = format_text(sample, &opts()).text;
+            let twice = format_text(&once, &opts()).text;
             assert_eq!(once, twice, "idempotent for {sample:?}");
         }
     }
@@ -148,7 +157,7 @@ mod tests {
     #[test]
     fn block_comment_guards_covered_lines() {
         let text = "/* a;   \n   b; */\nuint x;   \n";
-        let out = format_text(text);
+        let out = format_text(text, &opts());
         assert_eq!(out.text, "/* a;   \n   b; */\nuint x;\n");
     }
 
@@ -158,7 +167,7 @@ mod tests {
     }
 
     fn golden(input: &str) -> String {
-        format_text(input).text
+        format_text(input, &opts()).text
     }
 
     fn assert_golden_idempotent(input: &str) {
@@ -309,5 +318,32 @@ mod tests {
         assert!(modifier_out.contains("myMod(\n"), "out: {modifier_out}");
         assert_golden_idempotent(heritage);
         assert_golden_idempotent(modifier_def);
+    }
+
+    #[test]
+    fn pipeline_combined_blank_indent_wrap() {
+        let input = "contract A {}\ncontract C {\nfunction f() public { greet(a,b); }\nfunction g() public { greet(aaaa, bbbb, cccc, dddd, eeee, ffff, gggg, hhhh, iiii, jjjj, kkkk, llll, mmmm, nnnn, oooo, pppp); } }\n";
+        let out = golden(input);
+        assert!(
+            out.contains("contract A {}\n\n\ncontract C {"),
+            "out: {out}"
+        );
+        assert!(out.contains("greet(a, b)"), "out: {out}");
+        assert!(out.contains("greet(\n"), "out: {out}");
+        assert_golden_idempotent(input);
+        assert_golden_idempotent(&out);
+    }
+
+    #[test]
+    fn pipeline_tab_style_indents_and_wraps() {
+        let tab = FormatOptions {
+            style: crate::options::IndentStyle::Tab,
+            ..Default::default()
+        };
+        let input = "contract C {\nuint a;\n}\n";
+        let once = format_text(input, &tab).text;
+        assert_eq!(once, "contract C {\n\tuint a;\n}\n");
+        let twice = format_text(&once, &tab).text;
+        assert_eq!(once, twice);
     }
 }

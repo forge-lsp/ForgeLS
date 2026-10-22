@@ -55,13 +55,19 @@ pub struct LintConfig {
     pub excludes: Vec<String>,
 }
 
-// Reserved format group. Parsed and stored, never consumed in V1.
-// The formatter epic validates rule keys later.
+// Typed format group. `line_length`, `tab_width`, and `style` feed
+// the formatter; `quote_style` and `bracket_spacing` are parsed and
+// stored but never consumed (follow-up: quote and bracket rules).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct FormatConfig {
     pub includes: Vec<String>,
     pub excludes: Vec<String>,
     pub rules: HashMap<String, String>,
+    pub line_length: Option<usize>,
+    pub tab_width: Option<usize>,
+    pub style: Option<String>,
+    pub quote_style: Option<String>,
+    pub bracket_spacing: Option<String>,
 }
 
 // Grouped `fls.json` file: lint plus reserved format.
@@ -201,16 +207,69 @@ fn parse_lint_value(value: &Value) -> Result<LintConfig, LintConfigError> {
 }
 
 fn parse_format_value(value: &Value) -> Result<FormatConfig, LintConfigError> {
-    if !value.is_object() {
-        return Err(LintConfigError::Parse(
-            "format must be an object".to_string(),
-        ));
+    let table = value
+        .as_object()
+        .ok_or_else(|| LintConfigError::Parse("format must be an object".to_string()))?;
+    const KNOWN: &[&str] = &[
+        "includes",
+        "excludes",
+        "rules",
+        "line_length",
+        "tab_width",
+        "style",
+        "quote_style",
+        "bracket_spacing",
+    ];
+    for key in table.keys() {
+        if !KNOWN.contains(&key.as_str()) {
+            return Err(LintConfigError::Parse(format!("unknown format key: {key}")));
+        }
     }
     let mut out = FormatConfig {
         includes: string_list(value, "format", "includes")?,
         excludes: string_list(value, "format", "excludes")?,
         ..Default::default()
     };
+    if let Some(raw) = table.get("line_length") {
+        out.line_length = Some(parse_format_usize(raw, "line_length")?);
+        if out.line_length == Some(0) {
+            return Err(LintConfigError::Parse(
+                "format line_length must be above 0".to_string(),
+            ));
+        }
+    }
+    if let Some(raw) = table.get("tab_width") {
+        let width = parse_format_usize(raw, "tab_width")?;
+        if width == 0 || width > 8 {
+            return Err(LintConfigError::Parse(
+                "format tab_width must be 1 to 8".to_string(),
+            ));
+        }
+        out.tab_width = Some(width);
+    }
+    if let Some(raw) = table.get("style") {
+        let name = raw
+            .as_str()
+            .ok_or_else(|| LintConfigError::Parse("format style must be a string".to_string()))?;
+        if name != "space" && name != "tab" {
+            return Err(LintConfigError::Parse(
+                "format style must be space or tab".to_string(),
+            ));
+        }
+        out.style = Some(name.to_string());
+    }
+    if let Some(raw) = table.get("quote_style") {
+        let name = raw.as_str().ok_or_else(|| {
+            LintConfigError::Parse("format quote_style must be a string".to_string())
+        })?;
+        out.quote_style = Some(name.to_string());
+    }
+    if let Some(raw) = table.get("bracket_spacing") {
+        let name = raw.as_str().ok_or_else(|| {
+            LintConfigError::Parse("format bracket_spacing must be a string".to_string())
+        })?;
+        out.bracket_spacing = Some(name.to_string());
+    }
     let Some(rules) = value.get("rules") else {
         return Ok(out);
     };
@@ -218,12 +277,87 @@ fn parse_format_value(value: &Value) -> Result<FormatConfig, LintConfigError> {
         .as_object()
         .ok_or_else(|| LintConfigError::Parse("format rules must be an object".to_string()))?;
     for (key, val) in rules {
+        if ![
+            "line_length",
+            "tab_width",
+            "style",
+            "quote_style",
+            "bracket_spacing",
+        ]
+        .contains(&key.as_str())
+        {
+            return Err(LintConfigError::UnknownRule(key.clone()));
+        }
         let raw = val
             .as_str()
             .ok_or_else(|| LintConfigError::Parse(format!("format rule {key} must be a string")))?;
+        match key.as_str() {
+            "line_length" => {
+                let parsed: usize = raw.parse().map_err(|_| {
+                    LintConfigError::Parse(format!("format rule {key} must be a number"))
+                })?;
+                if parsed == 0 {
+                    return Err(LintConfigError::Parse(
+                        "format line_length must be above 0".to_string(),
+                    ));
+                }
+                if out.line_length.is_none() {
+                    out.line_length = Some(parsed);
+                }
+            }
+            "tab_width" => {
+                let parsed: usize = raw.parse().map_err(|_| {
+                    LintConfigError::Parse(format!("format rule {key} must be a number"))
+                })?;
+                if parsed == 0 || parsed > 8 {
+                    return Err(LintConfigError::Parse(
+                        "format tab_width must be 1 to 8".to_string(),
+                    ));
+                }
+                if out.tab_width.is_none() {
+                    out.tab_width = Some(parsed);
+                }
+            }
+            "style" => {
+                if raw != "space" && raw != "tab" {
+                    return Err(LintConfigError::Parse(
+                        "format style must be space or tab".to_string(),
+                    ));
+                }
+                if out.style.is_none() {
+                    out.style = Some(raw.to_string());
+                }
+            }
+            "quote_style" | "bracket_spacing" => {
+                if out.quote_style.is_none() && key == "quote_style" {
+                    out.quote_style = Some(raw.to_string());
+                }
+                if out.bracket_spacing.is_none() && key == "bracket_spacing" {
+                    out.bracket_spacing = Some(raw.to_string());
+                }
+            }
+            _ => {}
+        }
         out.rules.insert(key.clone(), raw.to_string());
     }
     Ok(out)
+}
+
+fn parse_format_usize(raw: &Value, key: &str) -> Result<usize, LintConfigError> {
+    if let Some(num) = raw.as_u64() {
+        let value = num as usize;
+        if num > usize::MAX as u64 {
+            return Err(LintConfigError::Parse(format!(
+                "format {key} must be a number"
+            )));
+        }
+        return Ok(value);
+    }
+    let text = raw
+        .as_str()
+        .ok_or_else(|| LintConfigError::Parse(format!("format {key} must be a number")))?;
+    text.parse()
+        .map_err(|_| LintConfigError::Parse(format!("format {key} must be a number")))
 }
 
 // Config failure: bad TOML, unknown rule ID, or bad level string.
@@ -328,13 +462,38 @@ mod tests {
     }
 
     #[test]
-    fn json_format_group_stores_raw_without_validation() {
-        let text = r#"{"format":{"includes":[],"excludes":[],"rules":{"future/rule":"terse"}}}"#;
+    fn json_format_typed_keys_parse_and_validate() {
+        let text = r#"{"format":{"line_length":120,"tab_width":4,"style":"space","quote_style":"double","bracket_spacing":"tight"}}"#;
         let full = FlsConfig::parse_json(text).expect("parses");
-        assert_eq!(
-            full.format.rules.get("future/rule"),
-            Some(&"terse".to_string())
-        );
+        assert_eq!(full.format.line_length, Some(120));
+        assert_eq!(full.format.tab_width, Some(4));
+        assert_eq!(full.format.style, Some("space".to_string()));
+        assert_eq!(full.format.quote_style, Some("double".to_string()));
+        assert_eq!(full.format.bracket_spacing, Some("tight".to_string()));
+    }
+
+    #[test]
+    fn json_format_unknown_keys_fail_fast() {
+        // Intended break: raw future-rule store now rejects unknown keys.
+        let err = FlsConfig::parse_json(r#"{"format":{"rules":{"future/rule":"terse"}}}"#)
+            .expect_err("unknown format rule fails");
+        assert_eq!(err, LintConfigError::UnknownRule("future/rule".to_string()));
+        let err = FlsConfig::parse_json(r#"{"format":{"nope":1}}"#)
+            .expect_err("unknown top-level format key fails");
+        assert!(matches!(err, LintConfigError::Parse(_)));
+    }
+
+    #[test]
+    fn json_format_ranges_validate() {
+        let err = FlsConfig::parse_json(r#"{"format":{"line_length":0}}"#)
+            .expect_err("zero length fails");
+        assert!(matches!(err, LintConfigError::Parse(_)));
+        let err =
+            FlsConfig::parse_json(r#"{"format":{"tab_width":9}}"#).expect_err("wide tab fails");
+        assert!(matches!(err, LintConfigError::Parse(_)));
+        let err =
+            FlsConfig::parse_json(r#"{"format":{"style":"two"}}"#).expect_err("bad style fails");
+        assert!(matches!(err, LintConfigError::Parse(_)));
     }
 
     #[test]
