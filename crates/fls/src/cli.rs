@@ -19,7 +19,7 @@ pub enum Command {
     Lsp(LspArgs),
     /// Lint Solidity files.
     Check(CheckArgs),
-    /// Format Solidity files (P0: trim trailing whitespace plus EOF newline only, full rules P1-P3).
+    /// Format Solidity files (V1: trim plus spacing plus 120-column wrap).
     Format(FormatArgs),
     /// Scaffold ./fls.json with default lint levels.
     Init(InitArgs),

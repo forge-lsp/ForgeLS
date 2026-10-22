@@ -48,6 +48,18 @@ fn idempotency_fixtures() -> Vec<(&'static str, String)> {
         ("missing-eof", "contract A {}".to_string()),
         ("crlf", "contract A {}\r\ncontract B {}  \r\n".to_string()),
         ("empty", String::new()),
+        ("space-assign", "contract C { uint a=1; }\n".to_string()),
+        ("space-comma", "contract C { function f() public { greet(a,b); } }\n".to_string()),
+        ("space-control", "contract C { function f() public { if(a){} } }\n".to_string()),
+        ("space-glue", "contract C { mapping (address => uint) m; }\n".to_string()),
+        (
+            "wrap-plain",
+            "contract C { function f() public { greet(aaaa, bbbb, cccc, dddd, eeee, ffff, gggg, hhhh, iiii, jjjj, kkkk, llll, mmmm, nnnn, oooo, pppp); } }\n".to_string(),
+        ),
+        (
+            "wrap-split",
+            "contract C { function f() public { greet(a, b,\n c); } }\n".to_string(),
+        ),
     ]
 }
 
