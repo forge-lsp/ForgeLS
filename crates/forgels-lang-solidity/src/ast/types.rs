@@ -1,5 +1,6 @@
 use super::emits::EmitStmt;
 use super::members::{LocalVar, MemberExpr};
+use super::statements::is_statement_kind;
 use super::{CallStmt, NewStmt, RevertStmt, SolidityNode, cast_node};
 use forgels_syntax::{AstNode, SyntaxElement, SyntaxNode};
 
@@ -70,12 +71,14 @@ fn join_type_text(parts: &[&str]) -> String {
 
 /// Function or lone block body. Children hold LocalVar, Param (try
 /// returns plus catch params in the `try` wrapper only), Call, Emit,
-/// Revert, New, Member, and nested Block nodes; other statements are
-/// skipped but stay inside the span. Nested blocks come from bare
-/// `{ ... }` groups and from `if`, `for`, `while`, `unchecked`, and
-/// `try` bodies, so scopes and diagnostics recurse with `all_*` while
-/// `locals`, `calls`, `members`, `emits`, `reverts`, and `news` stay
-/// direct children only.
+/// Revert, New, Member, nested Block nodes, plus Return, Break,
+/// Continue, Delete, DoWhile, and ExprStmt with verbatim tokens.
+/// Assembly stays skipped but inside the span. Nested blocks come from
+/// bare `{ ... }` groups and from `if`, `for`, `while`, `unchecked`,
+/// and `try` bodies, so scopes and diagnostics recurse with `all_*`
+/// while `locals`, `calls`, `members`, `emits`, `reverts`, and `news`
+/// stay direct children only. Single-statement control bodies hold
+/// ExprStmt directly with no Block child.
 #[derive(Debug, Clone)]
 pub struct BlockNode {
     syntax: SyntaxNode,
@@ -253,6 +256,28 @@ impl BlockNode {
                 _ => None,
             })
             .collect()
+    }
+
+    /// Direct statements: Return, Break, Continue, Delete, DoWhile, and
+    /// ExprStmt only, in source order.
+    pub fn statements(&self) -> Vec<SyntaxNode> {
+        self.syntax
+            .children
+            .iter()
+            .filter_map(|element| match element {
+                SyntaxElement::Node(node) if is_statement_kind(node.kind) => Some(node.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// All statements in this block plus nested blocks, depth first.
+    pub fn all_statements(&self) -> Vec<SyntaxNode> {
+        let mut out = self.statements();
+        for child in self.child_blocks() {
+            out.extend(child.all_statements());
+        }
+        out
     }
 }
 

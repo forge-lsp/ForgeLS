@@ -1,4 +1,7 @@
 use super::cursor::{Cursor, token_element};
+use super::statements::{
+    parse_break, parse_continue, parse_delete, parse_do_while, parse_expr_stmt, parse_return,
+};
 use super::types::{is_function_type_at, is_type_start, parse_type, skip_function_type_at};
 use crate::SolidityNode;
 use crate::ast::MAX_CHAIN_TAILS;
@@ -464,7 +467,11 @@ pub(crate) fn parse_block(cursor: &mut Cursor, errors: &mut Vec<ParseError>) -> 
                         items.push(SyntaxElement::Node(node));
                     }
                 }
-                None => recover_statement(cursor),
+                None => {
+                    if let Some(stmt) = parse_expr_stmt(cursor, errors) {
+                        items.push(SyntaxElement::Node(stmt));
+                    }
+                }
             },
             Some(kind)
                 if (is_type_start(kind) || kind == SolidityKind::Ident.as_u16())
@@ -511,23 +518,61 @@ pub(crate) fn parse_block(cursor: &mut Cursor, errors: &mut Vec<ParseError>) -> 
                     recover_statement(cursor);
                 }
             }
+            Some(kind) if kind == SolidityKind::Return.as_u16() => {
+                if let Some(node) = parse_return(cursor, errors) {
+                    items.push(SyntaxElement::Node(node));
+                }
+            }
+            Some(kind) if kind == SolidityKind::Break.as_u16() => {
+                if let Some(node) = parse_break(cursor, errors) {
+                    items.push(SyntaxElement::Node(node));
+                }
+            }
+            Some(kind) if kind == SolidityKind::Continue.as_u16() => {
+                if let Some(node) = parse_continue(cursor, errors) {
+                    items.push(SyntaxElement::Node(node));
+                }
+            }
+            Some(kind) if kind == SolidityKind::Delete.as_u16() => {
+                if let Some(node) = parse_delete(cursor, errors) {
+                    items.push(SyntaxElement::Node(node));
+                }
+            }
+            Some(kind) if kind == SolidityKind::Do.as_u16() => {
+                if let Some(node) = parse_do_while(cursor, errors) {
+                    items.push(SyntaxElement::Node(node));
+                }
+            }
             Some(kind) if is_type_start(kind) || kind == SolidityKind::Ident.as_u16() => {
+                let start_pos = cursor.pos();
                 if kind == SolidityKind::Ident.as_u16()
                     && let Some(member) = try_parse_member(cursor)
                 {
                     items.push(SyntaxElement::Node(member));
+                    // Member leaves `;` behind; a trailing ExprStmt fragment
+                    // would double count, so skip one lone `;` here.
+                    if cursor.peek_kind() == Some(SolidityKind::Semicolon.as_u16()) {
+                        cursor.bump();
+                    }
                 } else if kind == SolidityKind::Ident.as_u16()
                     && let Some(call) = try_parse_call(cursor)
                 {
                     items.push(SyntaxElement::Node(call));
+                    if cursor.peek_kind() == Some(SolidityKind::Semicolon.as_u16()) {
+                        cursor.bump();
+                    }
                 } else {
-                    // Type-like token without a following name: an expression
-                    // statement, skipped like any other.
-                    recover_statement(cursor);
+                    // Bare expression row: exact span from start through `;`.
+                    cursor.set_pos(start_pos);
+                    if let Some(stmt) = parse_expr_stmt(cursor, errors) {
+                        items.push(SyntaxElement::Node(stmt));
+                    }
                 }
             }
             _ => {
-                recover_statement(cursor);
+                if let Some(stmt) = parse_expr_stmt(cursor, errors) {
+                    items.push(SyntaxElement::Node(stmt));
+                }
             }
         }
     }
@@ -552,8 +597,8 @@ pub(crate) fn parse_block(cursor: &mut Cursor, errors: &mut Vec<ParseError>) -> 
 ///
 /// Brace bodies recurse into `parse_block` and land as child `Block`
 /// nodes. A nested control (`if` inside `if`) recurses the same way so
-/// decls keep their scope. Anything else falls back to skipping one
-/// statement with no node: single-statement bodies hold no decls in V1.
+/// decls keep their scope. Single-statement rows become ExprStmt with no
+/// Block child. Assembly stays skipped.
 fn parse_control_body(
     cursor: &mut Cursor,
     errors: &mut Vec<ParseError>,
@@ -573,7 +618,36 @@ fn parse_control_body(
         }
         Some(kind) if kind == SolidityKind::Try.as_u16() => parse_try(cursor, errors, items),
         Some(kind) if kind == SolidityKind::Assembly.as_u16() => skip_assembly(cursor, errors),
-        _ => recover_statement(cursor),
+        Some(kind) if kind == SolidityKind::Return.as_u16() => {
+            if let Some(node) = parse_return(cursor, errors) {
+                items.push(SyntaxElement::Node(node));
+            }
+        }
+        Some(kind) if kind == SolidityKind::Break.as_u16() => {
+            if let Some(node) = parse_break(cursor, errors) {
+                items.push(SyntaxElement::Node(node));
+            }
+        }
+        Some(kind) if kind == SolidityKind::Continue.as_u16() => {
+            if let Some(node) = parse_continue(cursor, errors) {
+                items.push(SyntaxElement::Node(node));
+            }
+        }
+        Some(kind) if kind == SolidityKind::Delete.as_u16() => {
+            if let Some(node) = parse_delete(cursor, errors) {
+                items.push(SyntaxElement::Node(node));
+            }
+        }
+        Some(kind) if kind == SolidityKind::Do.as_u16() => {
+            if let Some(node) = parse_do_while(cursor, errors) {
+                items.push(SyntaxElement::Node(node));
+            }
+        }
+        _ => {
+            if let Some(node) = parse_expr_stmt(cursor, errors) {
+                items.push(SyntaxElement::Node(node));
+            }
+        }
     }
 }
 
@@ -612,7 +686,7 @@ fn parse_for(cursor: &mut Cursor, errors: &mut Vec<ParseError>, items: &mut Vec<
             end = end.max(node.span.end);
         }
     }
-    // Cover skipped single-statement bodies with no node.
+    // Cover lone `;` bodies with no node.
     if let Some(prev) = cursor.tokens.get(cursor.pos().saturating_sub(1)) {
         end = end.max(prev.span.end);
     }
@@ -632,7 +706,10 @@ fn parse_while(cursor: &mut Cursor, errors: &mut Vec<ParseError>, items: &mut Ve
     parse_control_body(cursor, errors, items);
 }
 
-/// Parse `unchecked { ... }`, pushing the body block.
+/// Parse `unchecked { ... }` or a single `ExprStmt` row.
+///
+/// Brace bodies land as a child `Block`; single rows push the `ExprStmt`
+/// with no `Block` child.
 fn parse_unchecked(
     cursor: &mut Cursor,
     errors: &mut Vec<ParseError>,
@@ -641,8 +718,8 @@ fn parse_unchecked(
     cursor.bump();
     if cursor.peek_kind() == Some(SolidityKind::LBrace.as_u16()) {
         parse_control_body(cursor, errors, items);
-    } else {
-        recover_statement(cursor);
+    } else if let Some(node) = parse_expr_stmt(cursor, errors) {
+        items.push(SyntaxElement::Node(node));
     }
 }
 
