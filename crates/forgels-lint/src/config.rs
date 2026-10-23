@@ -763,6 +763,38 @@ mod tests {
     }
 
     #[test]
+    fn json_guest_ids_accept_off_warn_err() {
+        let guests = vec!["example/guest-rule".to_string()];
+        for (level, expected) in [
+            ("off", RuleLevel::Off),
+            ("warn", RuleLevel::Warn),
+            ("err", RuleLevel::Err),
+        ] {
+            let text = format!(r#"{{"lint":{{"rules":{{"example/guest-rule":"{level}"}}}}}}"#);
+            let config = LintConfig::parse_json_with_known(&text, &guests).expect("guest parses");
+            let leaked: &'static str = Box::leak("example/guest-rule".to_string().into_boxed_str());
+            assert_eq!(
+                config.level_for(RuleId::from_leaked(leaked)),
+                Some(expected),
+                "level {level} accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn json_unknown_second_id_with_declared_guest_fails() {
+        let guests = vec!["example/guest-rule".to_string()];
+        let text =
+            r#"{"lint":{"rules":{"example/guest-rule":"warn","example/other-rule":"warn"}}}"#;
+        let err =
+            LintConfig::parse_json_with_known(text, &guests).expect_err("unknown guest fails");
+        assert_eq!(
+            err,
+            LintConfigError::UnknownRule("example/other-rule".to_string())
+        );
+    }
+
+    #[test]
     fn style_batch_two_rule_parses_off_warn_err() {
         let text = "[lint.rules]\n\"style/blank-lines\" = \"off\"\n\"style/natspec-missing\" = \"warn\"\n\"style/line-length\" = \"err\"\n";
         let config = LintConfig::parse_str(text).expect("parses");

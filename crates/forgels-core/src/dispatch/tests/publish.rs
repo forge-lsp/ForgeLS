@@ -385,3 +385,135 @@ fn excluded_file_publishes_empty_and_clears_store() {
         "no stale diagnostics stored"
     );
 }
+
+#[derive(Debug)]
+struct GuestStub {
+    warn_target: forgels_lint::RuleId,
+    err_target: forgels_lint::RuleId,
+}
+
+impl crate::analyzer::Analyzer for GuestStub {
+    fn hover(&self, _ctx: &crate::analyzer::ProjectContext) -> Option<crate::analyzer::HoverData> {
+        None
+    }
+
+    fn complete(
+        &self,
+        _ctx: &crate::analyzer::ProjectContext,
+    ) -> Vec<crate::analyzer::CompletionData> {
+        Vec::new()
+    }
+
+    fn goto(&self, _ctx: &crate::analyzer::ProjectContext) -> Option<forgels_syntax::Span> {
+        None
+    }
+
+    fn diagnostics(&self, _text: &str) -> Vec<crate::analyzer::DiagnosticData> {
+        vec![
+            crate::analyzer::DiagnosticData::error(
+                forgels_syntax::Span::new(0, 1),
+                "guest error declared".to_string(),
+                self.warn_target,
+            ),
+            crate::analyzer::DiagnosticData::warning(
+                forgels_syntax::Span::new(2, 3),
+                "guest warning declared".to_string(),
+                self.err_target,
+            ),
+        ]
+    }
+}
+
+fn guest_session(warn_id: &'static str, err_id: &'static str) -> (Session, String, String) {
+    let mut session = Session::new();
+    session.analyzers.insert(
+        crate::routing::Language::Solidity,
+        Box::new(GuestStub {
+            warn_target: forgels_lint::RuleId::from_leaked(warn_id),
+            err_target: forgels_lint::RuleId::from_leaked(err_id),
+        }),
+    );
+    (session, warn_id.to_string(), err_id.to_string())
+}
+
+fn guest_notes(session: &mut Session, workspace: &mut Workspace, uri: &str) -> Vec<Value> {
+    let open = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "textDocument/didOpen",
+        "params": { "textDocument": {
+            "uri": uri, "languageId": "solidity",
+            "version": 1, "text": "ab",
+        } },
+    })
+    .to_string();
+    assert!(handle_message(session, workspace, &open).is_none());
+    let notes = immediate_notifications(session, workspace, &open);
+    assert_eq!(notes.len(), 1);
+    let value: Value = serde_json::from_str(&notes[0]).expect("frame is json");
+    value
+        .pointer("/params/diagnostics")
+        .expect("has diagnostics")
+        .as_array()
+        .expect("array")
+        .clone()
+}
+
+#[test]
+fn guest_off_drops_matching_diagnostic() {
+    let warn_leaked: &'static str = Box::leak("example/guest-warn".to_string().into_boxed_str());
+    let err_leaked: &'static str = Box::leak("example/guest-err".to_string().into_boxed_str());
+    let (mut session, warn_name, err_name) = guest_session(warn_leaked, err_leaked);
+    session
+        .config
+        .lint
+        .rules
+        .insert(warn_name, forgels_lint::RuleLevel::Off);
+    let mut workspace = Workspace::new();
+    super::stub::init(&mut session, &mut workspace);
+    let found = guest_notes(&mut session, &mut workspace, "file:///repo/G.sol");
+    assert_eq!(found.len(), 1);
+    assert_eq!(
+        found[0].pointer("/code").expect("has code"),
+        &serde_json::json!(err_name)
+    );
+}
+
+#[test]
+fn guest_warn_and_err_override_applied() {
+    let warn_leaked: &'static str =
+        Box::leak("example/guest-downgrade".to_string().into_boxed_str());
+    let err_leaked: &'static str = Box::leak("example/guest-upgrade".to_string().into_boxed_str());
+    let (mut session, warn_name, err_name) = guest_session(warn_leaked, err_leaked);
+    session
+        .config
+        .lint
+        .rules
+        .insert(warn_name.clone(), forgels_lint::RuleLevel::Warn);
+    session
+        .config
+        .lint
+        .rules
+        .insert(err_name.clone(), forgels_lint::RuleLevel::Err);
+    let mut workspace = Workspace::new();
+    super::stub::init(&mut session, &mut workspace);
+    let found = guest_notes(&mut session, &mut workspace, "file:///repo/H.sol");
+    assert_eq!(found.len(), 2);
+    assert_eq!(
+        found[0].pointer("/code").expect("has code"),
+        &serde_json::json!(warn_name)
+    );
+    assert_eq!(
+        found[0].pointer("/severity").expect("severity"),
+        &serde_json::json!(2),
+        "guest error downgraded to warn"
+    );
+    assert_eq!(
+        found[1].pointer("/code").expect("has code"),
+        &serde_json::json!(err_name)
+    );
+    assert_eq!(
+        found[1].pointer("/severity").expect("severity"),
+        &serde_json::json!(1),
+        "guest warning upgraded to err"
+    );
+}
