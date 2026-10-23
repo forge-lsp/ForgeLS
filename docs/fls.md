@@ -41,7 +41,9 @@ fls init [--force]
 
 - `0`: clean or warnings only. Format preview and `--write` always exit 0 unless operational failure.
 - `1`: any error diagnostic. Format `--check` exits 1 when any file would change.
-- `2`: operational failure (unreadable file, bad write, unknown rule, conflicting format flags).
+- `2` (CLI only): operational failure (unreadable file, bad write,
+  unknown rule, conflicting format flags). LSP never exits; it
+  warns with defaults instead.
 - Guest diagnostics use the same codes: a guest error after
   `resolve()` exits 1, guest warnings only exit 0.
 
@@ -53,33 +55,40 @@ fls init [--force]
 - Top-level `plugin` is a string array, for example
   `{"plugin":["forge:correctness"]}` in JSON and
   `plugin = ["forge:correctness"]` in TOML. Absent means all, listed
-  means only those, empty means none. Unknown names fail fast.
+  means only those, empty means none. Unknown names are exit 2
+  in CLI; LSP warns with defaults instead.
   Bad shape is a parse error. CLI exits 2; LSP warns with defaults.
 - `forge:format` absent or listed runs builtin format; unlisted skips
   builtins and runs guest passes only.
 - Old `[lint] plugins` and `lint.plugins` are parse errors naming
   top-level `plugin`. Move entries to the top-level array.
-- `init` defaults are `["forge:correctness", "forge:style",
-  "forge:safety", "forge:format"]` plus empty lint `external`.
+- `init` defaults are `plugin` with all four builtins, `lint` with
+  `includes` `["**/*.sol"]`, `excludes` `[]`, `external` `[]`, and
+  `rules` with all 46 builtin IDs at `err` (see `fls init` output
+  for the full list), plus explicit `format` with `includes` `[]`,
+  `excludes` `[]`, `line_length` 120, `tab_width` 4, `style` space,
+  and `rules` `{}`.
 - Lint group holds `includes`, `excludes`, `rules`, and `external`.
 - `lint.external` is `[{"path":"plugins/check.wasm"}]` with local
   paths only. URLs fail. TOML `external` is a parse error pointing
   to `fls.json` (JSON-only V1). See `docs/plugins.md`.
 - Guest rule IDs in `lint.rules` validate against declared guest
-  IDs; truly unknown stays exit 2. Guests load once at startup.
+  IDs; truly unknown is exit 2 in CLI, warn with defaults in LSP.
+  Guests load once at startup.
   `warn` and `err` override the guest-declared severity, `off`
   drops it. Unlisted guests keep their declared severity, with a
   warning fallback for a missing or unknown severity string.
   Guest levels are JSON-only in V1: TOML cannot set them.
-- Format group holds `includes`, `excludes`, `line_length`, `tab_width`,
-  `style`, and `rules`. Defaults are 120, 4, space. Missing keys fall back.
+- Format group holds `includes`, `excludes`, `line_length`, `tab_width`, `style`, `quote_style`, `bracket_spacing`, and `rules`. Defaults are 120, 4, space. Missing keys fall back.
 - `quote_style` and `bracket_spacing` parse and store but stay unused.
   Follow-up adds their rules.
 - Legacy `forgels.toml` yields default format only. Use `fls.json` for keys.
 - Tab style emits one `\t` per indent level; width counts tabs as `tab_width`.
 - CRLF bodies keep `\r\n`; EOF newline stays LF.
-- Unknown format keys fail fast: bad top-level keys warn plus defaults,
-  bad lint rule IDs stay operational failures.
+- Unknown `format` group keys warn plus defaults in CLI and LSP,
+  not exit. Truly unknown top-level keys are ignored silently. Bad
+  `lint.rules` and `format.rules` IDs are exit 2 in CLI, warn with
+  defaults in LSP.
 - Empty lint `includes` matches all files. `excludes` remove after include.
 - `check` filters scanned files by cwd-relative posix path before analysis.
 - Invalid glob patterns warn once on stderr and are ignored.
