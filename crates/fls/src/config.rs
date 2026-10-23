@@ -11,6 +11,9 @@ use super::external::{ExternalHosts, load_external};
 pub struct LoadedConfig {
     pub lint: LintConfig,
     pub format: FormatConfig,
+    // Scaffold only in V1: parsed but never gates. Gating follows.
+    #[allow(dead_code)]
+    pub plugin: Vec<String>,
     pub root: PathBuf,
     pub remappings: Vec<Remapping>,
     pub warnings: Vec<String>,
@@ -72,6 +75,7 @@ fn load_fls_json(cwd: &Path, path: &Path) -> Result<LoadedConfig, String> {
             return Ok(LoadedConfig {
                 lint: LintConfig::default(),
                 format: FormatConfig::default(),
+                plugin: Vec::new(),
                 root,
                 remappings,
                 warnings,
@@ -89,6 +93,7 @@ fn load_fls_json(cwd: &Path, path: &Path) -> Result<LoadedConfig, String> {
             return Ok(LoadedConfig {
                 lint: LintConfig::default(),
                 format: FormatConfig::default(),
+                plugin: Vec::new(),
                 root,
                 remappings,
                 warnings,
@@ -102,6 +107,7 @@ fn load_fls_json(cwd: &Path, path: &Path) -> Result<LoadedConfig, String> {
         Ok(config) => Ok(LoadedConfig {
             lint: config.lint,
             format: config.format,
+            plugin: config.plugin,
             root,
             remappings,
             warnings,
@@ -113,6 +119,7 @@ fn load_fls_json(cwd: &Path, path: &Path) -> Result<LoadedConfig, String> {
             Ok(LoadedConfig {
                 lint: LintConfig::default(),
                 format: FormatConfig::default(),
+                plugin: Vec::new(),
                 root,
                 remappings,
                 warnings,
@@ -123,8 +130,8 @@ fn load_fls_json(cwd: &Path, path: &Path) -> Result<LoadedConfig, String> {
 }
 
 fn load_legacy_toml(cwd: &Path) -> Result<LoadedConfig, String> {
-    // Legacy TOML carries lint only and always yields default format.
-    // Typed format keys live in fls.json going forward.
+    // Legacy TOML carries lint plus top-level plugin and always yields
+    // default format. Typed format keys live in fls.json going forward.
     let path = cwd.join("forgels.toml");
     let text = match std::fs::read_to_string(&path) {
         Ok(text) => text,
@@ -132,6 +139,7 @@ fn load_legacy_toml(cwd: &Path) -> Result<LoadedConfig, String> {
             return Ok(LoadedConfig {
                 lint: LintConfig::default(),
                 format: FormatConfig::default(),
+                plugin: Vec::new(),
                 root: cwd.to_path_buf(),
                 remappings: Vec::new(),
                 warnings: Vec::new(),
@@ -142,19 +150,20 @@ fn load_legacy_toml(cwd: &Path) -> Result<LoadedConfig, String> {
     let (core, mut warnings) = Config::load(&path);
     let root = core.root.clone().unwrap_or_else(|| cwd.to_path_buf());
     let remappings = core.remappings.clone();
-    let lint = match LintConfig::parse_str(&text) {
+    let config = match FlsConfig::parse_str(&text) {
         Ok(config) => config,
         Err(LintConfigError::UnknownRule(id)) => {
             return Err(format!("fls: unknown lint rule: {id}"));
         }
         Err(other) => {
             warnings.push(format!("fls: {other}"));
-            LintConfig::default()
+            FlsConfig::default()
         }
     };
     Ok(LoadedConfig {
-        lint,
+        lint: config.lint,
         format: FormatConfig::default(),
+        plugin: config.plugin,
         root,
         remappings,
         warnings,

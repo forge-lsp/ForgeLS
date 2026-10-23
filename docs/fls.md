@@ -46,7 +46,16 @@ fls init [--force]
 ## Config
 
 - Precedence is `./fls.json` wins, else `./forgels.toml` lint text, else defaults.
-- `init` writes grouped `lint` plus explicit `format` via `serde_json::to_string_pretty`.
+- `init` writes top-level `plugin` plus grouped `lint` and explicit
+  `format` via `serde_json::to_string_pretty`.
+- Top-level `plugin` is a string array, for example
+  `{"plugin":["forge:correctness"]}` in JSON and
+  `plugin = ["forge:correctness"]` in TOML. Absent means empty.
+  Bad shape is a parse error. V1 parses only: no gating, no validation.
+- Old `[lint] plugins` and `lint.plugins` are parse errors naming
+  top-level `plugin`. Move entries to the top-level array.
+- `init` defaults are `["forge:correctness", "forge:style",
+  "forge:safety", "forge:format"]` plus empty lint `external`.
 - Lint group holds `includes`, `excludes`, `rules`, and `external`.
 - `lint.external` is `[{"path":"plugins/check.wasm"}]` with local
   paths only. URLs fail. TOML `external` is a parse error pointing

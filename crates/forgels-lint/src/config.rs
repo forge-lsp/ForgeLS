@@ -49,7 +49,6 @@ impl FromStr for RuleLevel {
 // Parsed `[lint]` section. No file discovery: callers load the text.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct LintConfig {
-    pub plugins: Vec<String>,
     pub rules: HashMap<String, RuleLevel>,
     pub includes: Vec<String>,
     pub excludes: Vec<String>,
@@ -77,9 +76,10 @@ pub struct FormatConfig {
     pub bracket_spacing: Option<String>,
 }
 
-// Grouped `fls.json` file: lint plus reserved format.
+// Grouped `fls.json` file: top-level plugin plus lint and format.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct FlsConfig {
+    pub plugin: Vec<String>,
     pub lint: LintConfig,
     pub format: FormatConfig,
 }
@@ -92,7 +92,8 @@ impl LintConfig {
     // Parse `[lint]` plus `[lint.rules]` from TOML text.
     // Unknown rule IDs fail fast so typos never pass silent.
     // `lint.external` is JSON-only in V1: TOML use is a parse error
-    // that points to fls.json.
+    // that points to fls.json. `[lint] plugins` moved to top-level
+    // `plugin`: TOML use is a parse error naming the new key.
     pub fn parse_str(text: &str) -> Result<Self, LintConfigError> {
         let table: toml::Table = text
             .parse()
@@ -108,18 +109,12 @@ impl LintConfig {
                 "lint external requires fls.json (JSON-only V1)".to_string(),
             ));
         }
-        let mut out = Self::default();
-        if let Some(plugins) = lint.get("plugins") {
-            let list = plugins.as_array().ok_or_else(|| {
-                LintConfigError::Parse("[lint] plugins must be an array".to_string())
-            })?;
-            for entry in list {
-                let name = entry.as_str().ok_or_else(|| {
-                    LintConfigError::Parse("[lint] plugins must be strings".to_string())
-                })?;
-                out.plugins.push(name.to_string());
-            }
+        if lint.contains_key("plugins") {
+            return Err(LintConfigError::Parse(
+                "lint plugins requires top-level plugin (moved from [lint])".to_string(),
+            ));
         }
+        let mut out = Self::default();
         if let Some(rules) = lint.get("rules") {
             let rules = rules.as_table().ok_or_else(|| {
                 LintConfigError::Parse("[lint.rules] must be a table".to_string())
@@ -168,6 +163,7 @@ impl FlsConfig {
     }
 
     // Parse grouped `fls.json` with known guest IDs for rule validation.
+    // Top-level `plugin` is a string array; absent means empty.
     pub fn parse_json_with_known(
         text: &str,
         guest_ids: &[String],
@@ -177,7 +173,10 @@ impl FlsConfig {
         let table = value
             .as_object()
             .ok_or_else(|| LintConfigError::Parse("fls.json must be an object".to_string()))?;
-        let mut out = Self::default();
+        let mut out = Self {
+            plugin: string_list(&value, "top-level", "plugin")?,
+            ..Default::default()
+        };
         if let Some(lint) = table.get("lint") {
             out.lint = parse_lint_value_with(lint, guest_ids)?;
         }
@@ -185,6 +184,20 @@ impl FlsConfig {
             out.format = parse_format_value(format)?;
         }
         Ok(out)
+    }
+
+    // Parse TOML text with top-level `plugin` plus `[lint]`.
+    // Absent plugin means empty; bad shape is a parse error.
+    // Old `[lint] plugins` is rejected by `LintConfig::parse_str`.
+    pub fn parse_str(text: &str) -> Result<Self, LintConfigError> {
+        let table: toml::Table = text
+            .parse()
+            .map_err(|err: toml::de::Error| LintConfigError::Parse(err.to_string()))?;
+        Ok(Self {
+            plugin: toml_plugin_list(&table)?,
+            lint: LintConfig::parse_str(text)?,
+            ..Default::default()
+        })
     }
 
     // Extract `lint.external` paths without validating rules. Used at
@@ -231,6 +244,25 @@ fn string_list(value: &Value, group: &str, key: &str) -> Result<Vec<String>, Lin
     Ok(out)
 }
 
+// Top-level TOML `plugin` list. Mirrors `string_list`: absent means
+// empty, bad shape is a parse error naming the new key.
+fn toml_plugin_list(table: &toml::Table) -> Result<Vec<String>, LintConfigError> {
+    let Some(raw) = table.get("plugin") else {
+        return Ok(Vec::new());
+    };
+    let list = raw
+        .as_array()
+        .ok_or_else(|| LintConfigError::Parse("top-level plugin must be an array".to_string()))?;
+    let mut out = Vec::new();
+    for entry in list {
+        let name = entry.as_str().ok_or_else(|| {
+            LintConfigError::Parse("top-level plugin must be strings".to_string())
+        })?;
+        out.push(name.to_string());
+    }
+    Ok(out)
+}
+
 fn parse_external_value(value: &Value) -> Result<Vec<ExternalRef>, LintConfigError> {
     let Some(raw) = value.get("external") else {
         return Ok(Vec::new());
@@ -265,8 +297,12 @@ fn parse_lint_value_with(
     let table = value
         .as_object()
         .ok_or_else(|| LintConfigError::Parse("lint must be an object".to_string()))?;
+    if table.contains_key("plugins") {
+        return Err(LintConfigError::Parse(
+            "lint plugins requires top-level plugin (moved from lint)".to_string(),
+        ));
+    }
     let mut out = LintConfig {
-        plugins: string_list(value, "lint", "plugins")?,
         includes: string_list(value, "lint", "includes")?,
         excludes: string_list(value, "lint", "excludes")?,
         external: parse_external_value(value)?,
@@ -472,18 +508,59 @@ mod tests {
     #[test]
     fn missing_lint_section_gives_default() {
         let config = LintConfig::parse_str("").expect("empty parses");
-        assert!(config.plugins.is_empty());
         assert!(config.rules.is_empty());
+        let full = FlsConfig::parse_str("").expect("empty parses");
+        assert!(full.plugin.is_empty());
+        assert_eq!(full, FlsConfig::default());
     }
 
     #[test]
-    fn parses_plugins_and_rule_levels() {
-        let text = "[lint]\nplugins = [\"correctness\"]\n[lint.rules]\n\"correctness/unused\" = \"warn\"\n\"correctness/parse-error\" = \"off\"\n";
+    fn parses_rule_levels_without_plugins() {
+        let text = "[lint.rules]\n\"correctness/unused\" = \"warn\"\n\"correctness/parse-error\" = \"off\"\n";
         let config = LintConfig::parse_str(text).expect("parses");
-        assert_eq!(config.plugins, vec!["correctness".to_string()]);
         assert_eq!(config.level_for(RuleId::UNUSED), Some(RuleLevel::Warn));
         assert_eq!(config.level_for(RuleId::PARSE_ERROR), Some(RuleLevel::Off));
         assert_eq!(config.level_for(RuleId::OVERRIDE), None);
+    }
+
+    #[test]
+    fn toml_top_level_plugin_parses() {
+        let text = "plugin = [\"forge:correctness\", \"forge:style\"]\n[lint.rules]\n\"correctness/unused\" = \"warn\"\n";
+        let full = FlsConfig::parse_str(text).expect("parses");
+        assert_eq!(
+            full.plugin,
+            vec!["forge:correctness".to_string(), "forge:style".to_string()]
+        );
+        assert_eq!(full.lint.level_for(RuleId::UNUSED), Some(RuleLevel::Warn));
+    }
+
+    #[test]
+    fn toml_old_lint_plugins_rejected() {
+        let text = "[lint]\nplugins = [\"correctness\"]\n";
+        let err = LintConfig::parse_str(text).expect_err("old key fails");
+        let LintConfigError::Parse(detail) = &err else {
+            panic!("expected Parse, got {err:?}");
+        };
+        assert!(detail.contains("plugin"), "names new key: {detail}");
+        let err = FlsConfig::parse_str(text).expect_err("old key fails");
+        let LintConfigError::Parse(detail) = &err else {
+            panic!("expected Parse, got {err:?}");
+        };
+        assert!(detail.contains("plugin"), "names new key: {detail}");
+    }
+
+    #[test]
+    fn toml_plugin_absent_means_empty() {
+        let full = FlsConfig::parse_str("[lint.rules]\n").expect("parses");
+        assert!(full.plugin.is_empty());
+    }
+
+    #[test]
+    fn toml_plugin_bad_shape_is_parse_error() {
+        let err = FlsConfig::parse_str("plugin = \"oops\"\n").expect_err("bad shape fails");
+        assert!(matches!(err, LintConfigError::Parse(_)));
+        let err = FlsConfig::parse_str("plugin = [1]\n").expect_err("bad entry fails");
+        assert!(matches!(err, LintConfigError::Parse(_)));
     }
 
     #[test]
@@ -527,6 +604,48 @@ mod tests {
         assert!(config.rules.is_empty());
         let full = FlsConfig::parse_json("{}").expect("parses");
         assert_eq!(full, FlsConfig::default());
+    }
+
+    #[test]
+    fn json_top_level_plugin_parses() {
+        let text = r#"{"plugin":["forge:correctness","forge:style"],"lint":{"rules":{"correctness/unused":"warn"}}}"#;
+        let full = FlsConfig::parse_json(text).expect("parses");
+        assert_eq!(
+            full.plugin,
+            vec!["forge:correctness".to_string(), "forge:style".to_string()]
+        );
+        assert_eq!(full.lint.level_for(RuleId::UNUSED), Some(RuleLevel::Warn));
+    }
+
+    #[test]
+    fn json_old_lint_plugins_rejected() {
+        let text = r#"{"lint":{"plugins":["correctness"]}}"#;
+        let err = LintConfig::parse_json(text).expect_err("old key fails");
+        let LintConfigError::Parse(detail) = &err else {
+            panic!("expected Parse, got {err:?}");
+        };
+        assert!(detail.contains("plugin"), "names new key: {detail}");
+        let err = FlsConfig::parse_json(text).expect_err("old key fails");
+        let LintConfigError::Parse(detail) = &err else {
+            panic!("expected Parse, got {err:?}");
+        };
+        assert!(detail.contains("plugin"), "names new key: {detail}");
+    }
+
+    #[test]
+    fn json_plugin_absent_means_empty() {
+        let full = FlsConfig::parse_json("{}").expect("parses");
+        assert!(full.plugin.is_empty());
+        let full = FlsConfig::parse_json(r#"{"lint":{}}"#).expect("parses");
+        assert!(full.plugin.is_empty());
+    }
+
+    #[test]
+    fn json_plugin_bad_shape_is_parse_error() {
+        let err = FlsConfig::parse_json(r#"{"plugin":"oops"}"#).expect_err("bad shape fails");
+        assert!(matches!(err, LintConfigError::Parse(_)));
+        let err = FlsConfig::parse_json(r#"{"plugin":[1]}"#).expect_err("bad entry fails");
+        assert!(matches!(err, LintConfigError::Parse(_)));
     }
 
     #[test]
