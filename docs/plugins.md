@@ -39,13 +39,31 @@ Guests export:
 
 ```text
 memory
-forgels_plugin_abi_version() -> i32   # must be 1
+forgels_plugin_abi_version() -> i32   # major, must be 1
+forgels_plugin_abi_minor() -> i32     # minor, optional, absent means 0
 alloc(size: i32) -> i32
 free(ptr: i32, size: i32)
 lint(ptr: i32, len: i32) -> i64       # packed ptr<<32|len
 format(ptr: i32, len: i32) -> i64     # packed ptr<<32|len
 forgels_plugin_rules() -> i64         # optional, same packing
 ```
+
+- Compat against host 1.0:
+
+  | Guest | Result |
+  | ----- | ------ |
+  | 2.0 | reject at load, exit 2 |
+  | 1.1 | warn once, then load |
+  | 1.0 | silent, load |
+  | 1 with no minor export | silent, load (minor defaults to 0) |
+
+- Major mismatch fails fast before `forgels_plugin_rules`.
+  Message names both sides: `unsupported abi 2.0, want 1.x`.
+- Minor ahead warns once per guest path per process at startup
+  load. Message names both sides: `newer abi 1.1, want 1.0`.
+  Repeat refs to the same canonical path warn only on first load.
+- Exit mapping is unchanged: major reject exits 2, minor warn
+  still exits 0 or 1 from diagnostics alone.
 
 - Packing is frozen: `packed = (ptr << 32) | len` as `i64`.
 - Host writes request JSON into guest memory via `alloc`, calls
