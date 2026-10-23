@@ -247,6 +247,15 @@ fn init_writes_exact_grouped_json() {
     );
     let text = std::fs::read_to_string(dir.join("fls.json")).expect("fls.json written");
     let value: serde_json::Value = serde_json::from_str(&text).expect("valid json");
+    assert_eq!(
+        value.pointer("/plugin").expect("plugin list"),
+        &serde_json::json!([
+            "forge:correctness",
+            "forge:style",
+            "forge:safety",
+            "forge:format"
+        ])
+    );
     let lint = value.pointer("/lint").expect("lint group");
     assert_eq!(
         lint.pointer("/includes").expect("includes"),
@@ -254,6 +263,10 @@ fn init_writes_exact_grouped_json() {
     );
     assert_eq!(
         lint.pointer("/excludes").expect("excludes"),
+        &serde_json::json!([])
+    );
+    assert_eq!(
+        lint.pointer("/external").expect("external"),
         &serde_json::json!([])
     );
     let rules = lint
@@ -316,6 +329,15 @@ fn init_force_overwrites_existing() {
     assert!(
         value.pointer("/lint/rules").is_some(),
         "overwritten with template"
+    );
+    assert_eq!(
+        value.pointer("/plugin").expect("plugin list"),
+        &serde_json::json!([
+            "forge:correctness",
+            "forge:style",
+            "forge:safety",
+            "forge:format"
+        ])
     );
     let _ = std::fs::remove_dir_all(&dir);
 }

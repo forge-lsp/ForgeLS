@@ -174,7 +174,9 @@ pub fn run(level_flag: Option<&str>) {
     config.merge_remappings(foundry);
     // No watcher: lint config plus guests load once at startup,
     // restart to pick up edits.
-    let (lint, external) = load_lint_with_guests();
+    let (lint, _plugin, external) = load_lint_with_guests();
+    // Scaffold only: top-level plugin parses but never gates in V1.
+    // Kept in parity with `check` so both paths carry the same vec.
     config.lint = lint.clone();
     let (level, warning) = log::resolve_level(level_flag, &config.log_level);
     if let Some(warning) = warning {
@@ -193,13 +195,15 @@ pub fn run(level_flag: Option<&str>) {
 // Prefer fls.json, fall back to forgels.toml lint text, else defaults.
 // Broken files warn and run with defaults so the server never fails open.
 // Guests load once here; unknown rules warn with defaults in LSP.
-fn load_lint_with_guests() -> (LintConfig, ExternalHosts) {
+// Top-level plugin parses alongside lint for `check` parity but stays
+// unused in V1: no gating, no guest change.
+fn load_lint_with_guests() -> (LintConfig, Vec<String>, ExternalHosts) {
     if let Ok(text) = std::fs::read_to_string("fls.json") {
         let refs = match FlsConfig::parse_external_refs(&text) {
             Ok(refs) => refs,
             Err(err) => {
                 eprintln!("fls: {err}");
-                return (LintConfig::default(), ExternalHosts::empty());
+                return (LintConfig::default(), Vec::new(), ExternalHosts::empty());
             }
         };
         let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
@@ -207,26 +211,26 @@ fn load_lint_with_guests() -> (LintConfig, ExternalHosts) {
             Ok(hosts) => hosts,
             Err(err) => {
                 eprintln!("{err}");
-                return (LintConfig::default(), ExternalHosts::empty());
+                return (LintConfig::default(), Vec::new(), ExternalHosts::empty());
             }
         };
         let guest_ids = external.guest_ids();
         return match FlsConfig::parse_json_with_known(&text, &guest_ids) {
-            Ok(config) => (config.lint, external),
+            Ok(config) => (config.lint, config.plugin, external),
             Err(err) => {
                 eprintln!("fls: {err}");
-                (LintConfig::default(), external)
+                (LintConfig::default(), Vec::new(), external)
             }
         };
     }
     if let Ok(text) = std::fs::read_to_string("forgels.toml") {
-        return match forgels_lint::LintConfig::parse_str(&text) {
-            Ok(config) => (config, ExternalHosts::empty()),
+        return match FlsConfig::parse_str(&text) {
+            Ok(config) => (config.lint, config.plugin, ExternalHosts::empty()),
             Err(err) => {
                 eprintln!("fls: {err}");
-                (LintConfig::default(), ExternalHosts::empty())
+                (LintConfig::default(), Vec::new(), ExternalHosts::empty())
             }
         };
     }
-    (LintConfig::default(), ExternalHosts::empty())
+    (LintConfig::default(), Vec::new(), ExternalHosts::empty())
 }
