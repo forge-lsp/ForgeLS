@@ -285,3 +285,76 @@ fn format_unlisted_leaves_files_unchanged() {
     assert_eq!(check.status.code(), Some(0));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn format_only_plugin_runs_format_without_lint() {
+    let dir = fresh_dir("fmt-only-format");
+    let file = dir.join("A.sol");
+    let dirty = "// SPDX-License-Identifier: MIT\npragma solidity ^0.8.0;   \ncontract A {}";
+    write_file(&file, dirty);
+    write_file(
+        &dir.join("fls.json"),
+        "{\"plugin\":[\"forge:format\"],\"lint\":{},\"format\":{}}",
+    );
+    let lint = run_in(&dir, &["check", "--json", file.to_str().expect("utf8")]);
+    assert_eq!(lint.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&lint.stdout);
+    let value: serde_json::Value = serde_json::from_str(&stdout).expect("valid json");
+    let files = value
+        .pointer("/files")
+        .and_then(|list| list.as_array())
+        .expect("files array");
+    assert!(files.is_empty(), "lint gate drops all: {stdout}");
+    let out = run_in(&dir, &["format", "--write", file.to_str().expect("utf8")]);
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(
+        std::fs::read_to_string(&file).expect("read"),
+        "// SPDX-License-Identifier: MIT\npragma solidity ^0.8.0;\n\n\ncontract A {}\n"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn preview_unlisted_prints_raw() {
+    let dir = fresh_dir("fmt-preview-off");
+    let file = dir.join("a.sol");
+    write_file(&file, DIRTY_SRC);
+    write_file(
+        &dir.join("fls.json"),
+        "{\"plugin\":[\"forge:style\"],\"lint\":{},\"format\":{}}",
+    );
+    let out = run_in(&dir, &["format", file.to_str().expect("utf8")]);
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        DIRTY_SRC,
+        "preview skips builtins"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&file).expect("read"),
+        DIRTY_SRC,
+        "preview writes nothing"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn empty_plugin_leaves_format_unchanged() {
+    let dir = fresh_dir("fmt-empty-off");
+    let file = dir.join("a.sol");
+    write_file(&file, DIRTY_SRC);
+    write_file(
+        &dir.join("fls.json"),
+        "{\"plugin\":[],\"lint\":{},\"format\":{}}",
+    );
+    let out = run_in(&dir, &["format", "--write", file.to_str().expect("utf8")]);
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(
+        std::fs::read_to_string(&file).expect("read"),
+        DIRTY_SRC,
+        "empty list skips builtins"
+    );
+    let check = run_in(&dir, &["format", "--check", file.to_str().expect("utf8")]);
+    assert_eq!(check.status.code(), Some(0));
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -214,3 +214,21 @@ fn guest_runs_despite_style_only_filter() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn guest_format_applies_without_builtin_format() {
+    let dir = fresh_dir("ext-fmt-off");
+    write_guest(&dir);
+    let text = "{\"plugin\":[\"forge:style\"],\"lint\":{\"includes\":[],\"excludes\":[],\"rules\":{\"example/guest-rule\":\"warn\"},\"external\":[{\"path\":\"plugin.wasm\"}]},\"format\":{}}";
+    write_file(&dir.join("fls.json"), text);
+    let file = dir.join("a.sol");
+    write_file(&file, "contract A {}   \n");
+    let out = run_in(&dir, &["format", "--write", file.to_str().expect("utf8")]);
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(
+        std::fs::read_to_string(&file).expect("read"),
+        "contract B {}   \n",
+        "guest edit applies while builtins skip"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

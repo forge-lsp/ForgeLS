@@ -77,6 +77,13 @@ Scope: `forgels-fmt` crate plus `fls format` wiring. Solidity only in V1.
 - Fixpoint caps at 4 passes with early breaks on no edits or stable text.
 - Empty input returns empty fast.
 
+## Plugin gate
+
+- Top-level `plugin` controls builtins: absent or listing `forge:format`
+  runs builtin convergence, unlisted or empty skips builtins.
+- Guests from `lint.external` always run when present, even when
+  builtins are skipped. See `docs/plugins.md` for sandbox and ABI.
+
 ## Gaps
 
 - Custom modifiers and base args wrap as plain calls: the text
