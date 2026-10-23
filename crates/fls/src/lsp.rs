@@ -8,25 +8,29 @@ use forgels_core::{
     TypeHierarchyItemData, routing::Language,
 };
 use forgels_lang_solidity::SolidityAnalyzer;
-use forgels_lint::{FlsConfig, LintConfig, should_lint};
+use forgels_lint::{FlsConfig, LintConfig, PluginSet, should_lint, validate_plugin_id};
 use forgels_syntax::Span;
 
 use super::external::{ExternalHosts, guest_diags, load_external};
 
 /// Analyzer wrapper that appends guest diagnostics. All other calls
-/// delegate to the inner Solidity analyzer. No core changes.
+/// delegate to the inner Solidity analyzer. Carries a prebuilt
+/// PluginSet snapshot so publish never reparses config.
+/// Code actions stay direct: no plugin gate in V1 by design.
 #[derive(Debug)]
 struct GuestAnalyzer {
     inner: SolidityAnalyzer,
     lint: LintConfig,
+    plugins: PluginSet,
     external: Mutex<ExternalHosts>,
 }
 
 impl GuestAnalyzer {
-    fn new(lint: LintConfig, external: ExternalHosts) -> Self {
+    fn new(lint: LintConfig, plugins: Option<Vec<String>>, external: ExternalHosts) -> Self {
         Self {
             inner: SolidityAnalyzer::new(),
             lint,
+            plugins: PluginSet::from_option(plugins.as_deref()),
             external: Mutex::new(external),
         }
     }
@@ -72,8 +76,13 @@ impl Analyzer for GuestAnalyzer {
 
     fn diagnostics_ctx(&self, ctx: &ProjectContext) -> Vec<DiagnosticData> {
         let mut out = self.inner.diagnostics_ctx(ctx);
+        // Plugin gate for builtins; core repeats it for imports before
+        // the single resolve. Guests bypass so they always run.
+        if !self.plugins.is_all() {
+            out.retain(|item| self.plugins.allows(item.rule));
+        }
         // Host-side filter before any guest call: excluded files stay
-        // empty so guests never run for them.
+        // without guests so guests never run for them.
         let rel = publish_rel(ctx);
         let (keep, _) = should_lint(&rel, &self.lint.includes, &self.lint.excludes);
         if !keep {
@@ -174,10 +183,9 @@ pub fn run(level_flag: Option<&str>) {
     config.merge_remappings(foundry);
     // No watcher: lint config plus guests load once at startup,
     // restart to pick up edits.
-    let (lint, _plugin, external) = load_lint_with_guests();
-    // Scaffold only: top-level plugin parses but never gates in V1.
-    // Kept in parity with `check` so both paths carry the same vec.
+    let (lint, plugin, external) = load_lint_with_guests();
     config.lint = lint.clone();
+    config.plugin = plugin.clone();
     let (level, warning) = log::resolve_level(level_flag, &config.log_level);
     if let Some(warning) = warning {
         eprintln!("fls: {warning}");
@@ -187,23 +195,21 @@ pub fn run(level_flag: Option<&str>) {
     let mut server = Server::new(config);
     server.set_analyzer(
         Language::Solidity,
-        Box::new(GuestAnalyzer::new(lint, external)),
+        Box::new(GuestAnalyzer::new(lint, plugin, external)),
     );
     server.run();
 }
 
 // Prefer fls.json, fall back to forgels.toml lint text, else defaults.
 // Broken files warn and run with defaults so the server never fails open.
-// Guests load once here; unknown rules warn with defaults in LSP.
-// Top-level plugin parses alongside lint for `check` parity but stays
-// unused in V1: no gating, no guest change.
-fn load_lint_with_guests() -> (LintConfig, Vec<String>, ExternalHosts) {
+// Guests load once here; unknown rules or plugins warn with defaults.
+fn load_lint_with_guests() -> (LintConfig, Option<Vec<String>>, ExternalHosts) {
     if let Ok(text) = std::fs::read_to_string("fls.json") {
         let refs = match FlsConfig::parse_external_refs(&text) {
             Ok(refs) => refs,
             Err(err) => {
                 eprintln!("fls: {err}");
-                return (LintConfig::default(), Vec::new(), ExternalHosts::empty());
+                return (LintConfig::default(), None, ExternalHosts::empty());
             }
         };
         let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
@@ -211,26 +217,46 @@ fn load_lint_with_guests() -> (LintConfig, Vec<String>, ExternalHosts) {
             Ok(hosts) => hosts,
             Err(err) => {
                 eprintln!("{err}");
-                return (LintConfig::default(), Vec::new(), ExternalHosts::empty());
+                return (LintConfig::default(), None, ExternalHosts::empty());
             }
         };
         let guest_ids = external.guest_ids();
         return match FlsConfig::parse_json_with_known(&text, &guest_ids) {
-            Ok(config) => (config.lint, config.plugin, external),
+            Ok(config) => {
+                if let Some(list) = config.plugin.as_deref()
+                    && list
+                        .iter()
+                        .any(|name| validate_plugin_id(name, &guest_ids).is_err())
+                {
+                    eprintln!("fls: unknown plugin, using defaults");
+                    return (LintConfig::default(), None, external);
+                }
+                (config.lint, config.plugin, external)
+            }
             Err(err) => {
                 eprintln!("fls: {err}");
-                (LintConfig::default(), Vec::new(), external)
+                (LintConfig::default(), None, external)
             }
         };
     }
     if let Ok(text) = std::fs::read_to_string("forgels.toml") {
         return match FlsConfig::parse_str(&text) {
-            Ok(config) => (config.lint, config.plugin, ExternalHosts::empty()),
+            Ok(config) => {
+                if let Some(list) = config.plugin.as_deref()
+                    && list
+                        .iter()
+                        .any(|name| validate_plugin_id(name, &[]).is_err())
+                {
+                    eprintln!("fls: unknown plugin, using defaults");
+                    return (LintConfig::default(), None, ExternalHosts::empty());
+                }
+                (config.lint, config.plugin, ExternalHosts::empty())
+            }
             Err(err) => {
                 eprintln!("fls: {err}");
-                (LintConfig::default(), Vec::new(), ExternalHosts::empty())
+                (LintConfig::default(), None, ExternalHosts::empty())
             }
         };
     }
-    (LintConfig::default(), Vec::new(), ExternalHosts::empty())
+    (LintConfig::default(), None, ExternalHosts::empty())
 }

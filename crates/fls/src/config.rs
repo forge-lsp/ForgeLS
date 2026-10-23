@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use forgels_common::paths::Remapping;
 use forgels_core::Config;
 use forgels_fmt::{FormatOptions, IndentStyle};
-use forgels_lint::{FlsConfig, FormatConfig, LintConfig, LintConfigError};
+use forgels_lint::{FlsConfig, FormatConfig, LintConfig, LintConfigError, validate_plugin_id};
 
 use super::external::{ExternalHosts, load_external};
 
@@ -11,9 +11,8 @@ use super::external::{ExternalHosts, load_external};
 pub struct LoadedConfig {
     pub lint: LintConfig,
     pub format: FormatConfig,
-    // Scaffold only in V1: parsed but never gates. Gating follows.
-    #[allow(dead_code)]
-    pub plugin: Vec<String>,
+    // None means absent-means-all; Some lists enabled plugins.
+    pub plugin: Option<Vec<String>>,
     pub root: PathBuf,
     pub remappings: Vec<Remapping>,
     pub warnings: Vec<String>,
@@ -50,7 +49,7 @@ pub fn format_options_from(config: &FormatConfig) -> FormatOptions {
 ///
 /// Precedence is `fls.json` wins, else `forgels.toml` lint text, else
 /// defaults. Broken `fls.json` means defaults plus one warning and the
-/// run continues. Unknown rule IDs are operational failures.
+/// run continues. Unknown rule or plugin IDs are operational failures.
 pub fn load(cwd: &Path) -> Result<LoadedConfig, String> {
     let fls_path = cwd.join("fls.json");
     if fls_path.exists() {
@@ -75,7 +74,7 @@ fn load_fls_json(cwd: &Path, path: &Path) -> Result<LoadedConfig, String> {
             return Ok(LoadedConfig {
                 lint: LintConfig::default(),
                 format: FormatConfig::default(),
-                plugin: Vec::new(),
+                plugin: None,
                 root,
                 remappings,
                 warnings,
@@ -84,8 +83,8 @@ fn load_fls_json(cwd: &Path, path: &Path) -> Result<LoadedConfig, String> {
         }
     };
     // Startup order: read external paths leniently, load guests once,
-    // collect guest IDs, then validate rules. Truly unknown stays
-    // exit 2. No hot-reload: restart to pick up plugin edits.
+    // collect guest IDs, then validate rules and plugin names. Truly
+    // unknown stays exit 2. No hot-reload: restart to pick up edits.
     let refs = match FlsConfig::parse_external_refs(&text) {
         Ok(refs) => refs,
         Err(other) => {
@@ -93,7 +92,7 @@ fn load_fls_json(cwd: &Path, path: &Path) -> Result<LoadedConfig, String> {
             return Ok(LoadedConfig {
                 lint: LintConfig::default(),
                 format: FormatConfig::default(),
-                plugin: Vec::new(),
+                plugin: None,
                 root,
                 remappings,
                 warnings,
@@ -104,22 +103,25 @@ fn load_fls_json(cwd: &Path, path: &Path) -> Result<LoadedConfig, String> {
     let external = load_external(&refs, cwd)?;
     let guest_ids = external.guest_ids();
     match FlsConfig::parse_json_with_known(&text, &guest_ids) {
-        Ok(config) => Ok(LoadedConfig {
-            lint: config.lint,
-            format: config.format,
-            plugin: config.plugin,
-            root,
-            remappings,
-            warnings,
-            external,
-        }),
+        Ok(config) => {
+            validate_plugins(config.plugin.as_deref(), &guest_ids)?;
+            Ok(LoadedConfig {
+                lint: config.lint,
+                format: config.format,
+                plugin: config.plugin,
+                root,
+                remappings,
+                warnings,
+                external,
+            })
+        }
         Err(LintConfigError::UnknownRule(id)) => Err(format!("fls: unknown lint rule: {id}")),
         Err(other) => {
             warnings.push(format!("fls: {other}"));
             Ok(LoadedConfig {
                 lint: LintConfig::default(),
                 format: FormatConfig::default(),
-                plugin: Vec::new(),
+                plugin: None,
                 root,
                 remappings,
                 warnings,
@@ -139,7 +141,7 @@ fn load_legacy_toml(cwd: &Path) -> Result<LoadedConfig, String> {
             return Ok(LoadedConfig {
                 lint: LintConfig::default(),
                 format: FormatConfig::default(),
-                plugin: Vec::new(),
+                plugin: None,
                 root: cwd.to_path_buf(),
                 remappings: Vec::new(),
                 warnings: Vec::new(),
@@ -160,6 +162,7 @@ fn load_legacy_toml(cwd: &Path) -> Result<LoadedConfig, String> {
             FlsConfig::default()
         }
     };
+    validate_plugins(config.plugin.as_deref(), &[])?;
     Ok(LoadedConfig {
         lint: config.lint,
         format: FormatConfig::default(),
@@ -169,4 +172,18 @@ fn load_legacy_toml(cwd: &Path) -> Result<LoadedConfig, String> {
         warnings,
         external: ExternalHosts::empty(),
     })
+}
+
+// Unknown plugin names fail fast like unknown rules. Valid names
+// are the four builtins plus loaded guest IDs.
+fn validate_plugins(plugins: Option<&[String]>, guest_ids: &[String]) -> Result<(), String> {
+    let Some(list) = plugins else {
+        return Ok(());
+    };
+    for name in list {
+        if validate_plugin_id(name, guest_ids).is_err() {
+            return Err(format!("fls: unknown plugin: {name}"));
+        }
+    }
+    Ok(())
 }

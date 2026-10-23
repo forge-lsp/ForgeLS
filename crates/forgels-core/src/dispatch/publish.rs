@@ -2,7 +2,9 @@ use serde_json::Value;
 
 use forgels_common::fs::is_trackable_file;
 use forgels_common::paths::resolve_import_full;
-use forgels_lint::{LintDiagnostic, RuleId, RuleLevel, resolve, should_lint};
+use forgels_lint::{
+    LintDiagnostic, PluginSet, RuleId, RuleLevel, filter_by_plugin, resolve, should_lint,
+};
 
 use super::sync::{resolve_root_for, uri_to_path};
 use super::{Session, Workspace};
@@ -146,7 +148,13 @@ fn publish_for_uri(
             }
         }
     }
-    let resolved = resolve(pending, &session.config.lint);
+    let resolved = resolve(
+        filter_by_plugin(
+            pending,
+            &PluginSet::from_option(session.config.plugin.as_deref()),
+        ),
+        &session.config.lint,
+    );
     let mut ordered: Vec<(Span, Diagnostic)> = resolved
         .into_iter()
         .map(|item| {

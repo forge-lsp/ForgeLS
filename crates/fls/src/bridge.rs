@@ -5,23 +5,24 @@ use forgels_common::paths::{Remapping, resolve_import_full};
 use forgels_core::Analyzer;
 use forgels_core::diagnostics::unresolved_import_to_diagnostic;
 use forgels_lang_solidity::{SolidityAnalyzer, filename_diagnostics};
-use forgels_lint::{LintConfig, LintDiagnostic, RuleId, Severity, resolve};
+use forgels_lint::{
+    LintConfig, LintDiagnostic, PluginSet, RuleId, Severity, filter_by_plugin, resolve,
+};
 
 use super::external::{ExternalHosts, lint_with_guests};
 
 /// Build lint diagnostics for one file.
 ///
 /// Runs the single-file analyzer, then adds unresolved imports via
-/// the shared server resolver, then guest lint calls, then applies
-/// config levels with the lint engine resolver in one pass. Guest
-/// off levels drop via the same resolve. Dep-aware rules run without
-/// tracked deps, so cross-file findings may be missing: single-file
-/// degrade by design. Root is cwd or the config root. Empty hosts
-/// keep builtins byte-identical.
+/// the shared server resolver, then guest lint calls, then the
+/// plugin group gate for builtins only, then one `resolve()`.
+/// Guests always run when configured; empty hosts keep builtins
+/// byte-identical. Group gate wins over per-rule levels.
 pub fn diagnostics_for_file(
     path: &Path,
     text: &str,
     lint: &LintConfig,
+    plugins: Option<&[String]>,
     root: &Path,
     remappings: &[Remapping],
     external: &mut ExternalHosts,
@@ -60,5 +61,6 @@ pub fn diagnostics_for_file(
         ));
     }
     let combined = lint_with_guests(external, path, text, out);
-    resolve(combined, lint)
+    let gated = filter_by_plugin(combined, &PluginSet::from_option(plugins));
+    resolve(gated, lint)
 }

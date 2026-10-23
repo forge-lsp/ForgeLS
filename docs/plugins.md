@@ -74,12 +74,22 @@ No in-repo example crate in V1. Shape for an author:
 
 ## Behavior
 
+- Lint enablement uses top-level `plugin`: absent means all, listed
+  means only those, empty means none. Unknown names fail fast.
 - Check runs builtins plus imports plus filename, then guest lint,
-  then one `resolve()`. Guest `off` drops via the same resolve.
+  then the plugin group gate for builtins only, then one `resolve()`.
+  Group gate wins over per-rule levels. Guest `off` drops via resolve.
   Empty hosts keep builtins byte-identical.
-- Format runs builtin to convergence, one guest pass applied via
-  `forgels_fmt::apply`, then builtin again. Each builtin phase keeps
-  its cap-4 fixpoint.
-- LSP loads config plus guests once and appends guest results in
-  `diagnostics_ctx` with host-side `should_lint` before the call.
-  Core is unchanged.
+- Guests always run when listed in `lint.external`, even when the
+  plugin list is empty or omits every builtin group.
+- Format gate checks `forge:format`: absent or listed runs builtin
+  convergence plus one guest pass plus builtin again. Unlisted skips
+  builtins and runs guest passes only. Each builtin phase keeps its
+  cap-4 fixpoint.
+- Fix (`check --write`) is out of scope for plugin gating: it applies
+  safe fixes to whatever diagnostics survived the gate.
+- Code actions stay direct with no plugin gate in V1 by design.
+- CLI unknown plugin exits 2 like unknown rules. LSP warns and runs
+  with defaults instead of exiting.
+- No new core test harness in V1: coverage is unit tests for
+  `PluginSet` plus CLI goldens for check, format-off, and guests.

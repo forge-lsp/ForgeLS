@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use forgels_fmt::{FormatOptions, format_text};
+use forgels_lint::{PluginSet, builtin_format_enabled};
 
 use super::config::{LoadedConfig, format_options_from};
 use super::external::{ExternalHosts, format_with_guests};
@@ -8,15 +9,28 @@ use super::run::{path_display, write_to};
 use super::walk::collect_files;
 use crate::cli::FormatArgs;
 
-// Format order: builtin to convergence, one guest pass, builtin
-// again. Each builtin phase keeps its cap-4 fixpoint. Guests apply
-// via forgels_fmt::apply. Empty hosts skip the guest pass.
+// Format order when enabled: builtin to convergence, one guest
+// pass, builtin again. Each builtin phase keeps its cap-4 fixpoint.
+// Guests apply via forgels_fmt::apply. Empty hosts skip the guest
+// pass. When forge:format is unlisted, builtins skip and guest
+// edits apply to the raw text only.
 fn format_with_external(
     path: &Path,
     text: &str,
     options: &FormatOptions,
     external: &mut ExternalHosts,
+    format_on: bool,
 ) -> String {
+    if !format_on {
+        if !external.has_guests() {
+            return text.to_string();
+        }
+        let edits = format_with_guests(external, path, text, options);
+        if edits.is_empty() {
+            return text.to_string();
+        }
+        return forgels_fmt::apply(text, &edits).text;
+    }
     let first = format_text(text, options).text;
     if !external.has_guests() {
         return first;
@@ -54,6 +68,7 @@ pub fn run(args: &FormatArgs, cwd: &Path, config: &mut LoadedConfig) -> i32 {
         eprintln!("{warning}");
     }
     let options = format_options_from(&config.format);
+    let format_on = builtin_format_enabled(&PluginSet::from_option(config.plugin.as_deref()));
     for path in &args.paths {
         if path.is_file() && path.extension().and_then(|ext| ext.to_str()) == Some("sol") {
             continue;
@@ -79,7 +94,8 @@ pub fn run(args: &FormatArgs, cwd: &Path, config: &mut LoadedConfig) -> i32 {
     if args.check {
         let mut changed: Vec<String> = Vec::new();
         for (path, text) in &texts {
-            if format_with_external(path, text, &options, &mut config.external) != *text {
+            if format_with_external(path, text, &options, &mut config.external, format_on) != *text
+            {
                 changed.push(path_display(cwd, path));
             }
         }
@@ -99,7 +115,8 @@ pub fn run(args: &FormatArgs, cwd: &Path, config: &mut LoadedConfig) -> i32 {
     }
     if args.write {
         for (path, text) in &texts {
-            let formatted = format_with_external(path, text, &options, &mut config.external);
+            let formatted =
+                format_with_external(path, text, &options, &mut config.external, format_on);
             if formatted == *text {
                 continue;
             }
@@ -117,6 +134,7 @@ pub fn run(args: &FormatArgs, cwd: &Path, config: &mut LoadedConfig) -> i32 {
             text,
             &options,
             &mut config.external,
+            format_on,
         ));
     }
     if write_to(&mut std::io::stdout(), &out).is_err() {

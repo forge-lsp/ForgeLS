@@ -419,3 +419,74 @@ fn walk_truncation_warns_on_stderr() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn style_only_plugin_drops_correctness() {
+    let dir = fresh_dir("plugin-style");
+    let file = dir.join("a.sol");
+    write_file(&file, OVERRIDE_SRC);
+    write_file(
+        &dir.join("fls.json"),
+        "{\"plugin\":[\"forge:style\"],\"lint\":{},\"format\":{}}",
+    );
+    let out = run_in(&dir, &["check", "--json", file.to_str().expect("utf8")]);
+    assert_eq!(out.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let value: serde_json::Value = serde_json::from_str(&stdout).expect("valid json");
+    let diags = value
+        .pointer("/files/0/diagnostics")
+        .and_then(|list| list.as_array())
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        diags
+            .iter()
+            .all(|item| item.pointer("/rule") != Some(&serde_json::json!("correctness/override"))),
+        "correctness dropped: {stdout}"
+    );
+    assert!(
+        diags
+            .iter()
+            .any(|item| item.pointer("/rule") == Some(&serde_json::json!("style/filename-match"))),
+        "style kept: {stdout}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn empty_plugin_list_reports_clean() {
+    let dir = fresh_dir("plugin-empty");
+    let file = dir.join("a.sol");
+    write_file(&file, OVERRIDE_SRC);
+    write_file(
+        &dir.join("fls.json"),
+        "{\"plugin\":[],\"lint\":{},\"format\":{}}",
+    );
+    let out = run_in(&dir, &["check", "--json", file.to_str().expect("utf8")]);
+    assert_eq!(out.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    if !stdout.trim().is_empty() {
+        let value: serde_json::Value = serde_json::from_str(&stdout).expect("valid json");
+        let files = value.pointer("/files").and_then(|v| v.as_array());
+        assert!(files.is_none() || files.expect("array").is_empty());
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn unknown_plugin_exits_two() {
+    let dir = fresh_dir("plugin-unknown");
+    let file = dir.join("a.sol");
+    write_file(&file, CLEAN_SRC);
+    write_file(
+        &dir.join("fls.json"),
+        "{\"plugin\":[\"forge:nope\"],\"lint\":{},\"format\":{}}",
+    );
+    let out = run_in(&dir, &["check", file.to_str().expect("utf8")]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("unknown plugin"),
+        "stderr names plugin"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

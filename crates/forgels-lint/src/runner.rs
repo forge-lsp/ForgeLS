@@ -1,6 +1,7 @@
 use super::Severity;
 use super::config::{LintConfig, RuleLevel};
 use super::diagnostic::LintDiagnostic;
+use super::plugin::PluginSet;
 
 // Apply config levels to pushed diagnostics. Off drops, warn and err
 // override severity, absent keeps the language default. Stable sort by
@@ -29,6 +30,26 @@ pub fn resolve(diagnostics: Vec<LintDiagnostic>, config: &LintConfig) -> Vec<Lin
             .then(left.message.cmp(&right.message))
     });
     out
+}
+
+// Group gate runs before per-rule levels: unlisted builtin groups
+// drop here, then resolve applies off/warn/err. Guests pass through
+// so external lint always runs when configured.
+pub fn filter_by_plugin(diagnostics: Vec<LintDiagnostic>, set: &PluginSet) -> Vec<LintDiagnostic> {
+    if set.is_all() {
+        return diagnostics;
+    }
+    diagnostics
+        .into_iter()
+        .filter(|diag| set.allows(diag.rule))
+        .collect()
+}
+
+// True when builtin formatting may run. Absent means all so format
+// runs; listed needs forge:format; empty or unlisted skips builtins
+// and leaves guest passes only.
+pub fn builtin_format_enabled(set: &PluginSet) -> bool {
+    set.contains("forge:format")
 }
 
 #[cfg(test)]
@@ -105,5 +126,47 @@ mod tests {
         );
         let out = resolve(vec![second.clone(), first.clone()], &LintConfig::default());
         assert_eq!(out, vec![first, second]);
+    }
+
+    #[test]
+    fn plugin_filter_keeps_listed_group_only() {
+        let set = PluginSet::from_list(&["forge:style".to_string()]);
+        let out = filter_by_plugin(
+            vec![
+                diag("a", RuleId::UNUSED, Severity::Error),
+                diag("b", RuleId::NAMING, Severity::Warning),
+            ],
+            &set,
+        );
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].rule, RuleId::NAMING);
+    }
+
+    #[test]
+    fn plugin_filter_empty_drops_builtins_keeps_guests() {
+        let leaked: &'static str = Box::leak("example/guest-rule".to_string().into_boxed_str());
+        let guest = RuleId::from_leaked(leaked);
+        let set = PluginSet::from_list(&[]);
+        let out = filter_by_plugin(
+            vec![
+                diag("a", RuleId::UNUSED, Severity::Error),
+                diag("g", guest, Severity::Warning),
+            ],
+            &set,
+        );
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].rule, guest);
+    }
+
+    #[test]
+    fn format_gate_needs_absent_or_listed() {
+        assert!(builtin_format_enabled(&PluginSet::all()));
+        assert!(builtin_format_enabled(&PluginSet::from_list(&[
+            "forge:format".to_string()
+        ])));
+        assert!(!builtin_format_enabled(&PluginSet::from_list(&[
+            "forge:style".to_string()
+        ])));
+        assert!(!builtin_format_enabled(&PluginSet::from_list(&[])));
     }
 }

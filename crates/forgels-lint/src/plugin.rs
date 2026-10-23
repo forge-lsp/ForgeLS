@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use super::{RuleId, Severity};
 
@@ -136,6 +136,77 @@ pub fn builtin_format_plugin() -> Vec<RuleMeta> {
     FormatPlugin::rules()
 }
 
+// Builtin plugin names. Guests add rule IDs, never these names.
+pub const BUILTIN_PLUGINS: &[&str] = &[
+    "forge:correctness",
+    "forge:style",
+    "forge:safety",
+    "forge:format",
+];
+
+// Enabled plugin snapshot. None means absent-means-all, Some holds
+// the listed names, empty Some means none. Unknown names fail fast
+// at load, so this set only carries validated entries.
+#[derive(Debug, Clone, Default)]
+pub struct PluginSet {
+    listed: Option<HashSet<String>>,
+}
+
+impl PluginSet {
+    pub fn all() -> Self {
+        Self { listed: None }
+    }
+
+    pub fn from_list(names: &[String]) -> Self {
+        Self {
+            listed: Some(names.iter().cloned().collect()),
+        }
+    }
+
+    pub fn from_option(names: Option<&[String]>) -> Self {
+        match names {
+            None => Self::all(),
+            Some(list) => Self::from_list(list),
+        }
+    }
+
+    pub fn is_all(&self) -> bool {
+        self.listed.is_none()
+    }
+
+    // True when the named plugin is enabled. Absent means all.
+    pub fn contains(&self, name: &str) -> bool {
+        match &self.listed {
+            None => true,
+            Some(set) => set.contains(name),
+        }
+    }
+
+    // True when the rule may report. Builtins map by group:
+    // correctness to forge:correctness, style plus foundry to
+    // forge:style, safety to forge:safety. forge:format has no
+    // rules. Guest IDs pass through so guests always run.
+    pub fn allows(&self, rule: RuleId) -> bool {
+        if self.listed.is_none() {
+            return true;
+        }
+        if !RuleId::all().contains(&rule) {
+            return true;
+        }
+        let id = rule.as_str();
+        let want = if id.starts_with("correctness/") {
+            "forge:correctness"
+        } else if id.starts_with("style/") || id.starts_with("foundry/") {
+            "forge:style"
+        } else if id.starts_with("safety/") {
+            "forge:safety"
+        } else {
+            return true;
+        };
+        self.contains(want)
+    }
+}
+
 // Rule lookup keyed by full `group/name` string.
 #[derive(Debug, Clone, Default)]
 pub struct Registry {
@@ -245,5 +316,54 @@ mod tests {
         for id in RuleId::all() {
             assert!(registry.get(id.as_str()).is_some());
         }
+    }
+
+    #[test]
+    fn absent_set_allows_every_rule() {
+        let set = PluginSet::all();
+        assert!(set.is_all());
+        for id in RuleId::all() {
+            assert!(set.allows(*id));
+        }
+        assert!(set.contains("forge:format"));
+    }
+
+    #[test]
+    fn empty_list_blocks_all_builtins() {
+        let set = PluginSet::from_list(&[]);
+        for id in RuleId::all() {
+            assert!(!set.allows(*id));
+        }
+        assert!(!set.contains("forge:format"));
+    }
+
+    #[test]
+    fn style_list_keeps_style_and_foundry_only() {
+        let names = vec!["forge:style".to_string()];
+        let set = PluginSet::from_list(&names);
+        assert!(set.allows(RuleId::NAMING));
+        assert!(set.allows(RuleId::TEST_NAMING));
+        assert!(!set.allows(RuleId::UNUSED));
+        assert!(!set.allows(RuleId::TX_ORIGIN));
+        assert!(!set.contains("forge:format"));
+    }
+
+    #[test]
+    fn guest_rule_passes_listed_filter() {
+        let leaked: &'static str = Box::leak("example/guest-rule".to_string().into_boxed_str());
+        let guest = RuleId::from_leaked(leaked);
+        let set = PluginSet::from_list(&["forge:style".to_string()]);
+        assert!(set.allows(guest));
+        let empty = PluginSet::from_list(&[]);
+        assert!(empty.allows(guest));
+    }
+
+    #[test]
+    fn option_none_means_all_some_empty_means_none() {
+        assert!(PluginSet::from_option(None).is_all());
+        let empty: Vec<String> = Vec::new();
+        let set = PluginSet::from_option(Some(&empty));
+        assert!(!set.is_all());
+        assert!(!set.allows(RuleId::UNUSED));
     }
 }
