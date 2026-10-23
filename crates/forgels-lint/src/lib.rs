@@ -15,7 +15,9 @@ pub mod rule;
 pub mod runner;
 pub mod severity;
 
-pub use config::{FlsConfig, FormatConfig, LintConfig, LintConfigError, RuleLevel};
+pub use config::{
+    ExternalRef, FlsConfig, FormatConfig, LintConfig, LintConfigError, RuleLevel, validate_rule_id,
+};
 pub use diagnostic::{Applicability, LintDiagnostic, LintFix};
 pub use filter::should_lint;
 pub use fix::{FixOutcome, apply};

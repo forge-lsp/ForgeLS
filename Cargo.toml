@@ -32,6 +32,8 @@ forgels-lang-noir = { path = "crates/forgels-lang-noir" }
 serde_json = "1"
 toml = "1"
 glob = "0.3"
+wasmtime = { version = "50", default-features = false, features = ["runtime", "cranelift", "std"] }
+wat = "1"
 clap = { version = "4", features = ["derive"] }
 tracing = "0.1"
 tracing-subscriber = "0.3"

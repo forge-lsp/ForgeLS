@@ -14,7 +14,7 @@ use crate::cli::CheckArgs;
 /// `--write`, then prints the human or JSON report to stdout.
 /// Config warnings go to stderr. Exit is 0 for clean or warn-only,
 /// 1 for any error, 2 for operational failures.
-pub fn run(args: &CheckArgs, cwd: &Path, config: &LoadedConfig) -> i32 {
+pub fn run(args: &CheckArgs, cwd: &Path, config: &mut LoadedConfig) -> i32 {
     let (files, truncated) = match collect_files(&args.paths, cwd, &config.lint.excludes) {
         Ok(found) => found,
         Err(message) => {
@@ -60,8 +60,14 @@ pub fn run(args: &CheckArgs, cwd: &Path, config: &LoadedConfig) -> i32 {
     let mut reports: Vec<FileReport> = Vec::new();
     let mut has_error = false;
     for (path, text) in &texts {
-        let mut diagnostics =
-            diagnostics_for_file(path, text, &config.lint, &config.root, &config.remappings);
+        let mut diagnostics = diagnostics_for_file(
+            path,
+            text,
+            &config.lint,
+            &config.root,
+            &config.remappings,
+            &mut config.external,
+        );
         if args.write {
             attach_fixes(path, text, &mut diagnostics, &workspace);
             match apply_and_write(path, text, &diagnostics) {

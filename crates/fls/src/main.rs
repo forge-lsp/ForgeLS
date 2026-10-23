@@ -1,6 +1,7 @@
 mod bridge;
 mod cli;
 mod config;
+mod external;
 mod fix;
 mod format;
 mod init;
@@ -21,26 +22,26 @@ fn main() {
     match command {
         Command::Check(args) => {
             let root = cwd();
-            let config = match config::load(&root) {
+            let mut config = match config::load(&root) {
                 Ok(config) => config,
                 Err(message) => {
                     eprintln!("{message}");
                     std::process::exit(2);
                 }
             };
-            let code = run::run(&args, &root, &config);
+            let code = run::run(&args, &root, &mut config);
             std::process::exit(code);
         }
         Command::Format(args) => {
             let root = cwd();
-            let config = match config::load(&root) {
+            let mut config = match config::load(&root) {
                 Ok(config) => config,
                 Err(message) => {
                     eprintln!("{message}");
                     std::process::exit(2);
                 }
             };
-            let code = format::run(&args, &root, &config);
+            let code = format::run(&args, &root, &mut config);
             std::process::exit(code);
         }
         Command::Lsp(args) => {

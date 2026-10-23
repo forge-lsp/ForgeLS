@@ -1,11 +1,33 @@
 use std::path::{Path, PathBuf};
 
-use forgels_fmt::format_text;
+use forgels_fmt::{FormatOptions, format_text};
 
 use super::config::{LoadedConfig, format_options_from};
+use super::external::{ExternalHosts, format_with_guests};
 use super::run::{path_display, write_to};
 use super::walk::collect_files;
 use crate::cli::FormatArgs;
+
+// Format order: builtin to convergence, one guest pass, builtin
+// again. Each builtin phase keeps its cap-4 fixpoint. Guests apply
+// via forgels_fmt::apply. Empty hosts skip the guest pass.
+fn format_with_external(
+    path: &Path,
+    text: &str,
+    options: &FormatOptions,
+    external: &mut ExternalHosts,
+) -> String {
+    let first = format_text(text, options).text;
+    if !external.has_guests() {
+        return first;
+    }
+    let edits = format_with_guests(external, path, &first, options);
+    if edits.is_empty() {
+        return first;
+    }
+    let after_guest = forgels_fmt::apply(&first, &edits).text;
+    format_text(&after_guest, options).text
+}
 
 // Run format and return the process exit code.
 //
@@ -13,7 +35,7 @@ use crate::cli::FormatArgs;
 // writes changed files in place. `--check` lists files that would
 // change without writing. Exit is 0 for clean, 1 for check
 // would-change, 2 for operational failures.
-pub fn run(args: &FormatArgs, cwd: &Path, config: &LoadedConfig) -> i32 {
+pub fn run(args: &FormatArgs, cwd: &Path, config: &mut LoadedConfig) -> i32 {
     if args.write && args.check {
         eprintln!("fls: --write and --check are mutually exclusive");
         return 2;
@@ -57,7 +79,7 @@ pub fn run(args: &FormatArgs, cwd: &Path, config: &LoadedConfig) -> i32 {
     if args.check {
         let mut changed: Vec<String> = Vec::new();
         for (path, text) in &texts {
-            if format_text(text, &options).text != *text {
+            if format_with_external(path, text, &options, &mut config.external) != *text {
                 changed.push(path_display(cwd, path));
             }
         }
@@ -77,7 +99,7 @@ pub fn run(args: &FormatArgs, cwd: &Path, config: &LoadedConfig) -> i32 {
     }
     if args.write {
         for (path, text) in &texts {
-            let formatted = format_text(text, &options).text;
+            let formatted = format_with_external(path, text, &options, &mut config.external);
             if formatted == *text {
                 continue;
             }
@@ -89,8 +111,13 @@ pub fn run(args: &FormatArgs, cwd: &Path, config: &LoadedConfig) -> i32 {
         return 0;
     }
     let mut out = String::new();
-    for (_, text) in &texts {
-        out.push_str(&format_text(text, &options).text);
+    for (path, text) in &texts {
+        out.push_str(&format_with_external(
+            path,
+            text,
+            &options,
+            &mut config.external,
+        ));
     }
     if write_to(&mut std::io::stdout(), &out).is_err() {
         eprintln!("fls: cannot write output");
