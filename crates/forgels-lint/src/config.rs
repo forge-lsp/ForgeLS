@@ -77,9 +77,14 @@ pub struct FormatConfig {
 }
 
 // Grouped `fls.json` file: top-level plugin plus lint and format.
+//
+// Plugin enablement: absent (None) means all plugins run,
+// listed (Some) runs only those names, empty Some means none.
+// Unknown plugin names fail fast at load against the four
+// builtins plus loaded guest IDs.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct FlsConfig {
-    pub plugin: Vec<String>,
+    pub plugin: Option<Vec<String>>,
     pub lint: LintConfig,
     pub format: FormatConfig,
 }
@@ -163,7 +168,7 @@ impl FlsConfig {
     }
 
     // Parse grouped `fls.json` with known guest IDs for rule validation.
-    // Top-level `plugin` is a string array; absent means empty.
+    // Top-level `plugin` absent means all; present lists enabled names.
     pub fn parse_json_with_known(
         text: &str,
         guest_ids: &[String],
@@ -174,7 +179,7 @@ impl FlsConfig {
             .as_object()
             .ok_or_else(|| LintConfigError::Parse("fls.json must be an object".to_string()))?;
         let mut out = Self {
-            plugin: string_list(&value, "top-level", "plugin")?,
+            plugin: plugin_list_opt(&value)?,
             ..Default::default()
         };
         if let Some(lint) = table.get("lint") {
@@ -187,14 +192,14 @@ impl FlsConfig {
     }
 
     // Parse TOML text with top-level `plugin` plus `[lint]`.
-    // Absent plugin means empty; bad shape is a parse error.
+    // Absent plugin means all; bad shape is a parse error.
     // Old `[lint] plugins` is rejected by `LintConfig::parse_str`.
     pub fn parse_str(text: &str) -> Result<Self, LintConfigError> {
         let table: toml::Table = text
             .parse()
             .map_err(|err: toml::de::Error| LintConfigError::Parse(err.to_string()))?;
         Ok(Self {
-            plugin: toml_plugin_list(&table)?,
+            plugin: toml_plugin_list_opt(&table)?,
             lint: LintConfig::parse_str(text)?,
             ..Default::default()
         })
@@ -227,6 +232,18 @@ pub fn validate_rule_id(id: &str, guest_ids: &[String]) -> Result<(), LintConfig
     Err(LintConfigError::UnknownRule(id.to_string()))
 }
 
+// Validate one plugin name: four builtins always pass, guest rule
+// IDs pass when listed in `guest_ids`, else UnknownRule fail-fast.
+pub fn validate_plugin_id(id: &str, guest_ids: &[String]) -> Result<(), LintConfigError> {
+    if super::plugin::BUILTIN_PLUGINS.contains(&id) {
+        return Ok(());
+    }
+    if guest_ids.iter().any(|known| known == id) {
+        return Ok(());
+    }
+    Err(LintConfigError::UnknownRule(id.to_string()))
+}
+
 fn string_list(value: &Value, group: &str, key: &str) -> Result<Vec<String>, LintConfigError> {
     let Some(list) = value.get(key) else {
         return Ok(Vec::new());
@@ -244,11 +261,30 @@ fn string_list(value: &Value, group: &str, key: &str) -> Result<Vec<String>, Lin
     Ok(out)
 }
 
-// Top-level TOML `plugin` list. Mirrors `string_list`: absent means
-// empty, bad shape is a parse error naming the new key.
-fn toml_plugin_list(table: &toml::Table) -> Result<Vec<String>, LintConfigError> {
+// Top-level JSON `plugin` list. Absent means all (None),
+// present means listed (Some, possibly empty). Bad shape fails.
+fn plugin_list_opt(value: &Value) -> Result<Option<Vec<String>>, LintConfigError> {
+    let Some(list) = value.get("plugin") else {
+        return Ok(None);
+    };
+    let items = list
+        .as_array()
+        .ok_or_else(|| LintConfigError::Parse("top-level plugin must be an array".to_string()))?;
+    let mut out = Vec::new();
+    for entry in items {
+        let name = entry.as_str().ok_or_else(|| {
+            LintConfigError::Parse("top-level plugin must be strings".to_string())
+        })?;
+        out.push(name.to_string());
+    }
+    Ok(Some(out))
+}
+
+// Top-level TOML `plugin` list. Mirrors `plugin_list_opt`: absent
+// means all, bad shape is a parse error naming the new key.
+fn toml_plugin_list_opt(table: &toml::Table) -> Result<Option<Vec<String>>, LintConfigError> {
     let Some(raw) = table.get("plugin") else {
-        return Ok(Vec::new());
+        return Ok(None);
     };
     let list = raw
         .as_array()
@@ -260,7 +296,7 @@ fn toml_plugin_list(table: &toml::Table) -> Result<Vec<String>, LintConfigError>
         })?;
         out.push(name.to_string());
     }
-    Ok(out)
+    Ok(Some(out))
 }
 
 fn parse_external_value(value: &Value) -> Result<Vec<ExternalRef>, LintConfigError> {
@@ -510,7 +546,7 @@ mod tests {
         let config = LintConfig::parse_str("").expect("empty parses");
         assert!(config.rules.is_empty());
         let full = FlsConfig::parse_str("").expect("empty parses");
-        assert!(full.plugin.is_empty());
+        assert!(full.plugin.is_none());
         assert_eq!(full, FlsConfig::default());
     }
 
@@ -529,7 +565,10 @@ mod tests {
         let full = FlsConfig::parse_str(text).expect("parses");
         assert_eq!(
             full.plugin,
-            vec!["forge:correctness".to_string(), "forge:style".to_string()]
+            Some(vec![
+                "forge:correctness".to_string(),
+                "forge:style".to_string()
+            ])
         );
         assert_eq!(full.lint.level_for(RuleId::UNUSED), Some(RuleLevel::Warn));
     }
@@ -550,9 +589,15 @@ mod tests {
     }
 
     #[test]
-    fn toml_plugin_absent_means_empty() {
+    fn toml_plugin_absent_means_all() {
         let full = FlsConfig::parse_str("[lint.rules]\n").expect("parses");
-        assert!(full.plugin.is_empty());
+        assert!(full.plugin.is_none());
+    }
+
+    #[test]
+    fn toml_plugin_empty_list_means_none() {
+        let full = FlsConfig::parse_str("plugin = []\n").expect("parses");
+        assert_eq!(full.plugin, Some(Vec::new()));
     }
 
     #[test]
@@ -612,7 +657,10 @@ mod tests {
         let full = FlsConfig::parse_json(text).expect("parses");
         assert_eq!(
             full.plugin,
-            vec!["forge:correctness".to_string(), "forge:style".to_string()]
+            Some(vec![
+                "forge:correctness".to_string(),
+                "forge:style".to_string()
+            ])
         );
         assert_eq!(full.lint.level_for(RuleId::UNUSED), Some(RuleLevel::Warn));
     }
@@ -633,11 +681,17 @@ mod tests {
     }
 
     #[test]
-    fn json_plugin_absent_means_empty() {
+    fn json_plugin_absent_means_all() {
         let full = FlsConfig::parse_json("{}").expect("parses");
-        assert!(full.plugin.is_empty());
+        assert!(full.plugin.is_none());
         let full = FlsConfig::parse_json(r#"{"lint":{}}"#).expect("parses");
-        assert!(full.plugin.is_empty());
+        assert!(full.plugin.is_none());
+    }
+
+    #[test]
+    fn json_plugin_empty_list_means_none() {
+        let full = FlsConfig::parse_json(r#"{"plugin":[]}"#).expect("parses");
+        assert_eq!(full.plugin, Some(Vec::new()));
     }
 
     #[test]

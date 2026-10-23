@@ -50,8 +50,11 @@ fls init [--force]
   `format` via `serde_json::to_string_pretty`.
 - Top-level `plugin` is a string array, for example
   `{"plugin":["forge:correctness"]}` in JSON and
-  `plugin = ["forge:correctness"]` in TOML. Absent means empty.
-  Bad shape is a parse error. V1 parses only: no gating, no validation.
+  `plugin = ["forge:correctness"]` in TOML. Absent means all, listed
+  means only those, empty means none. Unknown names fail fast.
+  Bad shape is a parse error. CLI exits 2; LSP warns with defaults.
+- `forge:format` absent or listed runs builtin format; unlisted skips
+  builtins and runs guest passes only.
 - Old `[lint] plugins` and `lint.plugins` are parse errors naming
   top-level `plugin`. Move entries to the top-level array.
 - `init` defaults are `["forge:correctness", "forge:style",

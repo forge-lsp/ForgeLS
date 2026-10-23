@@ -264,3 +264,24 @@ fn formatted_messy_has_no_blank_or_length_warns() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn format_unlisted_leaves_files_unchanged() {
+    let dir = fresh_dir("fmt-off");
+    let file = dir.join("a.sol");
+    write_file(&file, DIRTY_SRC);
+    write_file(
+        &dir.join("fls.json"),
+        "{\"plugin\":[\"forge:style\"],\"lint\":{},\"format\":{}}",
+    );
+    let out = run_in(&dir, &["format", "--write", file.to_str().expect("utf8")]);
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(
+        std::fs::read_to_string(&file).expect("read"),
+        DIRTY_SRC,
+        "unlisted format skips builtins"
+    );
+    let check = run_in(&dir, &["format", "--check", file.to_str().expect("utf8")]);
+    assert_eq!(check.status.code(), Some(0));
+    let _ = std::fs::remove_dir_all(&dir);
+}

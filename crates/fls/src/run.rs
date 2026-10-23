@@ -64,6 +64,7 @@ pub fn run(args: &CheckArgs, cwd: &Path, config: &mut LoadedConfig) -> i32 {
             path,
             text,
             &config.lint,
+            config.plugin.as_deref(),
             &config.root,
             &config.remappings,
             &mut config.external,

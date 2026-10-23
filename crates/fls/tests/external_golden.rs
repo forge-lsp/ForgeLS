@@ -174,3 +174,43 @@ fn guest_format_write_twice_identical_and_check_clean() {
     assert_eq!(lint.status.code(), Some(0), "warn-only check exits 0");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn guest_runs_despite_style_only_filter() {
+    let dir = fresh_dir("ext-filter");
+    write_guest(&dir);
+    let text = "{\"plugin\":[\"forge:style\"],\"lint\":{\"includes\":[],\"excludes\":[],\"rules\":{\"example/guest-rule\":\"warn\"},\"external\":[{\"path\":\"plugin.wasm\"}]},\"format\":{}}";
+    write_file(&dir.join("fls.json"), text);
+    let file = dir.join("a.sol");
+    write_file(
+        &file,
+        "// SPDX-License-Identifier: MIT\ncontract B {\n/// @notice Greets.\n/// @param a Value.\nfunction greet(uint a) public virtual { a; }\n}\n\n\ncontract D is B {\n/// @notice Greets.\n/// @param a Value.\nfunction greet(uint a) public { a; }\n}\n",
+    );
+    let out = run_in(&dir, &["check", "--json", file.to_str().expect("utf8")]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let value: serde_json::Value = serde_json::from_str(&stdout).expect("valid json");
+    let diags = value
+        .pointer("/files/0/diagnostics")
+        .and_then(|list| list.as_array())
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        diags
+            .iter()
+            .any(|item| item.pointer("/rule") == Some(&serde_json::json!("example/guest-rule"))),
+        "guest passes filter: {stdout}"
+    );
+    assert!(
+        diags
+            .iter()
+            .any(|item| item.pointer("/rule") == Some(&serde_json::json!("style/filename-match"))),
+        "style kept: {stdout}"
+    );
+    assert!(
+        diags
+            .iter()
+            .all(|item| item.pointer("/rule") != Some(&serde_json::json!("correctness/override"))),
+        "correctness dropped: {stdout}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

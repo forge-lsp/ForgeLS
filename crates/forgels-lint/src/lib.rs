@@ -16,16 +16,18 @@ pub mod runner;
 pub mod severity;
 
 pub use config::{
-    ExternalRef, FlsConfig, FormatConfig, LintConfig, LintConfigError, RuleLevel, validate_rule_id,
+    ExternalRef, FlsConfig, FormatConfig, LintConfig, LintConfigError, RuleLevel,
+    validate_plugin_id, validate_rule_id,
 };
 pub use diagnostic::{Applicability, LintDiagnostic, LintFix};
 pub use filter::should_lint;
 pub use fix::{FixOutcome, apply};
 pub use plugin::{
-    CorrectnessPlugin, FormatPlugin, LintPlugin, Registry, RuleMeta, SafetyPlugin, StylePlugin,
-    builtin_correctness_plugin, builtin_format_plugin, builtin_safety_plugin, builtin_style_plugin,
+    BUILTIN_PLUGINS, CorrectnessPlugin, FormatPlugin, LintPlugin, PluginSet, Registry, RuleMeta,
+    SafetyPlugin, StylePlugin, builtin_correctness_plugin, builtin_format_plugin,
+    builtin_safety_plugin, builtin_style_plugin,
 };
 pub use reporter::{FileReport, report, report_json};
 pub use rule::RuleId;
-pub use runner::resolve;
+pub use runner::{builtin_format_enabled, filter_by_plugin, resolve};
 pub use severity::Severity;

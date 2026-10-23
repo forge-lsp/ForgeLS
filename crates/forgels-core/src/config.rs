@@ -23,6 +23,9 @@ pub struct Config {
     pub remappings: Vec<Remapping>,
     /// Lint levels plus include/exclude filters for publish.
     pub lint: LintConfig,
+    /// Enabled plugins. None means absent-means-all so old callers
+    /// without this field keep full diagnostics.
+    pub plugin: Option<Vec<String>>,
 }
 
 impl Default for Config {
@@ -33,6 +36,7 @@ impl Default for Config {
             log_level: String::from("warn"),
             remappings: Vec::new(),
             lint: LintConfig::default(),
+            plugin: None,
         }
     }
 }
