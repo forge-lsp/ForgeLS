@@ -42,10 +42,15 @@ fn wat_escape(raw: &str) -> String {
     raw.replace('"', "\\\"")
 }
 
-fn guest_wat_for(lint_json: &str) -> String {
+fn guest_wat_for(lint_json: &str, major: i32, minor: i32, emit_minor: bool) -> String {
     let lint_escaped = wat_escape(lint_json);
     let fmt_escaped = wat_escape(FMT_JSON);
     let rules_escaped = wat_escape(RULES_JSON);
+    let minor_line = if emit_minor {
+        format!(r#"  (func (export "forgels_plugin_abi_minor") (result i32) (i32.const {minor}))"#)
+    } else {
+        String::new()
+    };
     format!(
         r#"(module
   (memory (export "memory") 1)
@@ -53,7 +58,8 @@ fn guest_wat_for(lint_json: &str) -> String {
   (data (i32.const 16) "{lint_escaped}")
   (data (i32.const 512) "{fmt_escaped}")
   (data (i32.const 1024) "{rules_escaped}")
-  (func (export "forgels_plugin_abi_version") (result i32) (i32.const 1))
+  (func (export "forgels_plugin_abi_version") (result i32) (i32.const {major}))
+{minor_line}
   (func (export "alloc") (param $size i32) (result i32)
     (global.get $heap)
     (global.get $heap)
@@ -81,7 +87,7 @@ fn guest_wat_for(lint_json: &str) -> String {
 }
 
 fn guest_wat() -> String {
-    guest_wat_for(LINT_JSON)
+    guest_wat_for(LINT_JSON, 1, 0, true)
 }
 
 fn write_guest(dir: &Path) {
@@ -91,7 +97,13 @@ fn write_guest(dir: &Path) {
 }
 
 fn write_guest_with(dir: &Path, lint_json: &str) {
-    let wat_text = guest_wat_for(lint_json);
+    let wat_text = guest_wat_for(lint_json, 1, 0, true);
+    let bytes = wat::parse_str(&wat_text).expect("wat compiles");
+    std::fs::write(dir.join("plugin.wasm"), &bytes).expect("write wasm");
+}
+
+fn write_guest_abi(dir: &Path, lint_json: &str, major: i32, minor: i32, emit_minor: bool) {
+    let wat_text = guest_wat_for(lint_json, major, minor, emit_minor);
     let bytes = wat::parse_str(&wat_text).expect("wat compiles");
     std::fs::write(dir.join("plugin.wasm"), &bytes).expect("write wasm");
 }
@@ -311,6 +323,71 @@ fn guest_unknown_second_rule_exits_two() {
         String::from_utf8_lossy(&out.stderr).contains("unknown lint rule"),
         "stderr names rule: {}",
         String::from_utf8_lossy(&out.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn abi_major_mismatch_exits_two_dotted() {
+    let dir = fresh_dir("ext-abi-major");
+    write_guest_abi(&dir, LINT_JSON, 2, 0, true);
+    write_config(&dir, "warn");
+    let file = dir.join("a.sol");
+    write_file(&file, CLEAN_SRC);
+    let out = run_in(&dir, &["check", file.to_str().expect("utf8")]);
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert!(stderr.contains("unsupported abi"), "keeps prefix: {stderr}");
+    assert!(stderr.contains("2.0"), "names guest dotted: {stderr}");
+    assert!(stderr.contains("1."), "names host dotted: {stderr}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn abi_minor_ahead_warns_once_and_loads() {
+    let dir = fresh_dir("ext-abi-minor");
+    write_guest_abi(&dir, LINT_JSON, 1, 1, true);
+    write_config(&dir, "warn");
+    let file = dir.join("a.sol");
+    write_file(&file, CLEAN_SRC);
+    let out = run_in(&dir, &["check", "--json", file.to_str().expect("utf8")]);
+    assert_eq!(out.status.code(), Some(0));
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    let warns: Vec<&str> = stderr
+        .lines()
+        .filter(|line| line.contains("newer abi"))
+        .collect();
+    assert_eq!(warns.len(), 1, "one warn line: {stderr}");
+    assert!(stderr.contains("1.1"), "names guest minor: {stderr}");
+    assert!(stderr.contains("1.0"), "names host version: {stderr}");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let value: serde_json::Value = serde_json::from_str(&stdout).expect("valid json");
+    let diags = value
+        .pointer("/files/0/diagnostics")
+        .and_then(|list| list.as_array())
+        .expect("diagnostics array");
+    assert!(
+        diags
+            .iter()
+            .any(|item| item.pointer("/rule") == Some(&serde_json::json!("example/guest-rule"))),
+        "guest diag present: {stdout}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn abi_exact_stays_silent() {
+    let dir = fresh_dir("ext-abi-exact");
+    write_guest_abi(&dir, LINT_JSON, 1, 0, true);
+    write_config(&dir, "warn");
+    let file = dir.join("a.sol");
+    write_file(&file, CLEAN_SRC);
+    let out = run_in(&dir, &["check", "--json", file.to_str().expect("utf8")]);
+    assert_eq!(out.status.code(), Some(0));
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert!(
+        !stderr.to_lowercase().contains("abi"),
+        "no abi stderr: {stderr}"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }

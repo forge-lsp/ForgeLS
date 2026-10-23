@@ -8,8 +8,9 @@
 pub mod abi;
 pub mod types;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use forgels_fmt::{FormatEdit, FormatOptions};
@@ -77,6 +78,28 @@ fn is_url_ref(raw: &str) -> bool {
     raw.contains("://") || raw.starts_with("http:") || raw.starts_with("https:")
 }
 
+fn abi_warn_guard() -> &'static Mutex<HashSet<String>> {
+    static WARNED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    WARNED.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+fn emit_abi_warn_once(local: &mut HashSet<String>, display: &str, major: i32, minor: i32) {
+    if !local.insert(display.to_string()) {
+        return;
+    }
+    let fresh = abi_warn_guard()
+        .lock()
+        .map(|mut seen| seen.insert(display.to_string()))
+        .unwrap_or(true);
+    if fresh {
+        eprintln!(
+            "fls: external plugin {display}: newer abi {major}.{minor}, want {}.{} (continuing)",
+            abi::ABI_MAJOR,
+            abi::ABI_MINOR
+        );
+    }
+}
+
 fn sandbox_engine() -> Result<Engine, String> {
     let mut config = Config::new();
     config.consume_fuel(true);
@@ -129,6 +152,7 @@ pub fn load_external(refs: &[ExternalRef], cwd: &Path) -> Result<ExternalHosts, 
     let engine = sandbox_engine()?;
     let mut guests = Vec::new();
     let mut rule_cache: HashMap<String, RuleId> = HashMap::new();
+    let mut warned: HashSet<String> = HashSet::new();
     for item in refs {
         if is_url_ref(&item.path) {
             return Err(format!(
@@ -157,7 +181,10 @@ pub fn load_external(refs: &[ExternalRef], cwd: &Path) -> Result<ExternalHosts, 
         let mut store = sandbox_store(&engine)?;
         arm_epoch_timeout(&engine);
         let instance = instantiate(&mut store, &module, &display)?;
-        abi::check_abi_version(&mut store, &instance, &display)?;
+        let compat = abi::check_abi_compat(&mut store, &instance, &display)?;
+        if let abi::AbiCompat::Warn { major, minor } = compat {
+            emit_abi_warn_once(&mut warned, &display, major, minor);
+        }
         let rules = abi::call_rules(&mut store, &instance, &display)?;
         for id in &rules {
             if !RuleId::is_guest_id(id) {
@@ -325,6 +352,74 @@ mod tests {
         let module = Module::new(&engine, &bytes).expect("module compiles");
         let mut store = sandbox_store(&engine).expect("store");
         let instance = instantiate(&mut store, &module, "abi-test").expect("instantiates");
-        assert!(abi::check_abi_version(&mut store, &instance, "abi-test").is_err());
+        let err = abi::check_abi_version(&mut store, &instance, "abi-test").expect_err("rejects");
+        assert!(err.contains("unsupported abi"), "keeps prefix: {err}");
+        assert!(err.contains("2.0"), "names guest dotted: {err}");
+        assert!(err.contains("1."), "names host dotted: {err}");
+    }
+
+    fn wat_with_abi(major: i32, minor: Option<i32>) -> String {
+        let minor_func = minor.map_or(String::new(), |value| {
+            format!(r#" (func (export "forgels_plugin_abi_minor") (result i32) i32.const {value})"#)
+        });
+        format!(
+            r#"(module (memory (export "memory") 1) (func (export "forgels_plugin_abi_version") (result i32) i32.const {major}){minor_func})"#
+        )
+    }
+
+    fn load_wat(wat_text: &str, name: &str) -> Result<ExternalHosts, String> {
+        let dir = std::env::temp_dir().join(format!(
+            "fls-abi-{name}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|done| done.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let bytes = wat::parse_str(wat_text).expect("wat parses");
+        std::fs::write(dir.join("plugin.wasm"), &bytes).expect("write wasm");
+        let refs = vec![ExternalRef {
+            path: "plugin.wasm".to_string(),
+        }];
+        let out = load_external(&refs, &dir);
+        let _ = std::fs::remove_dir_all(&dir);
+        out
+    }
+
+    #[test]
+    fn abi_minor_ahead_warns_and_loads() {
+        let engine = sandbox_engine().expect("engine");
+        let bytes = wat::parse_str(&wat_with_abi(1, Some(1))).expect("wat parses");
+        let module = Module::new(&engine, &bytes).expect("module compiles");
+        let mut store = sandbox_store(&engine).expect("store");
+        let instance = instantiate(&mut store, &module, "abi-minor").expect("instantiates");
+        assert_eq!(
+            abi::check_abi_compat(&mut store, &instance, "abi-minor"),
+            Ok(abi::AbiCompat::Warn { major: 1, minor: 1 })
+        );
+        let hosts = load_wat(&wat_with_abi(1, Some(1)), "warn").expect("loads");
+        assert!(hosts.has_guests());
+    }
+
+    #[test]
+    fn abi_exact_stays_silent_and_loads() {
+        let hosts = load_wat(&wat_with_abi(1, Some(0)), "exact").expect("loads");
+        assert!(hosts.has_guests());
+    }
+
+    #[test]
+    fn abi_missing_minor_means_zero_and_loads() {
+        let engine = sandbox_engine().expect("engine");
+        let bytes = wat::parse_str(&wat_with_abi(1, None)).expect("wat parses");
+        let module = Module::new(&engine, &bytes).expect("module compiles");
+        let mut store = sandbox_store(&engine).expect("store");
+        let instance = instantiate(&mut store, &module, "abi-missing").expect("instantiates");
+        assert_eq!(
+            abi::read_abi_minor(&mut store, &instance, "abi-missing"),
+            Ok(0)
+        );
+        let hosts = load_wat(&wat_with_abi(1, None), "missing").expect("loads");
+        assert!(hosts.has_guests());
     }
 }
