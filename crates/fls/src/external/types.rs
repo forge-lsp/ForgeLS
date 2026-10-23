@@ -196,6 +196,16 @@ mod tests {
     }
 
     #[test]
+    fn missing_severity_defaults_to_warning() {
+        let mut cache = HashMap::new();
+        let output =
+            r#"{"diagnostics":[{"rule":"example/guest-rule","message":"hi","start":0,"end":2}]}"#;
+        let diags = parse_lint_output(output, 5, &mut cache).expect("parses");
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].severity, Severity::Warning);
+    }
+
+    #[test]
     fn fix_becomes_safe_with_clamped_span() {
         let mut cache = HashMap::new();
         let output = r#"{"diagnostics":[{"rule":"example/guest-rule","message":"hi","start":0,"end":2,"severity":"error","fix":{"start":0,"end":99,"replacement":"x"}}]}"#;

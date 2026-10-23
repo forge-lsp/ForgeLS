@@ -42,8 +42,8 @@ fn wat_escape(raw: &str) -> String {
     raw.replace('"', "\\\"")
 }
 
-fn guest_wat() -> String {
-    let lint_escaped = wat_escape(LINT_JSON);
+fn guest_wat_for(lint_json: &str) -> String {
+    let lint_escaped = wat_escape(lint_json);
     let fmt_escaped = wat_escape(FMT_JSON);
     let rules_escaped = wat_escape(RULES_JSON);
     format!(
@@ -74,14 +74,24 @@ fn guest_wat() -> String {
       (i64.shl (i64.extend_i32_u (i32.const 1024)) (i64.const 32))
       (i64.extend_i32_u (i32.const {rules_len})))))
 "#,
-        lint_len = LINT_JSON.len(),
+        lint_len = lint_json.len(),
         fmt_len = FMT_JSON.len(),
         rules_len = RULES_JSON.len(),
     )
 }
 
+fn guest_wat() -> String {
+    guest_wat_for(LINT_JSON)
+}
+
 fn write_guest(dir: &Path) {
     let wat_text = guest_wat();
+    let bytes = wat::parse_str(&wat_text).expect("wat compiles");
+    std::fs::write(dir.join("plugin.wasm"), &bytes).expect("write wasm");
+}
+
+fn write_guest_with(dir: &Path, lint_json: &str) {
+    let wat_text = guest_wat_for(lint_json);
     let bytes = wat::parse_str(&wat_text).expect("wat compiles");
     std::fs::write(dir.join("plugin.wasm"), &bytes).expect("write wasm");
 }
@@ -229,6 +239,78 @@ fn guest_format_applies_without_builtin_format() {
         std::fs::read_to_string(&file).expect("read"),
         "contract B {}   \n",
         "guest edit applies while builtins skip"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+const LINT_JSON_ERROR: &str = r#"{"diagnostics":[{"rule":"example/guest-rule","message":"guest says hi","start":0,"end":1,"severity":"error"}]}"#;
+
+#[test]
+fn guest_err_overrides_warning_to_error() {
+    let dir = fresh_dir("ext-err");
+    write_guest_with(&dir, LINT_JSON);
+    write_config(&dir, "err");
+    let file = dir.join("a.sol");
+    write_file(&file, CLEAN_SRC);
+    let out = run_in(&dir, &["check", "--json", file.to_str().expect("utf8")]);
+    assert_eq!(out.status.code(), Some(1));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let value: serde_json::Value = serde_json::from_str(&stdout).expect("valid json");
+    let diags = value
+        .pointer("/files/0/diagnostics")
+        .and_then(|list| list.as_array())
+        .expect("diagnostics array");
+    let found = diags
+        .iter()
+        .find(|item| item.pointer("/rule") == Some(&serde_json::json!("example/guest-rule")))
+        .expect("guest diagnostic present");
+    assert_eq!(
+        found.pointer("/severity").expect("severity"),
+        &serde_json::json!("error")
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn guest_warn_overrides_error_to_warning() {
+    let dir = fresh_dir("ext-warn");
+    write_guest_with(&dir, LINT_JSON_ERROR);
+    write_config(&dir, "warn");
+    let file = dir.join("a.sol");
+    write_file(&file, CLEAN_SRC);
+    let out = run_in(&dir, &["check", "--json", file.to_str().expect("utf8")]);
+    assert_eq!(out.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let value: serde_json::Value = serde_json::from_str(&stdout).expect("valid json");
+    let diags = value
+        .pointer("/files/0/diagnostics")
+        .and_then(|list| list.as_array())
+        .expect("diagnostics array");
+    let found = diags
+        .iter()
+        .find(|item| item.pointer("/rule") == Some(&serde_json::json!("example/guest-rule")))
+        .expect("guest diagnostic present");
+    assert_eq!(
+        found.pointer("/severity").expect("severity"),
+        &serde_json::json!("warning")
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn guest_unknown_second_rule_exits_two() {
+    let dir = fresh_dir("ext-unknown");
+    write_guest(&dir);
+    let text = "{\"lint\":{\"includes\":[],\"excludes\":[],\"rules\":{\"example/guest-rule\":\"warn\",\"example/other-rule\":\"warn\"},\"external\":[{\"path\":\"plugin.wasm\"}]},\"format\":{}}";
+    write_file(&dir.join("fls.json"), text);
+    let file = dir.join("a.sol");
+    write_file(&file, CLEAN_SRC);
+    let out = run_in(&dir, &["check", file.to_str().expect("utf8")]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("unknown lint rule"),
+        "stderr names rule: {}",
+        String::from_utf8_lossy(&out.stderr)
     );
     let _ = std::fs::remove_dir_all(&dir);
 }

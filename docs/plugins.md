@@ -7,6 +7,13 @@ Scope: `fls` external WASM plugins. Guest lint and format via a frozen ABI.
 - `lint.external` lists local WASM files: `{"lint":{"external":[{"path":"plugins/check.wasm"}]}}`.
 - Paths are local only. URLs fail to load. Relative paths join cwd.
 - `lint.rules` may list guest rule IDs once a guest declares them.
+  `warn` downgrades a guest error to warning, `err` upgrades a
+  guest warning to error, `off` drops the diagnostic. One
+  `resolve()` applies the same levels to guests and builtins.
+- Unlisted guest IDs keep the guest-declared severity. A missing
+  or unknown severity string defaults to warning.
+- Guest levels live in `fls.json` only. TOML cannot set guest
+  levels in V1: any guest ID in TOML fails as an unknown rule.
 - TOML `lint.external` is rejected: use `fls.json` (JSON-only V1).
 - Unknown rule IDs stay exit 2. Guest IDs must be non-empty with no
   whitespace and a slash group, for example `example/guest-rule`.
@@ -88,6 +95,10 @@ No in-repo example crate in V1. Shape for an author:
   cap-4 fixpoint.
 - Fix (`check --write`) is out of scope for plugin gating: it applies
   safe fixes to whatever diagnostics survived the gate.
+- Exit codes match builtins: a guest error after resolve exits 1,
+  warning only exits 0, a truly unknown guest ID exits 2.
+- LSP publish runs the same filter plus resolve, so guest levels
+  match `check` one to one.
 - Code actions stay direct with no plugin gate in V1 by design.
 - CLI unknown plugin exits 2 like unknown rules. LSP warns and runs
   with defaults instead of exiting.

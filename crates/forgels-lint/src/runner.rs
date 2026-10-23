@@ -129,6 +129,50 @@ mod tests {
     }
 
     #[test]
+    fn guest_off_drops_matching_rule() {
+        let leaked: &'static str = Box::leak("example/guest-rule".to_string().into_boxed_str());
+        let guest = RuleId::from_leaked(leaked);
+        let mut config = LintConfig::default();
+        config
+            .rules
+            .insert("example/guest-rule".to_string(), RuleLevel::Off);
+        let out = resolve(
+            vec![
+                diag("g", guest, Severity::Warning),
+                diag("b", RuleId::OVERRIDE, Severity::Error),
+            ],
+            &config,
+        );
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].rule, RuleId::OVERRIDE);
+    }
+
+    #[test]
+    fn guest_warn_and_err_override_severity() {
+        let warn_leaked: &'static str =
+            Box::leak("example/guest-warn".to_string().into_boxed_str());
+        let err_leaked: &'static str = Box::leak("example/guest-err".to_string().into_boxed_str());
+        let warn_guest = RuleId::from_leaked(warn_leaked);
+        let err_guest = RuleId::from_leaked(err_leaked);
+        let mut config = LintConfig::default();
+        config
+            .rules
+            .insert("example/guest-warn".to_string(), RuleLevel::Warn);
+        config
+            .rules
+            .insert("example/guest-err".to_string(), RuleLevel::Err);
+        let out = resolve(
+            vec![
+                diag("a", warn_guest, Severity::Error),
+                diag("b", err_guest, Severity::Warning),
+            ],
+            &config,
+        );
+        assert_eq!(out[0].severity, Severity::Warning);
+        assert_eq!(out[1].severity, Severity::Error);
+    }
+
+    #[test]
     fn plugin_filter_keeps_listed_group_only() {
         let set = PluginSet::from_list(&["forge:style".to_string()]);
         let out = filter_by_plugin(
