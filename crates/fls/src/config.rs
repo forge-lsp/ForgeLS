@@ -5,6 +5,8 @@ use forgels_core::Config;
 use forgels_fmt::{FormatOptions, IndentStyle};
 use forgels_lint::{FlsConfig, FormatConfig, LintConfig, LintConfigError};
 
+use super::external::{ExternalHosts, load_external};
+
 /// Loaded lint setup plus import resolution base.
 pub struct LoadedConfig {
     pub lint: LintConfig,
@@ -12,6 +14,7 @@ pub struct LoadedConfig {
     pub root: PathBuf,
     pub remappings: Vec<Remapping>,
     pub warnings: Vec<String>,
+    pub external: ExternalHosts,
 }
 
 /// Map typed format config to engine options. Missing keys fall back
@@ -72,16 +75,37 @@ fn load_fls_json(cwd: &Path, path: &Path) -> Result<LoadedConfig, String> {
                 root,
                 remappings,
                 warnings,
+                external: ExternalHosts::empty(),
             });
         }
     };
-    match FlsConfig::parse_json(&text) {
+    // Startup order: read external paths leniently, load guests once,
+    // collect guest IDs, then validate rules. Truly unknown stays
+    // exit 2. No hot-reload: restart to pick up plugin edits.
+    let refs = match FlsConfig::parse_external_refs(&text) {
+        Ok(refs) => refs,
+        Err(other) => {
+            warnings.push(format!("fls: {other}"));
+            return Ok(LoadedConfig {
+                lint: LintConfig::default(),
+                format: FormatConfig::default(),
+                root,
+                remappings,
+                warnings,
+                external: ExternalHosts::empty(),
+            });
+        }
+    };
+    let external = load_external(&refs, cwd)?;
+    let guest_ids = external.guest_ids();
+    match FlsConfig::parse_json_with_known(&text, &guest_ids) {
         Ok(config) => Ok(LoadedConfig {
             lint: config.lint,
             format: config.format,
             root,
             remappings,
             warnings,
+            external,
         }),
         Err(LintConfigError::UnknownRule(id)) => Err(format!("fls: unknown lint rule: {id}")),
         Err(other) => {
@@ -92,6 +116,7 @@ fn load_fls_json(cwd: &Path, path: &Path) -> Result<LoadedConfig, String> {
                 root,
                 remappings,
                 warnings,
+                external,
             })
         }
     }
@@ -110,6 +135,7 @@ fn load_legacy_toml(cwd: &Path) -> Result<LoadedConfig, String> {
                 root: cwd.to_path_buf(),
                 remappings: Vec::new(),
                 warnings: Vec::new(),
+                external: ExternalHosts::empty(),
             });
         }
     };
@@ -132,5 +158,6 @@ fn load_legacy_toml(cwd: &Path) -> Result<LoadedConfig, String> {
         root,
         remappings,
         warnings,
+        external: ExternalHosts::empty(),
     })
 }

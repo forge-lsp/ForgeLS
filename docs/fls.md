@@ -47,7 +47,12 @@ fls init [--force]
 
 - Precedence is `./fls.json` wins, else `./forgels.toml` lint text, else defaults.
 - `init` writes grouped `lint` plus explicit `format` via `serde_json::to_string_pretty`.
-- Lint group holds `includes`, `excludes`, and `rules`.
+- Lint group holds `includes`, `excludes`, `rules`, and `external`.
+- `lint.external` is `[{"path":"plugins/check.wasm"}]` with local
+  paths only. URLs fail. TOML `external` is a parse error pointing
+  to `fls.json` (JSON-only V1). See `docs/plugins.md`.
+- Guest rule IDs in `lint.rules` validate against declared guest
+  IDs; truly unknown stays exit 2. Guests load once at startup.
 - Format group holds `includes`, `excludes`, `line_length`, `tab_width`,
   `style`, and `rules`. Defaults are 120, 4, space. Missing keys fall back.
 - `quote_style` and `bracket_spacing` parse and store but stay unused.

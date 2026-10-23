@@ -56,6 +56,26 @@ impl RuleId {
         self.0
     }
 
+    // Build a guest rule ID from a leaked string. Callers leak once at
+    // startup via Box::leak so the set stays bounded by guest count,
+    // never per file or per diagnostic.
+    pub fn from_leaked(id: &'static str) -> Self {
+        Self(id)
+    }
+
+    // Guest ID shape: non-empty, no whitespace, has a slash group.
+    // Builtins also match this shape, so callers check builtins first
+    // and treat the rest as guest candidates.
+    pub fn is_guest_id(id: &str) -> bool {
+        if id.is_empty() {
+            return false;
+        }
+        if !id.contains('/') {
+            return false;
+        }
+        !id.chars().any(|ch| ch.is_whitespace())
+    }
+
     pub fn default_severity(self) -> Severity {
         match self.0 {
             "style/naming"

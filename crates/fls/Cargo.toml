@@ -18,8 +18,10 @@ forgels-syntax.workspace = true
 forgels-lang-solidity.workspace = true
 clap.workspace = true
 serde_json.workspace = true
+wasmtime.workspace = true
 # V1 is Solidity only. Noir stays out to keep the binary small
 # and to avoid wiring a second analyzer before the UX settles.
 
 [dev-dependencies]
 serde_json.workspace = true
+wat.workspace = true

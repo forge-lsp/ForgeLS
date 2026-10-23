@@ -7,19 +7,24 @@ use forgels_core::diagnostics::unresolved_import_to_diagnostic;
 use forgels_lang_solidity::{SolidityAnalyzer, filename_diagnostics};
 use forgels_lint::{LintConfig, LintDiagnostic, RuleId, Severity, resolve};
 
+use super::external::{ExternalHosts, lint_with_guests};
+
 /// Build lint diagnostics for one file.
 ///
 /// Runs the single-file analyzer, then adds unresolved imports via
-/// the shared server resolver, then applies config levels with the
-/// lint engine resolver. Dep-aware rules run without tracked deps,
-/// so cross-file findings may be missing: single-file degrade by
-/// design. Root is cwd or the config root.
+/// the shared server resolver, then guest lint calls, then applies
+/// config levels with the lint engine resolver in one pass. Guest
+/// off levels drop via the same resolve. Dep-aware rules run without
+/// tracked deps, so cross-file findings may be missing: single-file
+/// degrade by design. Root is cwd or the config root. Empty hosts
+/// keep builtins byte-identical.
 pub fn diagnostics_for_file(
     path: &Path,
     text: &str,
     lint: &LintConfig,
     root: &Path,
     remappings: &[Remapping],
+    external: &mut ExternalHosts,
 ) -> Vec<LintDiagnostic> {
     let analyzer = SolidityAnalyzer::new();
     let mut out: Vec<LintDiagnostic> = analyzer
@@ -54,5 +59,6 @@ pub fn diagnostics_for_file(
             Severity::Error,
         ));
     }
-    resolve(out, lint)
+    let combined = lint_with_guests(external, path, text, out);
+    resolve(combined, lint)
 }

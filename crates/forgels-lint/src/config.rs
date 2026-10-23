@@ -53,6 +53,13 @@ pub struct LintConfig {
     pub rules: HashMap<String, RuleLevel>,
     pub includes: Vec<String>,
     pub excludes: Vec<String>,
+    pub external: Vec<ExternalRef>,
+}
+
+// One external WASM plugin reference from `lint.external`.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ExternalRef {
+    pub path: String,
 }
 
 // Typed format group. `line_length`, `tab_width`, and `style` feed
@@ -84,6 +91,8 @@ impl LintConfig {
 
     // Parse `[lint]` plus `[lint.rules]` from TOML text.
     // Unknown rule IDs fail fast so typos never pass silent.
+    // `lint.external` is JSON-only in V1: TOML use is a parse error
+    // that points to fls.json.
     pub fn parse_str(text: &str) -> Result<Self, LintConfigError> {
         let table: toml::Table = text
             .parse()
@@ -94,6 +103,11 @@ impl LintConfig {
         let lint = lint
             .as_table()
             .ok_or_else(|| LintConfigError::Parse("[lint] must be a table".to_string()))?;
+        if lint.contains_key("external") {
+            return Err(LintConfigError::Parse(
+                "lint external requires fls.json (JSON-only V1)".to_string(),
+            ));
+        }
         let mut out = Self::default();
         if let Some(plugins) = lint.get("plugins") {
             let list = plugins.as_array().ok_or_else(|| {
@@ -111,9 +125,7 @@ impl LintConfig {
                 LintConfigError::Parse("[lint.rules] must be a table".to_string())
             })?;
             for (id, level) in rules {
-                if !RuleId::all().iter().any(|rule| rule.as_str() == id) {
-                    return Err(LintConfigError::UnknownRule(id.clone()));
-                }
+                validate_rule_id(id, &[])?;
                 let raw = level.as_str().ok_or_else(|| {
                     LintConfigError::InvalidLevel(format!("{id} must be off, warn, or err"))
                 })?;
@@ -129,19 +141,37 @@ impl LintConfig {
     // Parse lint JSON via untyped traversal. Accepts a lint object or a
     // full `fls.json` document (uses its `lint` group when present).
     pub fn parse_json(text: &str) -> Result<Self, LintConfigError> {
+        Self::parse_json_with_known(text, &[])
+    }
+
+    // Parse lint JSON with known guest IDs. Builtins always pass;
+    // guest IDs pass when listed in `guest_ids` and well formed
+    // (non-empty, no whitespace); anything else is UnknownRule.
+    pub fn parse_json_with_known(
+        text: &str,
+        guest_ids: &[String],
+    ) -> Result<Self, LintConfigError> {
         let value: Value =
             serde_json::from_str(text).map_err(|err| LintConfigError::Parse(err.to_string()))?;
         let target = match value.get("lint") {
             Some(group) if group.is_object() => group,
             _ => &value,
         };
-        parse_lint_value(target)
+        parse_lint_value_with(target, guest_ids)
     }
 }
 
 impl FlsConfig {
     // Parse grouped `fls.json` via untyped traversal.
     pub fn parse_json(text: &str) -> Result<Self, LintConfigError> {
+        Self::parse_json_with_known(text, &[])
+    }
+
+    // Parse grouped `fls.json` with known guest IDs for rule validation.
+    pub fn parse_json_with_known(
+        text: &str,
+        guest_ids: &[String],
+    ) -> Result<Self, LintConfigError> {
         let value: Value =
             serde_json::from_str(text).map_err(|err| LintConfigError::Parse(err.to_string()))?;
         let table = value
@@ -149,13 +179,39 @@ impl FlsConfig {
             .ok_or_else(|| LintConfigError::Parse("fls.json must be an object".to_string()))?;
         let mut out = Self::default();
         if let Some(lint) = table.get("lint") {
-            out.lint = parse_lint_value(lint)?;
+            out.lint = parse_lint_value_with(lint, guest_ids)?;
         }
         if let Some(format) = table.get("format") {
             out.format = parse_format_value(format)?;
         }
         Ok(out)
     }
+
+    // Extract `lint.external` paths without validating rules. Used at
+    // startup to load guests before the full rule check runs.
+    pub fn parse_external_refs(text: &str) -> Result<Vec<ExternalRef>, LintConfigError> {
+        let value: Value =
+            serde_json::from_str(text).map_err(|err| LintConfigError::Parse(err.to_string()))?;
+        let Some(lint) = value.get("lint") else {
+            return Ok(Vec::new());
+        };
+        if !lint.is_object() {
+            return Err(LintConfigError::Parse("lint must be an object".to_string()));
+        }
+        parse_external_value(lint)
+    }
+}
+
+// Validate one rule ID: builtin always passes, guest passes when listed
+// in `guest_ids` and well formed, else UnknownRule fail-fast.
+pub fn validate_rule_id(id: &str, guest_ids: &[String]) -> Result<(), LintConfigError> {
+    if RuleId::all().iter().any(|rule| rule.as_str() == id) {
+        return Ok(());
+    }
+    if guest_ids.iter().any(|known| known == id) && RuleId::is_guest_id(id) {
+        return Ok(());
+    }
+    Err(LintConfigError::UnknownRule(id.to_string()))
 }
 
 fn string_list(value: &Value, group: &str, key: &str) -> Result<Vec<String>, LintConfigError> {
@@ -175,7 +231,37 @@ fn string_list(value: &Value, group: &str, key: &str) -> Result<Vec<String>, Lin
     Ok(out)
 }
 
-fn parse_lint_value(value: &Value) -> Result<LintConfig, LintConfigError> {
+fn parse_external_value(value: &Value) -> Result<Vec<ExternalRef>, LintConfigError> {
+    let Some(raw) = value.get("external") else {
+        return Ok(Vec::new());
+    };
+    let list = raw
+        .as_array()
+        .ok_or_else(|| LintConfigError::Parse("lint external must be an array".to_string()))?;
+    let mut out = Vec::new();
+    for entry in list {
+        let table = entry
+            .as_object()
+            .ok_or_else(|| LintConfigError::Parse("lint external must be objects".to_string()))?;
+        let path = table.get("path").and_then(Value::as_str).ok_or_else(|| {
+            LintConfigError::Parse("lint external path must be a string".to_string())
+        })?;
+        if path.is_empty() {
+            return Err(LintConfigError::Parse(
+                "lint external path must not be empty".to_string(),
+            ));
+        }
+        out.push(ExternalRef {
+            path: path.to_string(),
+        });
+    }
+    Ok(out)
+}
+
+fn parse_lint_value_with(
+    value: &Value,
+    guest_ids: &[String],
+) -> Result<LintConfig, LintConfigError> {
     let table = value
         .as_object()
         .ok_or_else(|| LintConfigError::Parse("lint must be an object".to_string()))?;
@@ -183,6 +269,7 @@ fn parse_lint_value(value: &Value) -> Result<LintConfig, LintConfigError> {
         plugins: string_list(value, "lint", "plugins")?,
         includes: string_list(value, "lint", "includes")?,
         excludes: string_list(value, "lint", "excludes")?,
+        external: parse_external_value(value)?,
         ..Default::default()
     };
     let Some(rules) = table.get("rules") else {
@@ -192,9 +279,7 @@ fn parse_lint_value(value: &Value) -> Result<LintConfig, LintConfigError> {
         .as_object()
         .ok_or_else(|| LintConfigError::Parse("lint rules must be an object".to_string()))?;
     for (id, level) in rules {
-        if !RuleId::all().iter().any(|rule| rule.as_str() == id) {
-            return Err(LintConfigError::UnknownRule(id.clone()));
-        }
+        validate_rule_id(id, guest_ids)?;
         let raw = level.as_str().ok_or_else(|| {
             LintConfigError::InvalidLevel(format!("{id} must be off, warn, or err"))
         })?;

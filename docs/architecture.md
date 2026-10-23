@@ -35,6 +35,16 @@ flowchart LR
 - New shared syntax goes to `forgels-syntax`.
 - New protocol types go to `forgels-protocol`.
 - Binary `fls` wires routing only. Logic lives in `forgels-core` or language crates.
+- `fls` alone may use `wasmtime` for external plugins. No other
+  crate gains it. See `docs/plugins.md`.
+
+## Plugins
+
+- Guests are WASM files from `lint.external`, loaded once at startup.
+- Sandbox is 10M fuel, 64 MiB memory, 2s epoch, zero host imports.
+- Check appends guest lint before one `resolve()`. Format runs
+  builtin, one guest pass, builtin again. LSP appends guests in a
+  wrapper analyzer with no core change.
 
 ## Cross-file
 
