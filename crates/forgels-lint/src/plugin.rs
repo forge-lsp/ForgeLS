@@ -22,7 +22,7 @@ pub struct CorrectnessPlugin;
 
 impl LintPlugin for CorrectnessPlugin {
     fn name() -> &'static str {
-        "correctness"
+        "forge:correctness"
     }
 
     fn rules() -> Vec<RuleMeta> {
@@ -50,7 +50,7 @@ pub struct StylePlugin;
 
 impl LintPlugin for StylePlugin {
     fn name() -> &'static str {
-        "style"
+        "forge:style"
     }
 
     fn rules() -> Vec<RuleMeta> {
@@ -95,7 +95,7 @@ pub struct SafetyPlugin;
 
 impl LintPlugin for SafetyPlugin {
     fn name() -> &'static str {
-        "safety"
+        "forge:safety"
     }
 
     fn rules() -> Vec<RuleMeta> {
@@ -119,6 +119,23 @@ pub fn builtin_safety_plugin() -> Vec<RuleMeta> {
     SafetyPlugin::rules()
 }
 
+// Format group is a metadata-only placeholder: no rules in V1.
+pub struct FormatPlugin;
+
+impl LintPlugin for FormatPlugin {
+    fn name() -> &'static str {
+        "forge:format"
+    }
+
+    fn rules() -> Vec<RuleMeta> {
+        Vec::new()
+    }
+}
+
+pub fn builtin_format_plugin() -> Vec<RuleMeta> {
+    FormatPlugin::rules()
+}
+
 // Rule lookup keyed by full `group/name` string.
 #[derive(Debug, Clone, Default)]
 pub struct Registry {
@@ -135,6 +152,7 @@ impl Registry {
         out.register::<CorrectnessPlugin>();
         out.register::<StylePlugin>();
         out.register::<SafetyPlugin>();
+        out.register::<FormatPlugin>();
         out
     }
 
@@ -186,6 +204,27 @@ mod tests {
         for meta in &rules {
             assert_eq!(meta.default, Severity::Warning);
         }
+    }
+
+    #[test]
+    fn builtin_groups_use_forge_prefix() {
+        assert_eq!(CorrectnessPlugin::name(), "forge:correctness");
+        assert_eq!(StylePlugin::name(), "forge:style");
+        assert_eq!(SafetyPlugin::name(), "forge:safety");
+        assert_eq!(FormatPlugin::name(), "forge:format");
+    }
+
+    #[test]
+    fn format_plugin_has_no_rules() {
+        assert!(FormatPlugin::rules().is_empty());
+        assert!(builtin_format_plugin().is_empty());
+        assert!(Registry::default().is_empty());
+    }
+
+    #[test]
+    fn style_plugin_keeps_test_naming() {
+        let rules = builtin_style_plugin();
+        assert!(rules.iter().any(|meta| meta.id == RuleId::TEST_NAMING));
     }
 
     #[test]
